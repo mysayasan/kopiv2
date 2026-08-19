@@ -1,25 +1,29 @@
-package services
+package audit
 
 import (
 	"context"
 	"errors"
 	"testing"
 
-	"github.com/mysayasan/kopiv2/apps/myseliasan/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
 
-// fakeAuditRepo is an in-memory stand-in that records inserts and applies the
+// fakeSortingRepo is an in-memory stand-in that records inserts and applies the
 // Action/TargetType/TargetId equality filters + newest-first ordering the service asks for.
-type fakeAuditRepo struct {
-	dbsql.IGenericRepo[entities.AuditLog]
-	rows      []*entities.AuditLog
+//
+// Distinct from retention_test.go's fakeAuditRepo, which models the other half of the
+// contract: that one honours CreatedAt range filters and Delete but ignores sort order,
+// this one honours the sorter but has no Delete. Keeping them separate keeps each test
+// asserting against a fake that cannot accidentally satisfy it for the wrong reason.
+type fakeSortingRepo struct {
+	dbsql.IGenericRepo[AuditLog]
+	rows      []*AuditLog
 	nextID    int64
 	createErr error
 }
 
-func (f *fakeAuditRepo) Create(_ context.Context, _ string, m entities.AuditLog) (uint64, error) {
+func (f *fakeSortingRepo) Create(_ context.Context, _ string, m AuditLog) (uint64, error) {
 	if f.createErr != nil {
 		return 0, f.createErr
 	}
@@ -30,8 +34,8 @@ func (f *fakeAuditRepo) Create(_ context.Context, _ string, m entities.AuditLog)
 	return uint64(f.nextID), nil
 }
 
-func (f *fakeAuditRepo) Get(_ context.Context, _ string, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*entities.AuditLog, uint64, error) {
-	match := func(r *entities.AuditLog) bool {
+func (f *fakeSortingRepo) Get(_ context.Context, _ string, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter) ([]*AuditLog, uint64, error) {
+	match := func(r *AuditLog) bool {
 		for _, fl := range filters {
 			switch fl.FieldName {
 			case "Action":
@@ -50,7 +54,7 @@ func (f *fakeAuditRepo) Get(_ context.Context, _ string, limit uint64, offset ui
 		}
 		return true
 	}
-	var out []*entities.AuditLog
+	var out []*AuditLog
 	for _, r := range f.rows {
 		if match(r) {
 			out = append(out, r)
@@ -65,14 +69,14 @@ func (f *fakeAuditRepo) Get(_ context.Context, _ string, limit uint64, offset ui
 	return out, uint64(len(out)), nil
 }
 
-func newTestAudit() (*auditService, *fakeAuditRepo) {
-	repo := &fakeAuditRepo{}
-	return &auditService{repo: repo}, repo
+func newTestAudit() (*service, *fakeSortingRepo) {
+	repo := &fakeSortingRepo{}
+	return &service{repo: repo}, repo
 }
 
 func TestAuditRecordPersistsWithDefaultsAndMetadata(t *testing.T) {
 	svc, repo := newTestAudit()
-	svc.Record(context.Background(), AuditEntry{
+	svc.Record(context.Background(), Entry{
 		Action:     "node.adopt",
 		ActorId:    5,
 		ActorEmail: "op@example.com",
@@ -97,12 +101,12 @@ func TestAuditRecordPersistsWithDefaultsAndMetadata(t *testing.T) {
 }
 
 func TestAuditRecordNeverPanicsOrPropagatesOnWriteFailure(t *testing.T) {
-	repo := &fakeAuditRepo{createErr: errors.New("db down")}
+	repo := &fakeSortingRepo{createErr: errors.New("db down")}
 	logged := 0
-	svc := &auditService{repo: repo, logf: func(string, ...any) { logged++ }}
+	svc := &service{repo: repo, logf: func(string, ...any) { logged++ }}
 	// A write failure must be swallowed (best-effort) so auditing never blocks the
 	// audited action — the call simply returns.
-	svc.Record(context.Background(), AuditEntry{Action: "rbac.elevate", TargetType: "user", TargetId: "3"})
+	svc.Record(context.Background(), Entry{Action: "rbac.elevate", TargetType: "user", TargetId: "3"})
 	if logged != 1 {
 		t.Fatalf("expected the write failure to be logged once, got %d", logged)
 	}
@@ -111,12 +115,12 @@ func TestAuditRecordNeverPanicsOrPropagatesOnWriteFailure(t *testing.T) {
 func TestAuditListFiltersAndOrdersNewestFirst(t *testing.T) {
 	svc, _ := newTestAudit()
 	ctx := context.Background()
-	svc.Record(ctx, AuditEntry{Action: "node.adopt", TargetType: "node", TargetId: "n1"})
-	svc.Record(ctx, AuditEntry{Action: "node.command", TargetType: "node", TargetId: "n1"})
-	svc.Record(ctx, AuditEntry{Action: "rbac.set_role", TargetType: "user", TargetId: "9"})
+	svc.Record(ctx, Entry{Action: "node.adopt", TargetType: "node", TargetId: "n1"})
+	svc.Record(ctx, Entry{Action: "node.command", TargetType: "node", TargetId: "n1"})
+	svc.Record(ctx, Entry{Action: "rbac.set_role", TargetType: "user", TargetId: "9"})
 
 	// No filter: all three, newest-first.
-	all, total, err := svc.List(ctx, 0, 0, "", "", "")
+	all, total, err := svc.List(ctx, 0, 0, Filter{})
 	if err != nil || total != 3 || len(all) != 3 {
 		t.Fatalf("List all: total=%d len=%d err=%v", total, len(all), err)
 	}
@@ -125,13 +129,13 @@ func TestAuditListFiltersAndOrdersNewestFirst(t *testing.T) {
 	}
 
 	// Filter by target type + id.
-	nodeRows, _, _ := svc.List(ctx, 0, 0, "", "node", "n1")
+	nodeRows, _, _ := svc.List(ctx, 0, 0, Filter{TargetType: "node", TargetId: "n1"})
 	if len(nodeRows) != 2 {
 		t.Fatalf("expected 2 node/n1 rows, got %d", len(nodeRows))
 	}
 
 	// Filter by action.
-	roleRows, _, _ := svc.List(ctx, 0, 0, "rbac.set_role", "", "")
+	roleRows, _, _ := svc.List(ctx, 0, 0, Filter{Action: "rbac.set_role"})
 	if len(roleRows) != 1 || roleRows[0].TargetId != "9" {
 		t.Fatalf("action filter wrong: %+v", roleRows)
 	}

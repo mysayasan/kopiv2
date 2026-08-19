@@ -73,88 +73,21 @@ func (failingAuditRepo) Get(context.Context, string, uint64, uint64, []sqldataen
 	return nil, 0, nil
 }
 
-// This counter is the reason the metric exists. Record() swallows its write error on
-// purpose — auditing must never fail the action being audited — which means a trail that
-// has stopped recording has NO other symptom. Every other signal stays green while the
-// security history quietly develops a hole.
-func TestAuditWriteFailureIsCounted(t *testing.T) {
+// The audit metric BEHAVIOUR (failures counted, successes not, retention counted, safe
+// without a recorder) moved to domain/shared/audit alongside the implementation. What
+// belongs here is the part that is myidsan's: that WithAuditMetrics wires myidsan's own
+// series names, so an existing dashboard or alert keeps receiving the series it watches.
+func TestWithAuditMetricsUsesMyidsanSeriesNames(t *testing.T) {
 	m := newCountingMetrics()
-	svc := (&auditService{repo: failingAuditRepo{}}).WithMetrics(m)
-
-	svc.Record(context.Background(), AuditEntry{Action: ActionLoginSuccess, ActorEmail: "a@example.test"})
-	svc.Record(context.Background(), AuditEntry{Action: ActionLoginFailure, ActorEmail: "b@example.test"})
-
-	if got := m.get(MetricAuditWriteFailuresTotal); got != 2 {
-		t.Fatalf("%s = %v want 2 — a trail that stopped recording would look identical to a healthy one", MetricAuditWriteFailuresTotal, got)
-	}
-}
-
-// The counter must stay at zero on the happy path, or it is useless as an alert.
-func TestAuditWriteSuccessIsNotCounted(t *testing.T) {
-	m := newCountingMetrics()
-	repo := &fakeAuditRepo{}
-	svc := (&auditService{repo: repo}).WithMetrics(m)
+	svc := WithAuditMetrics(NewAuditService(failingAuditRepo{}, nil), m)
 
 	svc.Record(context.Background(), AuditEntry{Action: ActionLoginSuccess, ActorEmail: "a@example.test"})
 
-	if got := m.get(MetricAuditWriteFailuresTotal); got != 0 {
-		t.Fatalf("%s = %v want 0 on a successful write", MetricAuditWriteFailuresTotal, got)
-	}
-	if len(repo.rows) != 1 {
-		t.Fatalf("the entry was not persisted: %d rows", len(repo.rows))
+	if got := m.get(MetricAuditWriteFailuresTotal); got != 1 {
+		t.Fatalf("%s = %v want 1 — the shared trail was wired with the wrong series name", MetricAuditWriteFailuresTotal, got)
 	}
 }
 
-// Recording must not depend on a metrics recorder being present: auditing predates
-// telemetry and must keep working when it is absent.
-func TestAuditRecordWorksWithoutMetrics(t *testing.T) {
-	repo := &fakeAuditRepo{}
-	svc := &auditService{repo: repo}
-
-	svc.Record(context.Background(), AuditEntry{Action: ActionLoginSuccess})
-
-	if len(repo.rows) != 1 {
-		t.Fatalf("a nil metrics recorder broke auditing: %d rows", len(repo.rows))
-	}
-}
-
-// Retention counts what it removed, so trail shrinkage is attributable: rows vanishing
-// without this counter moving did not come from retention.
-func TestRetentionPurgeIsCounted(t *testing.T) {
-	m := newCountingMetrics()
-	repo := seedAuditRows(4, 1)
-	svc := (&auditService{repo: repo}).WithMetrics(m)
-
-	if _, err := svc.PurgeOlderThan(context.Background(), 30, t.TempDir()); err != nil {
-		t.Fatalf("PurgeOlderThan: %v", err)
-	}
-
-	if got := m.get(MetricAuditRetentionPurgedTotal); got != 4 {
-		t.Fatalf("%s = %v want 4", MetricAuditRetentionPurgedTotal, got)
-	}
-	// The purge writes its own audit entry, which must not be mistaken for a failure.
-	if got := m.get(MetricAuditWriteFailuresTotal); got != 0 {
-		t.Fatalf("%s = %v want 0", MetricAuditWriteFailuresTotal, got)
-	}
-}
-
-// A purge that removed nothing must not move the counter, or "retention is deleting
-// things" becomes indistinguishable from "retention ran".
-func TestRetentionNoOpIsNotCounted(t *testing.T) {
-	m := newCountingMetrics()
-	svc := (&auditService{repo: seedAuditRows(0, 3)}).WithMetrics(m)
-
-	if _, err := svc.PurgeOlderThan(context.Background(), 30, t.TempDir()); err != nil {
-		t.Fatalf("PurgeOlderThan: %v", err)
-	}
-	if got := m.get(MetricAuditRetentionPurgedTotal); got != 0 {
-		t.Fatalf("%s = %v want 0 for a no-op run", MetricAuditRetentionPurgedTotal, got)
-	}
-}
-
-// The gauge is polled rather than incremented at call sites, because sessions also end
-// without anyone calling Revoke — a cache entry simply expires. A hand-maintained counter
-// would drift from the truth and never recover; a periodic read of the index cannot.
 func TestPublishActiveSessionsSetsTheGauge(t *testing.T) {
 	m := newCountingMetrics()
 	repo := &fakeSessionRepo{}

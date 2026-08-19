@@ -84,6 +84,12 @@ type wiring struct {
 	accessRoles          sharedservices.IAccessRoleService
 	accessPerms          sharedservices.IAccessPermissionService
 
+	// audit is the append-only evidence-handling trail. Held as the API-layer Auditor
+	// rather than the bare service because every audited handler also needs the
+	// trusted-proxy list to resolve a caller's real address.
+	audit        *apis.Auditor
+	auditService services.IAuditService
+
 	// Installers.
 	ffmpegInstaller *services.FFmpegInstaller
 	pythonInstaller *services.PythonInstaller
@@ -141,6 +147,7 @@ func (w *wiring) validate() error {
 	check("media", w.media != nil)
 	check("loginGuard", w.loginGuard != nil)
 	check("accessRoles", w.accessRoles != nil)
+	check("audit", w.audit != nil)
 	check("accessPerms", w.accessPerms != nil)
 	check("ffmpegInstaller", w.ffmpegInstaller != nil)
 	check("pythonInstaller", w.pythonInstaller != nil)

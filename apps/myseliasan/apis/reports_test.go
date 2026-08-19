@@ -26,10 +26,15 @@ func (s *stubReportSvc) Incident(context.Context, time.Time, int, int64) (*servi
 	return &services.Report{Filename: "incident.pdf", Data: s.data}, nil
 }
 
-type recordingAudit struct{ entries []services.AuditEntry }
+type recordingAudit struct {
+	// Embedded for the same reason as fakeDigestAudit: only Record and List are used
+	// here, and an unexpected PurgeOlderThan call should be loud, not silent.
+	services.IAuditService
+	entries []services.AuditEntry
+}
 
 func (a *recordingAudit) Record(_ context.Context, e services.AuditEntry) { a.entries = append(a.entries, e) }
-func (a *recordingAudit) List(context.Context, uint64, uint64, string, string, string) ([]*entities.AuditLog, uint64, error) {
+func (a *recordingAudit) List(context.Context, uint64, uint64, services.AuditFilter) ([]*entities.AuditLog, uint64, error) {
 	return nil, 0, nil
 }
 

@@ -36,11 +36,14 @@ type recordingApi struct {
 	// which is how ShredPasses got silently dropped and secure shred degraded to a plain
 	// unlink for anyone who saved a recording setting.
 	recorderCfg *services.RecorderConfigBuilder
+	// audit records evidence handling: who viewed, downloaded, deleted or purged footage.
+	// Nil is tolerated (Auditor.Record no-ops) so a partially-wired test handler still works.
+	audit *Auditor
 }
 
 // NewRecordingApi registers recording routes under /recording.
-func NewRecordingApi(router *mux.Router, serv services.IRecordingService, recorder *recording.Manager, camera services.ICameraService, settings services.IRuntimeSettingsService, cipher *atrest.Cipher, vision services.IVisionService, recorderCfg *services.RecorderConfigBuilder) {
-	h := &recordingApi{serv: serv, recorder: recorder, camera: camera, settings: settings, cipher: cipher, vision: vision, recorderCfg: recorderCfg}
+func NewRecordingApi(router *mux.Router, serv services.IRecordingService, recorder *recording.Manager, camera services.ICameraService, settings services.IRuntimeSettingsService, cipher *atrest.Cipher, vision services.IVisionService, recorderCfg *services.RecorderConfigBuilder, audit *Auditor) {
+	h := &recordingApi{serv: serv, recorder: recorder, camera: camera, settings: settings, cipher: cipher, vision: vision, recorderCfg: recorderCfg, audit: audit}
 	g := router.PathPrefix("/recording").Subrouter()
 
 	g.HandleFunc("/segments", h.listSegments).Methods("GET")
@@ -82,9 +85,12 @@ func (a *recordingApi) listSegments(w http.ResponseWriter, r *http.Request) {
 func (a *recordingApi) purgeExpired(w http.ResponseWriter, r *http.Request) {
 	deleted, err := a.serv.PurgeOldSegments(r.Context())
 	if err != nil {
+		a.audit.Failure(r, services.ActionRecordingPurge, services.TargetRecording, "expired", err.Error(), nil)
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
+	a.audit.Success(r, services.ActionRecordingPurge, services.TargetRecording, "expired",
+		fmt.Sprintf("retention purge removed %d segment(s)", deleted), map[string]any{"deleted": deleted})
 	controllers.SendResult(w, map[string]int{"deleted": deleted}, "succeed")
 }
 
@@ -118,6 +124,9 @@ func (a *recordingApi) purgeCameraNow(w http.ResponseWriter, r *http.Request) {
 			snapshots = n
 		}
 	}
+	a.audit.Success(r, services.ActionRecordingPurge, services.TargetCamera, strconv.FormatInt(cameraId, 10),
+		fmt.Sprintf("purged all footage for camera %d", cameraId),
+		map[string]any{"segments": segments, "snapshots": snapshots})
 	controllers.SendResult(w, map[string]int{"segments": segments, "snapshots": snapshots}, "succeed")
 }
 
@@ -126,10 +135,23 @@ func (a *recordingApi) deleteSegment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Read the row BEFORE deleting it. Afterwards the camera and time range are gone, and
+	// "recording 412 was deleted" is not an answer to "what footage did we lose".
+	seg, _ := a.serv.GetSegmentById(r.Context(), id)
+	meta := map[string]any{}
+	if seg != nil {
+		meta["cameraId"] = seg.CameraId
+		meta["startedAt"] = seg.StartedAt
+		meta["endedAt"] = seg.EndedAt
+		meta["file"] = filepath.Base(seg.FilePath)
+	}
+	target := strconv.FormatUint(id, 10)
 	if err := a.serv.DeleteSegment(r.Context(), id); err != nil {
+		a.audit.Failure(r, services.ActionRecordingDelete, services.TargetRecording, target, err.Error(), meta)
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return
 	}
+	a.audit.Success(r, services.ActionRecordingDelete, services.TargetRecording, target, "deleted one recording segment", meta)
 	controllers.SendResult(w, map[string]uint64{"deleted": 1}, "succeed")
 }
 
@@ -151,6 +173,26 @@ func (a *recordingApi) downloadSegment(w http.ResponseWriter, r *http.Request) {
 	wantTranscode := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("transcode")), "h264") &&
 		strings.EqualFold(seg.Codec, "hevc")
 	hasRange := strings.TrimSpace(r.Header.Get("Range")) != ""
+
+	// "Who watched this footage" is the question this route answers, and it is the one a
+	// tender and a GDPR Article 30 record both ask for. Recorded once here, before the
+	// range/transcode branching below, so every path through the handler is covered.
+	//
+	// A ranged request is a scrubbing <video> element rather than a distinct viewing, so
+	// only the FIRST range of a playback is worth an entry — otherwise seeking through one
+	// clip writes dozens of rows and buries the trail it is meant to provide. The opening
+	// request of any playback is unranged, which is what makes that split reliable.
+	action := services.ActionRecordingDownload
+	if hasRange {
+		action = services.ActionRecordingView
+	}
+	if !hasRange || strings.HasPrefix(strings.TrimSpace(r.Header.Get("Range")), "bytes=0-") {
+		a.audit.Success(r, action, services.TargetRecording, strconv.FormatInt(seg.Id, 10),
+			fmt.Sprintf("camera %d, %s to %s", seg.CameraId,
+				time.Unix(seg.StartedAt, 0).UTC().Format(time.RFC3339),
+				time.Unix(seg.EndedAt, 0).UTC().Format(time.RFC3339)),
+			map[string]any{"cameraId": seg.CameraId, "startedAt": seg.StartedAt, "endedAt": seg.EndedAt})
+	}
 
 	w.Header().Set("Content-Type", "video/mp4")
 	w.Header().Set("Content-Disposition", `inline; filename="`+filepath.Base(seg.FilePath)+`"`)
@@ -429,10 +471,35 @@ func (a *recordingApi) saveConfig(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
 		return
 	}
+	// The BEFORE value of retention, captured before the save. Shortening retention is a
+	// slower way of deleting footage, so the change belongs in the same trail as the
+	// deletions — and only the before/after pair says whether footage was given up.
+	prevRetention := 0
+	prevEnabled := false
+	if body.CameraId > 0 {
+		if before, berr := a.serv.GetConfig(r.Context(), body.CameraId); berr == nil && before != nil {
+			prevRetention = before.RetentionDays
+			prevEnabled = before.Enabled
+		}
+	}
 	cfg, err := a.serv.SaveConfig(r.Context(), body)
 	if err != nil {
+		a.audit.Failure(r, services.ActionRecordingConfigChange, services.TargetCamera,
+			strconv.FormatInt(body.CameraId, 10), err.Error(), nil)
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return
+	}
+	if cfg != nil {
+		a.audit.Success(r, services.ActionRecordingConfigChange, services.TargetCamera,
+			strconv.FormatInt(cfg.CameraId, 10),
+			fmt.Sprintf("recording %s, retention %d -> %d days",
+				map[bool]string{true: "enabled", false: "disabled"}[cfg.Enabled], prevRetention, cfg.RetentionDays),
+			map[string]any{
+				"retentionDaysBefore": prevRetention,
+				"retentionDaysAfter":  cfg.RetentionDays,
+				"enabledBefore":       prevEnabled,
+				"enabledAfter":        cfg.Enabled,
+			})
 	}
 
 	// Hot-reload the recorder so the new config takes effect immediately without restart.

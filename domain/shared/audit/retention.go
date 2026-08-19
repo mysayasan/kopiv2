@@ -1,4 +1,4 @@
-package services
+package audit
 
 import (
 	"context"
@@ -45,7 +45,7 @@ type PurgeResult struct {
 // history. The set being purged is stable while this runs precisely because the table is
 // append-only: every row inserted after the cutoff is computed is stamped with the current
 // time, so it can never fall into the window being deleted.
-func (s *auditService) PurgeOlderThan(ctx context.Context, maxRetentionDays int, archiveDir string) (PurgeResult, error) {
+func (s *service) PurgeOlderThan(ctx context.Context, maxRetentionDays int, archiveDir string) (PurgeResult, error) {
 	res := PurgeResult{}
 	if maxRetentionDays <= 0 {
 		return res, fmt.Errorf("audit retention: maxRetentionDays must be greater than zero")
@@ -61,7 +61,7 @@ func (s *auditService) PurgeOlderThan(ctx context.Context, maxRetentionDays int,
 
 	first, total, err := s.repo.Get(ctx, "", auditArchiveBatch, 0, older, oldestFirst)
 	if err != nil {
-		if isNotFoundErr(err) {
+		if IsNotFound(err) {
 			return res, nil
 		}
 		return res, fmt.Errorf("audit retention: reading expired rows: %w", err)
@@ -117,7 +117,7 @@ func (s *auditService) PurgeOlderThan(ctx context.Context, maxRetentionDays int,
 		// so the window cannot shift underneath the paging.
 		batch, _, err = s.repo.Get(ctx, "", auditArchiveBatch, scanned, older, oldestFirst)
 		if err != nil {
-			if isNotFoundErr(err) {
+			if IsNotFound(err) {
 				break
 			}
 			return res, fmt.Errorf("audit retention: reading expired rows: %w", err)
@@ -152,13 +152,13 @@ func (s *auditService) PurgeOlderThan(ctx context.Context, maxRetentionDays int,
 		return res, fmt.Errorf("audit retention: deleting archived rows (archive kept at %s): %w", finalPath, err)
 	}
 	res.Deleted = deleted
-	if s.metrics != nil && deleted > 0 {
-		s.metrics.Add(MetricAuditRetentionPurgedTotal, nil, float64(deleted))
+	if s.metrics != nil && s.names.RetentionPurgedTotal != "" && deleted > 0 {
+		s.metrics.Add(s.names.RetentionPurgedTotal, nil, float64(deleted))
 	}
 
 	// Record the trim inside the trail it trimmed. This entry is younger than the cutoff,
 	// so it survives this run and every later one.
-	s.Record(ctx, AuditEntry{
+	s.Record(ctx, Entry{
 		Action:     ActionAuditPurge,
 		TargetType: "audit",
 		TargetId:   filepath.Base(finalPath),

@@ -17,6 +17,7 @@ import (
 	appentities "github.com/mysayasan/kopiv2/apps/mymatasan/entities"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
+	sharedaudit "github.com/mysayasan/kopiv2/domain/shared/audit"
 	apiaccessenums "github.com/mysayasan/kopiv2/domain/enums/apiaccess"
 	"github.com/mysayasan/kopiv2/domain/notification"
 	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
@@ -155,6 +156,9 @@ func (m *module) Entities() []any {
 		appentities.ObjectObservation{},
 		sharedentities.Notification{},
 		sharedentities.NotificationRollup{},
+		// The append-only audit trail, shared with myidsan and myseliasan. New table on
+		// this app; the auto-migrator creates it, so no migration is needed.
+		sharedaudit.AuditLog{},
 	}
 }
 
@@ -567,6 +571,21 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 	// Everything is built. Gather it once, and let the remaining phases take ONE parameter
 	// instead of thirty free variables out of an 800-line scope.
+	// The append-only audit trail. Built before the wiring bag because the handlers that
+	// record into it are constructed from that bag, and because a trail that is wired late
+	// is a trail that quietly misses the first actions after boot.
+	//
+	// The trusted-proxy list is the rate limiter's, so "which hops may set
+	// X-Forwarded-For" has exactly one answer in this app — an untrusted caller must not
+	// be able to forge the address recorded against their own deletion.
+	auditService := services.WithAuditMetrics(
+		services.NewAuditService(deps.Db, func(format string, args ...any) {
+			deps.Logger.Warnf("mymatasan.audit", format, args...)
+		}),
+		deps.Metrics,
+	)
+	auditApi := apis.NewAuditor(auditService, deps.Config.RateLimit.TrustedProxies)
+
 	w := &wiring{
 		deps:           deps,
 		appCfg:         appCfg,
@@ -611,6 +630,9 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		loginLockoutNotifier: loginLockoutNotifier,
 		accessRoles:          deps.AccessRoles,
 		accessPerms:          deps.AccessPerms,
+
+		audit:        auditApi,
+		auditService: auditService,
 
 		ffmpegInstaller: services.NewFFmpegInstaller(ffmpegBinDir, settingsService),
 		pythonInstaller: services.NewPythonInstaller(deps.DataDir, deps.ConfigPath),

@@ -1,4 +1,4 @@
-package services
+package audit
 
 import (
 	"bufio"
@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mysayasan/kopiv2/apps/myidsan/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
@@ -20,16 +19,16 @@ import (
 // fakeAuditRepo is an in-memory IGenericRepo supporting exactly the query the retention
 // path issues: a CreatedAt < cutoff filter, ordered by Id, paged by limit/offset.
 type fakeAuditRepo struct {
-	dbsql.IGenericRepo[entities.AuditLog]
-	rows      []*entities.AuditLog
+	dbsql.IGenericRepo[AuditLog]
+	rows      []*AuditLog
 	nextID    int64
 	deleteErr error
 	// deletes records every Delete call so a test can assert none happened.
 	deletes int
 }
 
-func (f *fakeAuditRepo) matching(filters []sqldataenums.Filter) []*entities.AuditLog {
-	out := make([]*entities.AuditLog, 0, len(f.rows))
+func (f *fakeAuditRepo) matching(filters []sqldataenums.Filter) []*AuditLog {
+	out := make([]*AuditLog, 0, len(f.rows))
 	for _, row := range f.rows {
 		keep := true
 		for _, filter := range filters {
@@ -52,7 +51,7 @@ func (f *fakeAuditRepo) matching(filters []sqldataenums.Filter) []*entities.Audi
 	return out
 }
 
-func (f *fakeAuditRepo) Get(_ context.Context, _ string, limit uint64, offset uint64, filters []sqldataenums.Filter, _ []sqldataenums.Sorter) ([]*entities.AuditLog, uint64, error) {
+func (f *fakeAuditRepo) Get(_ context.Context, _ string, limit uint64, offset uint64, filters []sqldataenums.Filter, _ []sqldataenums.Sorter) ([]*AuditLog, uint64, error) {
 	matched := f.matching(filters)
 	total := uint64(len(matched))
 	if offset > total {
@@ -65,7 +64,7 @@ func (f *fakeAuditRepo) Get(_ context.Context, _ string, limit uint64, offset ui
 	return page, total, nil
 }
 
-func (f *fakeAuditRepo) Create(_ context.Context, _ string, model entities.AuditLog) (uint64, error) {
+func (f *fakeAuditRepo) Create(_ context.Context, _ string, model AuditLog) (uint64, error) {
 	f.nextID++
 	model.Id = f.nextID
 	cp := model
@@ -82,7 +81,7 @@ func (f *fakeAuditRepo) Delete(_ context.Context, _ string, filters []sqldataenu
 	for _, row := range f.matching(filters) {
 		doomed[row.Id] = true
 	}
-	kept := make([]*entities.AuditLog, 0, len(f.rows))
+	kept := make([]*AuditLog, 0, len(f.rows))
 	for _, row := range f.rows {
 		if !doomed[row.Id] {
 			kept = append(kept, row)
@@ -101,33 +100,33 @@ func seedAuditRows(old, recent int) *fakeAuditRepo {
 	now := time.Now().UTC().Unix()
 	for i := 0; i < old; i++ {
 		repo.nextID++
-		repo.rows = append(repo.rows, &entities.AuditLog{
-			Id: repo.nextID, Action: ActionLoginSuccess, ActorEmail: fmt.Sprintf("old%d@example.test", i),
+		repo.rows = append(repo.rows, &AuditLog{
+			Id: repo.nextID, Action: "login.success", ActorEmail: fmt.Sprintf("old%d@example.test", i),
 			Outcome: OutcomeSuccess, CreatedAt: ancient + int64(i),
 		})
 	}
 	for i := 0; i < recent; i++ {
 		repo.nextID++
-		repo.rows = append(repo.rows, &entities.AuditLog{
-			Id: repo.nextID, Action: ActionLoginFailure, ActorEmail: fmt.Sprintf("new%d@example.test", i),
+		repo.rows = append(repo.rows, &AuditLog{
+			Id: repo.nextID, Action: "login.failure", ActorEmail: fmt.Sprintf("new%d@example.test", i),
 			Outcome: OutcomeDenied, CreatedAt: now - int64(i),
 		})
 	}
 	return repo
 }
 
-func readArchive(t *testing.T, path string) []entities.AuditLog {
+func readArchive(t *testing.T, path string) []AuditLog {
 	t.Helper()
 	f, err := os.Open(path)
 	if err != nil {
 		t.Fatalf("open archive: %v", err)
 	}
 	defer f.Close()
-	var out []entities.AuditLog
+	var out []AuditLog
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
-		var row entities.AuditLog
+		var row AuditLog
 		if err := json.Unmarshal(sc.Bytes(), &row); err != nil {
 			t.Fatalf("archive line is not valid JSON: %v", err)
 		}
@@ -143,7 +142,7 @@ func readArchive(t *testing.T, path string) []entities.AuditLog {
 // archive, and rows inside the window are untouched.
 func TestPurgeArchivesExpiredRowsAndKeepsRecentOnes(t *testing.T) {
 	repo := seedAuditRows(3, 2)
-	svc := &auditService{repo: repo}
+	svc := &service{repo: repo}
 	dir := t.TempDir()
 
 	res, err := svc.PurgeOlderThan(context.Background(), 30, dir)
@@ -160,7 +159,7 @@ func TestPurgeArchivesExpiredRowsAndKeepsRecentOnes(t *testing.T) {
 	}
 	// Content must survive the round trip, not just the row count — an archive of empty
 	// records would satisfy a count-only assertion and be worthless in an investigation.
-	if archived[0].ActorEmail != "old0@example.test" || archived[0].Action != ActionLoginSuccess {
+	if archived[0].ActorEmail != "old0@example.test" || archived[0].Action != "login.success" {
 		t.Fatalf("archived row lost its content: %+v", archived[0])
 	}
 
@@ -170,7 +169,7 @@ func TestPurgeArchivesExpiredRowsAndKeepsRecentOnes(t *testing.T) {
 		switch row.Action {
 		case ActionAuditPurge:
 			purgeRecords++
-		case ActionLoginFailure:
+		case "login.failure":
 			remainingRecent++
 		default:
 			t.Fatalf("an expired row survived the purge: %+v", row)
@@ -188,14 +187,14 @@ func TestPurgeArchivesExpiredRowsAndKeepsRecentOnes(t *testing.T) {
 // that was deliberately trimmed from one that never existed.
 func TestPurgeRecordsItselfWithCutoffAndArchiveName(t *testing.T) {
 	repo := seedAuditRows(2, 0)
-	svc := &auditService{repo: repo}
+	svc := &service{repo: repo}
 
 	res, err := svc.PurgeOlderThan(context.Background(), 30, t.TempDir())
 	if err != nil {
 		t.Fatalf("PurgeOlderThan: %v", err)
 	}
 
-	var marker *entities.AuditLog
+	var marker *AuditLog
 	for _, row := range repo.rows {
 		if row.Action == ActionAuditPurge {
 			marker = row
@@ -223,7 +222,7 @@ func TestPurgeRecordsItselfWithCutoffAndArchiveName(t *testing.T) {
 // deleted. A retention run may fail; it may not lose history.
 func TestPurgeDeletesNothingWhenArchiveCannotBeWritten(t *testing.T) {
 	repo := seedAuditRows(4, 1)
-	svc := &auditService{repo: repo}
+	svc := &service{repo: repo}
 
 	// A regular file where the archive directory should be: MkdirAll cannot create a
 	// directory underneath it on any supported platform.
@@ -258,7 +257,7 @@ func TestPurgeDeletesNothingWhenArchiveCannotBeWritten(t *testing.T) {
 func TestPurgeKeepsArchiveWhenDeleteFails(t *testing.T) {
 	repo := seedAuditRows(2, 0)
 	repo.deleteErr = fmt.Errorf("database is locked")
-	svc := &auditService{repo: repo}
+	svc := &service{repo: repo}
 	dir := t.TempDir()
 
 	_, err := svc.PurgeOlderThan(context.Background(), 30, dir)
@@ -281,7 +280,7 @@ func TestPurgeKeepsArchiveWhenDeleteFails(t *testing.T) {
 func TestPurgeArchivesEveryRowAcrossMultipleBatches(t *testing.T) {
 	const rows = auditArchiveBatch*2 + 7
 	repo := seedAuditRows(rows, 3)
-	svc := &auditService{repo: repo}
+	svc := &service{repo: repo}
 
 	res, err := svc.PurgeOlderThan(context.Background(), 30, t.TempDir())
 	if err != nil {
@@ -299,7 +298,7 @@ func TestPurgeArchivesEveryRowAcrossMultipleBatches(t *testing.T) {
 // cluttering the trail every single day.
 func TestPurgeWithNothingExpiredIsANoOp(t *testing.T) {
 	repo := seedAuditRows(0, 5)
-	svc := &auditService{repo: repo}
+	svc := &service{repo: repo}
 	dir := t.TempDir()
 
 	res, err := svc.PurgeOlderThan(context.Background(), 30, dir)
@@ -323,7 +322,7 @@ func TestPurgeWithNothingExpiredIsANoOp(t *testing.T) {
 
 func TestPurgeRejectsNonPositiveRetention(t *testing.T) {
 	repo := seedAuditRows(3, 0)
-	svc := &auditService{repo: repo}
+	svc := &service{repo: repo}
 
 	if _, err := svc.PurgeOlderThan(context.Background(), 0, t.TempDir()); err == nil {
 		t.Fatal("a zero retention window would delete the entire trail and must be refused")

@@ -118,6 +118,11 @@ func Policy() []PolicyRule {
 		{Path: "/api/system", Description: "Restart, update, factory reset, secure wipe", Viewer: none, Operator: none},
 		{Path: "/api/settings/users", Description: "Manage users and their roles", Viewer: none, Operator: none},
 		{Path: "/api/settings/roles", Description: "See the roles that can be assigned", Viewer: none, Operator: none},
+		// The audit trail names who watched, downloaded and deleted which footage, so it is
+		// itself sensitive: it is a record of people's viewing, not just of configuration.
+		// Admin-only, and read-only for everyone — there is no delete route at all, because a
+		// trail the recorded party can trim is not a trail.
+		{Path: "/api/audit", Description: "Review the audit trail (who viewed, downloaded or deleted footage)", Viewer: none, Operator: none},
 	}
 }
 

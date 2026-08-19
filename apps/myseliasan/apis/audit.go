@@ -49,7 +49,19 @@ func (a *auditApi) list(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	limit, _ := strconv.ParseUint(q.Get("limit"), 10, 64)
 	offset, _ := strconv.ParseUint(q.Get("offset"), 10, 64)
-	rows, total, err := a.audit.List(r.Context(), limit, offset, q.Get("action"), q.Get("targetType"), q.Get("targetId"))
+	// Outcome, actor and the date range came free with the move to the shared trail —
+	// myseliasan's own List only ever offered the first three.
+	from, _ := strconv.ParseInt(q.Get("from"), 10, 64)
+	to, _ := strconv.ParseInt(q.Get("to"), 10, 64)
+	rows, total, err := a.audit.List(r.Context(), limit, offset, services.AuditFilter{
+		Action:     q.Get("action"),
+		Outcome:    q.Get("outcome"),
+		ActorEmail: q.Get("actorEmail"),
+		TargetType: q.Get("targetType"),
+		TargetId:   q.Get("targetId"),
+		From:       from,
+		To:         to,
+	})
 	if err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return

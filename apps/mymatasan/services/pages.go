@@ -28,6 +28,7 @@ const (
 	PageRecordings    = "recordings"
 	PageNotifications = "notifications"
 	PageSettings      = "settings"
+	PageAudit         = "audit"
 )
 
 // Level ids. Cumulative, in this order, wherever a page declares more than one.
@@ -151,6 +152,14 @@ func Pages() sharedservices.PageCatalog {
 			{Id: PageSettings, Group: groupSystem, Order: 20, AdminOnly: true,
 				Levels: []sharedservices.PageLevel{{Id: LevelManage, Grants: []sharedservices.PathGrant{
 					canAll("/api/settings"), canAll("/api/system"), canAll("/api/pairing"),
+				}}}},
+			// The audit trail is its own page rather than a corner of Settings, because it is
+			// what an auditor is sent to look at and it answers a different question from
+			// every other screen: not "how is this configured" but "what did people do".
+			// READ ONLY at every level — the API has no mutating route to grant.
+			{Id: PageAudit, Group: groupSystem, Order: 30, AdminOnly: true,
+				Levels: []sharedservices.PageLevel{{Id: LevelView, Grants: []sharedservices.PathGrant{
+					canRead("/api/audit"),
 				}}}},
 		},
 

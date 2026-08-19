@@ -39,6 +39,14 @@ const (
 	// MetricDiskMitigationTotal counts disk-guard actions (purge | overwrite | pause |
 	// resume).
 	MetricDiskMitigationTotal = "mymatasan_disk_mitigation_total"
+	// MetricAuditWriteFailuresTotal counts audit entries that could not be persisted.
+	// The audit service swallows its own write errors on purpose (auditing must never
+	// fail the action being audited), so this counter is the ONLY symptom a trail that
+	// has stopped recording produces — every other signal stays green while the evidence
+	// history quietly develops a hole.
+	MetricAuditWriteFailuresTotal = "mymatasan_audit_write_failures_total"
+	// MetricAuditRetentionPurgedTotal counts audit rows removed by age-based retention.
+	MetricAuditRetentionPurgedTotal = "mymatasan_audit_retention_purged_total"
 )
 
 // DescribeMetrics registers help text so a scrape is readable by someone who did not

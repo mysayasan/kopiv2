@@ -1,106 +1,57 @@
 package services
 
 import (
-	"context"
-	"encoding/json"
-	"time"
-
-	"github.com/mysayasan/kopiv2/apps/myseliasan/entities"
-	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
+	sharedaudit "github.com/mysayasan/kopiv2/domain/shared/audit"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
 
-// AuditEntry is the caller-facing shape for recording a sensitive action. The
-// service fills in CreatedAt and marshals Metadata; Outcome defaults to "success".
-type AuditEntry struct {
-	Action     string
-	ActorId    int64
-	ActorEmail string
-	ActorRole  int64
-	TargetType string
-	TargetId   string
-	Outcome    string // "success" (default) | "denied" | "error"
-	Detail     string
-	Metadata   map[string]any
-	ClientIp   string
-}
+// The audit trail now lives in domain/shared/audit, because it was never
+// control-plane-specific. myidsan had written the same entity, service and API
+// independently, and the two had already begun to drift — only myidsan truncated hostile
+// input, only myidsan had retention, only myidsan recorded the user agent. mymatasan, the
+// app holding the actual video, had no trail at all. Three copies of an audit log is three
+// chances for the one that matters in an investigation to be the one nobody finished.
+//
+// These aliases keep myseliasan's call sites unchanged. The shared entity keeps the
+// struct name AuditLog, so it still maps to the existing `audit_log` table; the only
+// schema change is the additive user_agent column and the actor index, both of which the
+// auto-migrator applies on first boot.
 
-// IAuditService is the append-only audit trail for sensitive control-plane actions.
-// It exposes only recording and reading — never update or delete — so the trail is
-// tamper-evident.
-type IAuditService interface {
-	// Record persists one audit entry. It is best-effort: a failure to write is logged
-	// but never propagated, so auditing can never block or fail the audited action.
-	Record(ctx context.Context, e AuditEntry)
-	// List returns audit entries newest-first, optionally narrowed by action /
-	// target type / target id (empty = no filter on that field).
-	List(ctx context.Context, limit, offset uint64, action, targetType, targetId string) ([]*entities.AuditLog, uint64, error)
-}
+type (
+	// AuditEntry is the caller-facing shape for recording a sensitive action.
+	AuditEntry = sharedaudit.Entry
+	// AuditFilter narrows a listing. New here — myseliasan's own List took three bare
+	// strings, and inherits filtering by outcome, actor and date range from the shared one.
+	AuditFilter = sharedaudit.Filter
+	// IAuditService is the append-only trail: record and read, never update or delete.
+	IAuditService = sharedaudit.IService
+)
 
-type auditService struct {
-	repo dbsql.IGenericRepo[entities.AuditLog]
-	logf func(format string, args ...any)
-}
+// Outcome values, re-exported so call sites need no second import.
+const (
+	OutcomeSuccess = sharedaudit.OutcomeSuccess
+	OutcomeDenied  = sharedaudit.OutcomeDenied
+	OutcomeError   = sharedaudit.OutcomeError
+)
 
-// NewAuditService builds the audit service over its own table. logf receives
+// Control-plane action names. Kept per-app rather than shared: the verbs are what THIS
+// app does, and a shared list of every app's actions would be a list nobody can read.
+//
+// Convention: "<subject>.<verb>", lower_snake for multi-word verbs.
+const (
+	ActionNodeAdopt     = "node.adopt"
+	ActionNodeRelease   = "node.release"
+	ActionNodeBlock     = "node.block"
+	ActionNodeForget    = "node.forget"
+	ActionNodeCommand   = "node.command"
+	ActionRbacSetRole   = "rbac.set_role"
+	ActionFleetKeyRotate = "fleet.key_rotate"
+	ActionBackupExport  = "backup.export"
+	ActionBackupRestore = "backup.restore"
+)
+
+// NewAuditService builds the trail over the control plane's database. logf receives
 // write-failure diagnostics (may be nil).
 func NewAuditService(db dbsql.IDbCrud, logf func(format string, args ...any)) IAuditService {
-	return &auditService{
-		repo: dbsql.NewGenericRepo[entities.AuditLog](db),
-		logf: logf,
-	}
-}
-
-func (s *auditService) Record(ctx context.Context, e AuditEntry) {
-	outcome := e.Outcome
-	if outcome == "" {
-		outcome = "success"
-	}
-	meta := ""
-	if len(e.Metadata) > 0 {
-		if b, err := json.Marshal(e.Metadata); err == nil {
-			meta = string(b)
-		}
-	}
-	row := entities.AuditLog{
-		Action:     e.Action,
-		ActorId:    e.ActorId,
-		ActorEmail: e.ActorEmail,
-		ActorRole:  e.ActorRole,
-		TargetType: e.TargetType,
-		TargetId:   e.TargetId,
-		Outcome:    outcome,
-		Detail:     e.Detail,
-		Metadata:   meta,
-		ClientIp:   e.ClientIp,
-		CreatedAt:  time.Now().Unix(),
-	}
-	if _, err := s.repo.Create(ctx, "", row); err != nil && s.logf != nil {
-		s.logf("audit write failed for %q on %s/%s: %v", e.Action, e.TargetType, e.TargetId, err)
-	}
-}
-
-func (s *auditService) List(ctx context.Context, limit, offset uint64, action, targetType, targetId string) ([]*entities.AuditLog, uint64, error) {
-	if limit == 0 || limit > 500 {
-		limit = 100
-	}
-	var filters []sqldataenums.Filter
-	if action != "" {
-		filters = append(filters, sqldataenums.Filter{FieldName: "Action", Compare: sqldataenums.Equal, Value: action})
-	}
-	if targetType != "" {
-		filters = append(filters, sqldataenums.Filter{FieldName: "TargetType", Compare: sqldataenums.Equal, Value: targetType})
-	}
-	if targetId != "" {
-		filters = append(filters, sqldataenums.Filter{FieldName: "TargetId", Compare: sqldataenums.Equal, Value: targetId})
-	}
-	sorters := []sqldataenums.Sorter{{FieldName: "Id", Sort: sqldataenums.DESC}}
-	rows, total, err := s.repo.Get(ctx, "", limit, offset, filters, sorters)
-	if err != nil {
-		if isNoResultFoundErr(err) {
-			return []*entities.AuditLog{}, 0, nil
-		}
-		return nil, 0, err
-	}
-	return rows, total, nil
+	return sharedaudit.NewServiceFromDb(db, logf)
 }

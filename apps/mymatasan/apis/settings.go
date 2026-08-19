@@ -2,6 +2,7 @@ package apis
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -27,12 +28,14 @@ type settingsApi struct {
 	// roles lets an admin see which roles exist so they can assign one. Assignment itself
 	// goes through the normal user create/update, which takes a roleId.
 	roles sharedservices.IAccessRoleService
+	// audit records account and authorization changes.
+	audit *Auditor
 }
 
 // NewSettingsApi registers runtime settings routes. browseRoots are extra
 // site-specific directories the file picker may browse (config decoder.browseRoots).
-func NewSettingsApi(router *mux.Router, serv services.IRuntimeSettingsService, camera services.ICameraService, userServ services.ILocalUserService, notifServ services.INotificationSettingsService, healthServ services.IHealthSettingsService, machineHealth services.IMachineHealthSettingsService, machineMetrics services.IMachineMetricsProvider, visionTool services.VisionToolSettings, ffmpeg *services.FFmpegInstaller, pyRuntime *services.PythonInstaller, browseRoots []string, roles sharedservices.IAccessRoleService) {
-	handler := &settingsApi{serv: serv, camera: camera, userServ: userServ, notifServ: notifServ, healthServ: healthServ, machineHealth: machineHealth, machineMetrics: machineMetrics, visionTool: visionTool, ffmpeg: ffmpeg, pyRuntime: pyRuntime, browseRoots: browseRoots, roles: roles}
+func NewSettingsApi(router *mux.Router, serv services.IRuntimeSettingsService, camera services.ICameraService, userServ services.ILocalUserService, notifServ services.INotificationSettingsService, healthServ services.IHealthSettingsService, machineHealth services.IMachineHealthSettingsService, machineMetrics services.IMachineMetricsProvider, visionTool services.VisionToolSettings, ffmpeg *services.FFmpegInstaller, pyRuntime *services.PythonInstaller, browseRoots []string, roles sharedservices.IAccessRoleService, audit *Auditor) {
+	handler := &settingsApi{serv: serv, camera: camera, userServ: userServ, notifServ: notifServ, healthServ: healthServ, machineHealth: machineHealth, machineMetrics: machineMetrics, visionTool: visionTool, ffmpeg: ffmpeg, pyRuntime: pyRuntime, browseRoots: browseRoots, roles: roles, audit: audit}
 	group := router.PathPrefix("/settings").Subrouter()
 
 	group.HandleFunc("/runtime", handler.getRuntime).Methods("GET")
@@ -435,9 +438,12 @@ func (a *settingsApi) createUser(w http.ResponseWriter, r *http.Request) {
 	}
 	user, err := a.userServ.Create(r.Context(), body)
 	if err != nil {
+		a.audit.Failure(r, services.ActionUserCreate, services.TargetUser, body.Username, err.Error(), nil)
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return
 	}
+	a.audit.Success(r, services.ActionUserCreate, services.TargetUser, strconv.FormatInt(user.Id, 10),
+		fmt.Sprintf("created user %q", user.Username), map[string]any{"roleId": user.RoleId})
 	controllers.SendResult(w, user, "succeed")
 }
 
@@ -458,10 +464,24 @@ func (a *settingsApi) updateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, err := a.userServ.Update(r.Context(), id, body)
+	target := strconv.FormatUint(id, 10)
 	if err != nil {
+		a.audit.Failure(r, services.ActionUserUpdate, services.TargetUser, target, err.Error(), nil)
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return
 	}
+	// The RESULTING role is recorded rather than a before/after pair: the shared
+	// ILocalUserService has no by-id read, and widening an interface three apps implement
+	// just to decorate an audit entry is the wrong trade. "This user now holds role N, set
+	// by this actor at this time" is the security-relevant fact, and successive entries
+	// give the transition anyway.
+	meta := map[string]any{}
+	if user != nil {
+		meta["roleId"] = user.RoleId
+		meta["isActive"] = user.IsActive
+	}
+	a.audit.Success(r, services.ActionUserUpdate, services.TargetUser, target,
+		fmt.Sprintf("updated user %q", user.Username), meta)
 	controllers.SendResult(w, user, "succeed")
 }
 
@@ -498,10 +518,14 @@ func (a *settingsApi) deleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	count, err := a.userServ.Delete(r.Context(), id)
+	target := strconv.FormatUint(id, 10)
 	if err != nil {
+		a.audit.Failure(r, services.ActionUserDelete, services.TargetUser, target, err.Error(), nil)
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return
 	}
+	a.audit.Success(r, services.ActionUserDelete, services.TargetUser, target,
+		fmt.Sprintf("deleted user %s", target), nil)
 	controllers.SendResult(w, map[string]uint64{"deleted": count}, "succeed")
 }
 

@@ -1,4 +1,4 @@
-package services
+package audit
 
 import (
 	"context"
@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mysayasan/kopiv2/apps/myidsan/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	"github.com/mysayasan/kopiv2/infra/db/bootstrap"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
@@ -29,7 +28,7 @@ func TestPurgeAgainstRealSqlite(t *testing.T) {
 			AutoCreateSchema:   true,
 			AutoMigrate:        true,
 		},
-		Entities: []any{entities.AuditLog{}},
+		Entities: []any{AuditLog{}},
 	}
 	if _, err := bootstrap.Ensure(ctx, opts); err != nil {
 		t.Fatalf("bootstrap.Ensure: %v", err)
@@ -42,8 +41,8 @@ func TestPurgeAgainstRealSqlite(t *testing.T) {
 	if closer, ok := crud.(interface{ Close() error }); ok {
 		defer closer.Close()
 	}
-	repo := dbsql.NewGenericRepo[entities.AuditLog](crud)
-	svc := NewAuditService(repo, nil)
+	repo := dbsql.NewGenericRepo[AuditLog](crud)
+	svc := NewService(repo, nil)
 
 	now := time.Now().UTC()
 	// Three rows well outside a 30-day window, two comfortably inside it, and one just
@@ -60,8 +59,8 @@ func TestPurgeAgainstRealSqlite(t *testing.T) {
 		{"recent2@example.test", now},
 	}
 	for _, s := range seed {
-		if _, err := repo.Create(ctx, "", entities.AuditLog{
-			Action:     ActionLoginSuccess,
+		if _, err := repo.Create(ctx, "", AuditLog{
+			Action:     "login.success",
 			ActorEmail: s.email,
 			Outcome:    OutcomeSuccess,
 			TargetType: "user",

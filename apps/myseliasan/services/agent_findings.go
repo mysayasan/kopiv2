@@ -664,7 +664,7 @@ func fleetFindings(ctx context.Context, fleet digestFleetSource, now time.Time) 
 }
 
 func auditFindings(ctx context.Context, audit IAuditService, from int64) []Finding {
-	rows, _, err := audit.List(ctx, 200, 0, "", "", "")
+	rows, _, err := audit.List(ctx, 200, 0, AuditFilter{})
 	if err != nil {
 		return nil
 	}
