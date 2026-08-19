@@ -9,8 +9,12 @@ import (
 	"time"
 )
 
-// captureLogs redirects recovered-panic reports for the duration of a test.
-func captureLogs(t *testing.T) *[]string {
+// captureLogs redirects recovered-panic reports for the duration of a test. It returns a
+// SNAPSHOT function rather than a pointer to the slice: the logger runs on the panicking
+// goroutine and the assertions run on the test goroutine, so handing out the slice itself
+// leaves every caller reading it unsynchronized — the append was already locked, the read
+// never was.
+func captureLogs(t *testing.T) func() []string {
 	t.Helper()
 	var mu sync.Mutex
 	lines := []string{}
@@ -20,7 +24,11 @@ func captureLogs(t *testing.T) *[]string {
 		mu.Unlock()
 	})
 	t.Cleanup(func() { SetLogger(nil) })
-	return &lines
+	return func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), lines...)
+	}
 }
 
 // The whole point: a panicking background task must not take the process down.
@@ -40,8 +48,9 @@ func TestGo_RecoversPanic(t *testing.T) {
 	}
 	// Give the deferred recover a moment to log.
 	time.Sleep(50 * time.Millisecond)
-	if len(*logs) == 0 || !strings.Contains((*logs)[0], "boom") {
-		t.Fatalf("panic was not reported: %v", *logs)
+	got := logs()
+	if len(got) == 0 || !strings.Contains(got[0], "boom") {
+		t.Fatalf("panic was not reported: %v", got)
 	}
 }
 

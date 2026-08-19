@@ -29,6 +29,13 @@ on:
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/go-check.yml'
+  # The race detector runs on a schedule rather than per-PR. It is several times slower
+  # than a plain test run, and a check that doubles PR latency gets worked around. Nightly
+  # keeps the signal without taxing every push; workflow_dispatch is there so a branch
+  # touching concurrent code can be raced on demand before it merges.
+  schedule:
+    - cron: '17 18 * * *' # 02:17 MYT — after the working day, before the next one.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -68,6 +75,48 @@ jobs:
 
       - name: Test
         run: go test ./... -count=1
+
+  # The race detector. Until this existed, NOTHING in CI ever ran `-race`, in a tree that is
+  # unusually concurrent: a recorder goroutine and a segment watcher per camera, four
+  # independent monitor loops (camera health, machine health, vision, analytics), the
+  # node-dialed control channel, the media-relay fan-out and the notification hub. That is
+  # precisely the code where a data race survives review, hides for months, and then
+  # corrupts a recording under load rather than failing a test.
+  #
+  # CGO_ENABLED is deliberately 1 here and only here: -race needs cgo, so this job cannot
+  # match the release build's static-binary settings. build-vet-test above keeps CGO off and
+  # remains the check that a cgo-only dependency can never sneak in.
+  #
+  # Not continue-on-error. A reported race is a real defect, and this job exists to be
+  # believed — a nightly that is permanently orange teaches people to ignore it.
+  race:
+    name: race detector (nightly)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download modules
+        run: go mod download
+
+      # -count=1 defeats the test cache: a cached PASS from the non-race job would
+      # otherwise let packages skip instrumented execution entirely.
+      # The timeout is per-test-binary and well above the default 10m, because the
+      # instrumented build is slow enough that a package with real concurrency tests
+      # (infra/recording, infra/control, domain/shared/fleetnode) can legitimately
+      # take minutes.
+      - name: Test with race detector
+        env:
+          CGO_ENABLED: '1'
+        run: go test ./... -race -count=1 -timeout 30m
 
   vulncheck:
     name: govulncheck (advisory)

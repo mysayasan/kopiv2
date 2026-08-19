@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,13 +17,22 @@ import (
 
 // --- in-memory fakes for the two generic repos the registry uses ----------
 
+// fakeSettingsRepo stands in for the control_setting table.
+//
+// The mutex is not decoration. The registry's heartbeat/grace-window paths touch settings
+// from the goroutines under test while the test body reads them, so an unsynchronized fake
+// reports a data race that belongs to the TEST rather than the code — noise that would sit
+// in every nightly -race run and train people to ignore it.
 type fakeSettingsRepo struct {
 	dbsql.IGenericRepo[entities.ControlSetting]
+	mu     sync.Mutex
 	rows   []*entities.ControlSetting
 	nextID int64
 }
 
 func (f *fakeSettingsRepo) GetByUnique(_ context.Context, _ string, _ string, uids ...any) (*entities.ControlSetting, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	key, _ := uids[0].(string)
 	for _, r := range f.rows {
 		if r.Key == key {
@@ -33,6 +43,8 @@ func (f *fakeSettingsRepo) GetByUnique(_ context.Context, _ string, _ string, ui
 	return nil, errors.New("no result found")
 }
 func (f *fakeSettingsRepo) Create(_ context.Context, _ string, m entities.ControlSetting) (uint64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.nextID++
 	m.Id = f.nextID
 	cp := m
@@ -40,6 +52,8 @@ func (f *fakeSettingsRepo) Create(_ context.Context, _ string, m entities.Contro
 	return uint64(f.nextID), nil
 }
 func (f *fakeSettingsRepo) UpdateById(_ context.Context, _ string, m entities.ControlSetting) (uint64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for _, r := range f.rows {
 		if r.Id == m.Id {
 			*r = m

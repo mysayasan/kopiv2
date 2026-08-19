@@ -1,6 +1,7 @@
 package services
 
 import (
+	"sync"
 	"time"
 
 	"github.com/mysayasan/kopiv2/apps/mypintusan/entities"
@@ -86,6 +87,26 @@ type DoorEvent struct {
 type DoorMachine struct {
 	door entities.Door
 
+	// mu guards every mutable field below.
+	//
+	// A door machine is driven from several goroutines at once and always was: the OSDP bus
+	// goroutine feeds ContactChanged and RequestToExit as the hardware reports them, the
+	// decision path calls Grant, the schedule worker calls SetFreeAccessSchedule, and the
+	// controller's Run loop calls Tick on its own timer. Controller.mu only ever protected the
+	// MAP of machines — it is released before Tick runs — so the machine's own fields were
+	// unsynchronized across all of those callers.
+	//
+	// The consequence is not theoretical for a door: shuntUntil is written by Grant/REX and read
+	// by ContactChanged to decide whether an opening is expected. Losing that write raises a
+	// forced-door alarm on a legitimate entry; losing the contactOpen write in the other
+	// direction means a door that was forced never alarms at all.
+	//
+	// The lock lives here rather than in the Controller because the machine is the unit of
+	// state, and a caller must not be able to hold half of it. Events are returned to the caller
+	// AFTER the lock is dropped, so emitting them can never re-enter the machine under its own
+	// lock.
+	mu sync.Mutex
+
 	state       DoorState
 	contactOpen bool
 
@@ -127,16 +148,32 @@ func NewDoorMachine(door entities.Door) *DoorMachine {
 }
 
 // State reports where the strike is.
-func (m *DoorMachine) State() DoorState { return m.state }
+func (m *DoorMachine) State() DoorState {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.state
+}
 
 // ContactOpen reports the last known door position.
-func (m *DoorMachine) ContactOpen() bool { return m.contactOpen }
+func (m *DoorMachine) ContactOpen() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.contactOpen
+}
 
 // InAlarm reports whether a forced or held-open condition is currently active.
-func (m *DoorMachine) InAlarm() (forced, held bool) { return m.forcedActive, m.heldActive }
+func (m *DoorMachine) InAlarm() (forced, held bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.forcedActive, m.heldActive
+}
 
 // FreeAccess reports whether the door is currently standing unlocked on a schedule.
-func (m *DoorMachine) FreeAccess() bool { return m.freeAccessActive }
+func (m *DoorMachine) FreeAccess() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.freeAccessActive
+}
 
 // ContactBound reports whether this door can detect that it was actually opened.
 //
@@ -150,6 +187,8 @@ func (m *DoorMachine) ContactBound() bool { return m.door.ContactDeviceKey != ""
 // a holder with the accessibility extension gets their longer time here without the machine
 // needing to know why.
 func (m *DoorMachine) Grant(now time.Time, seconds int) []DoorEvent {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.lockdown {
 		// Defensive: the decision path already denies under lockdown. Refusing again here means no
 		// other caller — an operator override, a flow, a future API — can route around it.
@@ -180,12 +219,16 @@ func (m *DoorMachine) Grant(now time.Time, seconds int) []DoorEvent {
 // has to do is stop treating that opening as a break-in. Making REX drive the strike would put
 // egress on the software path, which is exactly what the life-safety constraint forbids.
 func (m *DoorMachine) RequestToExit(now time.Time) []DoorEvent {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.shuntUntil = now.Add(time.Duration(m.ShuntSeconds) * time.Second)
 	return nil
 }
 
 // ContactChanged feeds the door-position sensor.
 func (m *DoorMachine) ContactChanged(now time.Time, open bool) []DoorEvent {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if open == m.contactOpen {
 		return nil
 	}
@@ -218,6 +261,8 @@ func (m *DoorMachine) ContactChanged(now time.Time, open bool) []DoorEvent {
 // Tick advances the timers. Callers drive it on their own cadence; it is idempotent, so calling it
 // more often than necessary costs nothing but calling it too rarely delays an alarm.
 func (m *DoorMachine) Tick(now time.Time) []DoorEvent {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	var evs []DoorEvent
 
 	// Relock when the unlock timer expires — unless the door is standing open on a schedule.
@@ -249,6 +294,8 @@ func (m *DoorMachine) Tick(now time.Time) []DoorEvent {
 // which is the failure this gate exists to prevent, and it is not hypothetical on a site whose
 // holidays vary by state.
 func (m *DoorMachine) SetFreeAccessSchedule(now time.Time, on bool) []DoorEvent {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if on == m.freeAccessScheduled {
 		return nil
 	}
@@ -296,6 +343,8 @@ func (m *DoorMachine) requiresFirstPersonIn() bool {
 // failure mode of this application is a person trapped behind a door. Lockdown stops people getting
 // IN; nothing here can stop them getting out.
 func (m *DoorMachine) SetLockdown(now time.Time, on bool) []DoorEvent {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if on == m.lockdown {
 		return nil
 	}
