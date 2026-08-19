@@ -303,7 +303,55 @@ to each node, take a claim code off each node, and `POST /api/nodes/adopt`.
   that writes JSON in bash and reads it in python must use a relative path.
 - `python3` is not on PATH here; `python` is.
 
-## What still needs cameras
+## Cameras: how to give the nodes something to record
+
+**ffmpeg cannot serve RTSP.** `-rtsp_flags listen` is a DEMUXER option; `ffmpeg -h muxer=rtsp`
+lists only rtpflags/rtsp_transport/min_port/max_port/buffer_size/pkt_size. A real RTSP
+server is not optional — mediamtx is one static Go binary and works.
+
+```
+# in the node image AND the source image
+apt-get install -y --no-install-recommends ffmpeg
+# source container: mediamtx + one ffmpeg publisher per path
+ffmpeg -re -f lavfi -i "mandelbrot=size=640x480:rate=15" -c:v libx264 -preset ultrafast   -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:8554/cam1
+```
+
+Then on the node: `POST /api/cameras/discovered` to add each camera and
+`PUT /api/recording/config` with `segmentMinutes: 1` so a bench sees segments in a minute
+rather than an hour.
+
+### Traps, every one of which cost time
+
+- **The ffmpeg path is seeded into `runtime_setting` at FIRST boot** and never re-read from
+  config. A node that first booted without ffmpeg keeps whatever it captured — in this run,
+  the repo's WINDOWS path, inside a Linux container, reporting `found: false`. Patch it with
+  `PUT /api/settings/runtime` (`decoder.mjpeg.ffmpegPath`), not by editing config.json.
+- **Two cameras at the same host:port collapse into one.** The second save overwrote the
+  first and returned the same id. Give the source container a network ALIAS per camera
+  (`docker network connect --alias cam1host --alias cam2host`) so they are distinct devices.
+- **The image has no procps.** `pkill` and `ps` do not exist, so a `pkill`-based "cut the
+  stream" step silently does nothing and the bench measures a cut that never happened —
+  which is exactly how the first run of the W1-3 bench produced two confident, wrong
+  failures. Walk `/proc/[0-9]*/cmdline` instead.
+- **To hold a publisher down, SIGSTOP it, do not kill it.** Publishers run under a
+  `while true` supervisor that restarts them in seconds; a stopped process is still a live
+  process, so the supervisor leaves it alone and the camera stays silent for exactly as long
+  as the bench says. mediamtx then reports `no stream is available on path 'cam1'`.
+- **Do not drive `docker exec` from Git Bash.** MSYS rewrites any argument that looks like an
+  absolute path, so `docker exec c bash /scene.sh` becomes `C:/msys64/scene.sh`. Use
+  PowerShell (as the memory already says for `docker -v`) or `MSYS_NO_PATHCONV=1` with `//`.
+- **PowerShell 5.1 reads a BOM-less file as ANSI.** A bench script written as UTF-8 with an
+  em-dash in a comment dies with "string is missing the terminator". Keep `.ps1` files ASCII,
+  and never `Set-Content -Encoding ascii` a bash script — it writes CRLF and bash then fails
+  with `$'': command not found`.
+- **The disk guard is real and it will stop your bench.** `/data` on a bind mount reports the
+  HOST volume, so a nearly-full drive pauses recording fleet-wide with "Recording paused —
+  low disk space … resumes automatically below 80%". Put the bench data dir on a roomy drive
+  rather than disabling the mitigation — the guard working is a feature, and a node's
+  adoption survives moving its data dir.
+
+## What each camera bench still needs
+
 
 W1-3 (recording continuity) and W1-5 (camera tamper) both need real RTSP sources on the
 nodes, which the harness above does not provide: the node containers are
@@ -313,3 +361,22 @@ generated stream with ffmpeg's own RTSP listener
 rather than pulling in a media server. Use `testsrc2`/`mandelbrot`, never a flat gray
 frame — flat synthetic frames hash near-identically, so the perceptual-hash dedup collapses
 them in capture and they are useless as tamper test data.
+
+### W1-3 · recording continuity — the coverage model is proven, the alert is not
+
+Done: the coverage endpoint measured a real gap on real segments (21.19% on a recording
+camera vs 2.81% on one whose source had died). Still owed: the ALERT, which needs
+`FailureThreshold` consecutive CLOSED HOURS and therefore just over two hours of wall clock.
+Nothing about it can be compressed — `intervalMs` changes how often the sweep runs, not the
+hour granularity it scores. Leave a fleet running and come back.
+
+### W1-5 · camera tamper — covered/frozen/recovery proven, MOVED is broken
+
+Done, on live frames with the scene swapped underneath a real recorder: covered fires on a
+bright edge-free scene, recovery clears it, and frozen fires independently on a SHARP still
+frame without co-firing covered. Scene choices matter and are recorded in the plan.
+
+**MOVED never fires and cannot** — the plan's W1-5 section has the analysis. Not a bench
+problem: it compares consecutive samples (transient) while requiring a 3-sample streak
+(persistent), and no test in the repo drives it to an alert. Fix it before re-benching;
+there is nothing to observe until then.

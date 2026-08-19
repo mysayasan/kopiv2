@@ -16,9 +16,9 @@ lands the work.
 | **Phase 1 — Trust the system** |
 | W1-1 | myseliasan backup & restore (`.selbackup`) | F-01 | `feat/myseliasan-backup` | ✅ shipped (benched) |
 | W1-2 | Shared audit package + mymatasan audit log | F-02, F-22 | `feat/shared-audit` | ● built, not benched |
-| W1-3 | Recording continuity monitor + coverage report | F-03 | `feat/mymatasan-continuity` | ● built, not benched |
+| W1-3 | Recording continuity monitor + coverage report | F-03 | `feat/mymatasan-continuity` | ◑ half-benched |
 | W1-4 | Evidence export with integrity manifest | F-04 | `feat/mymatasan-evidence-export` | ● built, not benched |
-| W1-5 | Tamper / video-loss detection | F-05 | `feat/mymatasan-tamper` | ● built, not benched |
+| W1-5 | Tamper / video-loss detection | F-05 | `feat/mymatasan-tamper` | ◑ half-benched — **found a real defect, see below** |
 | W1-6 | Nightly `-race` CI job | F-21 | `ci/race-nightly` | ✅ shipped |
 | **Phase 2 — Operate at fleet scale** |
 | W2-1 | Fleet configuration policy + drift detection | F-06 | `feat/myseliasan-fleet-policy` | ✅ shipped |
@@ -244,6 +244,26 @@ be forged.
 
 ## W1-3 · Recording continuity monitor + coverage report — F-03
 
+### BENCH 2026-08-19 — the coverage read model ✅, the ALERT still owed
+
+Benched against real recorded segments on a real node with two RTSP cameras. The coverage
+endpoint was exercised on genuine footage, including a genuine gap: one camera reported
+21.19% coverage over the window (763 covered seconds, 14 segments) while the camera whose
+source had died reported 2.81% (101 seconds, 2 segments). The maths, the segment
+accounting and the endpoint all work on real data.
+
+It also produced, by accident, the exact condition this feature exists for: a camera whose
+source stopped while the node went on reporting `state: streaming, ffmpegRunning: true` and
+wrote no video for fourteen minutes, leaving a `.ts` open that never rolled. Reachability
+said healthy. Only coverage knew. That is F-03 stated as a demonstration rather than a
+claim.
+
+**Still owed: the ALERT.** It cannot be compressed. The monitor scores whole CLOSED hours
+and needs `FailureThreshold` (default 2) consecutive bad ones, so the shortest honest run is
+just over two hours — an overnight or long-running fleet, not a bench script. The harness to
+do it is now built and written down; what it needs is time.
+
+
 **Why.** `CameraHealthMonitor` probes TCP reachability with an RTSP DESCRIBE deep-check.
 It is well built and answers the wrong question. A wedged ffmpeg, a full disk, a
 quarantine loop, or a silently changed stream URL all leave the camera "online" while
@@ -369,6 +389,60 @@ and the gap is listed with its reason. An audit row names the exporter and the r
 ---
 
 ## W1-5 · Tamper / video-loss detection — F-05
+
+### BENCH 2026-08-19 — covered ✅, frozen ✅, recovery ✅, **moved is BROKEN**
+
+Benched against live frames: a real mymatasan node pulling a real RTSP stream, with the
+scene swapped underneath it. Tamper timings were compressed through the settings (2s
+samples, 3-sample streak, 10s frozen) — legitimate here because tamper is SAMPLE-driven,
+unlike continuity, which scores whole closed hours and cannot be sped up.
+
+What passed, on real video:
+
+- **COVERED** fired on a bright, edge-free scene (uniform mid-grey, mean luma ~0.69 — well
+  above the 0.12 low-light gate, so it was a genuine test and not one the low-light
+  suppression would have swallowed).
+- **RECOVERY** fired: "Camera view restored" when the scene came back. This is the crux the
+  design cares about — alerting samples are excluded from the baseline, so a covered lens
+  does not quietly become the camera's new normal and self-clear.
+- **FROZEN** fired independently on a SHARP still frame, and did NOT co-fire "blocked" —
+  so the two verdicts really are separable rather than one anomaly detector with two names.
+  (On a uniform grey scene both fire, which is correct: a bag over the lens is also a
+  picture that has stopped changing.)
+
+**MOVED never fired, and cannot.** It is not the bench: it is unreachable by construction.
+
+```go
+if prev != nil && vision.HistogramDistance(prev, fp) >= cfg.MovedDistance {
+        verdicts[TamperMoved] = true          // prev = the PREVIOUS SAMPLE
+}
+...
+if verdicts[kind] { st.streak[kind]++ } else { st.streak[kind] = 0 }   // needs 3 in a row
+```
+
+The signal is the distance between CONSECUTIVE samples — which is transient by nature —
+while `settle` demands `FailureThreshold` (default **3**) consecutive samples carrying the
+verdict. A camera that is physically turned changes its view ONCE: sample N differs wildly
+from N-1, then N+1 matches N because the new scene is stable. The streak resets to 0 on the
+very next sample and can never reach 3.
+
+Covered and frozen do not have this problem because both are measured against something
+PERSISTENT — covered against the camera's rolling baseline, frozen against elapsed seconds.
+Moved is the only one comparing two adjacent samples, and it is the only one that also
+demands persistence.
+
+Confirmed live: a scene swap that inverts the entire brightness distribution (`negate`,
+which preserves every edge so it cannot be mistaken for "covered") produced no moved alert
+after 100+ seconds. And **no test anywhere drives TamperMoved to an alert** — the only
+reference to `MovedDistance` in the whole test suite is the settings-normalisation test, so
+the defect was invisible to a green suite.
+
+**The fix** is to compare each sample against a rolling REFERENCE histogram (the same shape
+covered already uses for edge energy) rather than against the immediately previous sample:
+a moved camera then differs from its remembered normal for as long as it stays moved, which
+is what the debounce was written to require. That is a change to shipped detection logic and
+deserves its own work item, tests included — not a footnote on a bench.
+
 
 **Why.** A covered lens, a camera turned to a wall, a defocused ring, or a frozen stream
 all leave the camera online and the recorder writing files. The system reports green —
