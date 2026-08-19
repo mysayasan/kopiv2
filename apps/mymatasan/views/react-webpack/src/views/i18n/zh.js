@@ -568,6 +568,7 @@ export default {
   'st.continuityMinCoverageHint': '刻意低于 100%：片段边界和录像器重启在正常情况下每小时会占用几秒。',
   'st.continuityFailureThreshold': '低于最低值多少小时后发出警报',
   'st.continuityRecoveryThreshold': '恢复正常多少小时后解除警报',
+  'rec.exportGapTitle': '该时间段缺少录像',
   'rec.exportTitle': '导出录像',
   'rec.exportIntro': '生成一个视频文件，并附带其来源、覆盖范围以及缺失部分的记录——可以交给他人并进行核验。',
   'rec.exportFrom': '起始',

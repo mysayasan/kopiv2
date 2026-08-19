@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Ico } from './icons';
+import { FormAlert } from './ui';
 import { useT } from '@shared/i18n';
 import { DataTable } from '@shared/DataTable';
 import { HelpButton } from '@shared/Manual';
@@ -313,21 +314,6 @@ export function CoverageStrip({ cameraId, authHeader }) {
   );
 }
 
-// ExportAlert is a visible warning panel.
-//
-// mymatasan's `.danger-text` is only ever styled on <button> elements on this branch, so
-// an error rendered as a plain hint comes out the same muted grey as a neutral one — and
-// the gap warning below is the single most important thing on this dialog. It gets its
-// own class rather than borrowing one that does not work.
-function ExportAlert({ children }) {
-  return (
-    <p className="export-alert" role="alert">
-      <span className="btn-icon"><Ico n="warning" /></span>
-      <span>{children}</span>
-    </p>
-  );
-}
-
 // localInputToUnix converts a <input type="datetime-local"> value to unix seconds.
 // The input is in the viewer's local zone; the API and the manifest are UTC throughout,
 // so the conversion happens once, here.
@@ -456,7 +442,7 @@ export function EvidenceExportDialog({ camera, authHeader, onClose, onMessage })
           <span className="field-hint">{t('rec.exportReasonHint')}</span>
         </label>
 
-        {error ? <ExportAlert>{error}</ExportAlert> : null}
+        {error ? <FormAlert message={error} /> : null}
 
         <div className="settings-actions">
           <button type="button" className="quiet" onClick={runPreview} disabled={busy || !rangeValid}>
@@ -471,7 +457,7 @@ export function EvidenceExportDialog({ camera, authHeader, onClose, onMessage })
               <>
                 {/* The warning has to land BEFORE the build button, not after the file is
                     handed over: a bundle that skips missing footage looks continuous. */}
-                <ExportAlert>{t('rec.exportGapWarning', { n: gaps.length })}</ExportAlert>
+                <FormAlert title={t('rec.exportGapTitle')} message={t('rec.exportGapWarning', { n: gaps.length })} />
                 <ul>
                   {gaps.slice(0, 8).map((g) => (
                     <li key={g.from}>

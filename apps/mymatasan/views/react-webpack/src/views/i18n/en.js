@@ -580,6 +580,7 @@ export default {
   'st.continuityMinCoverageHint': 'Below 100% on purpose: clip boundaries and a recorder restart cost a few seconds an hour normally.',
   'st.continuityFailureThreshold': 'Hours below the minimum before alerting',
   'st.continuityRecoveryThreshold': 'Good hours before clearing the alert',
+  'rec.exportGapTitle': 'Footage is missing from this range',
   'rec.exportTitle': 'Export footage',
   'rec.exportIntro': 'Produces a single video file with a record of where it came from, what it covers, and anything missing — so it can be handed to somebody and checked.',
   'rec.exportFrom': 'From',

@@ -568,6 +568,7 @@ export default {
   "st.continuityMinCoverageHint": "أقل من 100% عن قصد: حدود المقاطع وإعادة تشغيل المسجِّل تكلّف بضع ثوانٍ في الساعة بشكل طبيعي.",
   "st.continuityFailureThreshold": "عدد الساعات تحت الحد الأدنى قبل التنبيه",
   "st.continuityRecoveryThreshold": "عدد الساعات الجيدة قبل إلغاء التنبيه",
+  "rec.exportGapTitle": "هناك تسجيل مفقود من هذا النطاق",
   "rec.exportTitle": "تصدير التسجيل",
   "rec.exportIntro": "يُنتج ملف فيديو واحدًا مع سجل بمصدره وما يغطيه وما هو مفقود منه — بحيث يمكن تسليمه لشخص آخر والتحقق منه.",
   "rec.exportFrom": "من",

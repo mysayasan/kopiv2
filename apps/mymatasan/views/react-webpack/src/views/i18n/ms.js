@@ -568,6 +568,7 @@ export default {
   'st.continuityMinCoverageHint': 'Kurang daripada 100% dengan sengaja: sempadan klip dan mula semula perakam memakan beberapa saat sejam secara normal.',
   'st.continuityFailureThreshold': 'Jam di bawah minimum sebelum memberi amaran',
   'st.continuityRecoveryThreshold': 'Jam baik sebelum amaran dikosongkan',
+  'rec.exportGapTitle': 'Rakaman hilang daripada julat ini',
   'rec.exportTitle': 'Eksport rakaman',
   'rec.exportIntro': 'Menghasilkan satu fail video berserta rekod asal usulnya, liputannya, dan apa yang hilang — supaya boleh diserahkan kepada seseorang dan disemak.',
   'rec.exportFrom': 'Dari',
