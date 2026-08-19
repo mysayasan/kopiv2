@@ -21,7 +21,7 @@ lands the work.
 | W1-5 | Tamper / video-loss detection | F-05 | `feat/mymatasan-tamper` | ● built, not benched |
 | W1-6 | Nightly `-race` CI job | F-21 | `ci/race-nightly` | ✅ shipped |
 | **Phase 2 — Operate at fleet scale** |
-| W2-1 | Fleet configuration policy + drift detection | F-06 | `feat/myseliasan-fleet-policy` | ◑ half-benched |
+| W2-1 | Fleet configuration policy + drift detection | F-06 | `feat/myseliasan-fleet-policy` | ✅ shipped |
 | W2-2 | Node state history + SLA reporting | F-08 | — | ☐ not started |
 | W2-3 | Critical-clip archive to control plane | F-09 | — | ☐ not started |
 | W2-4 | Federated cross-node search | F-10 | — | ☐ not started |
@@ -444,7 +444,7 @@ Target ~6–8 weeks. This is what turns myseliasan from a dashboard over nodes i
 reason someone buys the fleet instead of the appliance. Re-plan each item in detail when
 reached; seams noted now so the shape is not re-derived.
 
-**W2-1 · Fleet configuration policy + drift** (F-06). **Half-benched.**
+**W2-1 · Fleet configuration policy + drift** (F-06). **Shipped — benched twice.**
 `FleetPolicy`/`FleetPolicyItem` (fleet → site → node scope, per-node-kind, field-level
 precedence) plus a catalog-whitelisted set of governable settings (continuity, health,
 tamper, machine health, notification retention — deliberately excluding hardware/runtime
@@ -492,10 +492,36 @@ audited (the more interesting of the two records — a policy that has been fail
 configure an appliance for a month is otherwise invisible), and the ticker and the "check
 now" button could start concurrent sweeps against the same fleet.
 
-**Still owed before this is `✅ shipped`**, and none of it is about the logic above:
-transport (the same run over the mTLS control channel with an adopted node rather than
-HTTP), the API and RBAC gating, the UI, and multi-node precedence in a real fleet
-(fleet + site + node policies over two nodes at different sites).
+**Benched again against a REAL TWO-NODE FLEET (2026-08-19)** — containerised control
+plane, two adopted mymatasan nodes holding certificates issued by the real fleet CA,
+both dialing the real mTLS control channel on :39533. This is the half the HTTP bench
+deliberately skipped, and everything it asserts is about the transport and the fleet
+rather than the logic:
+
+- a settings read reaches the node **over the control channel**, and an enforcing policy's
+  **PUT body survives the tunnel** — the asserted `admin` role resolves through
+  `normalizeControlRole` to the node's superadmin, and the node's OWN audit trail
+  attributes the change to **`cp:fleet-policy`**, not to a local admin who was never there
+- **precedence across a real fleet**: a fleet policy, a site policy on the site node-b sits
+  in, and a node policy on node-a. Each contested field is won by the most specific policy,
+  and the report NAMES the winner — node-a's coverage from "Lobby exception" (node scope),
+  node-b's from "Airport regulator" (site scope), and the field neither override mentions
+  falls back to "Estate standard" (fleet scope) on both
+- **enforce is per field, not per node**: node-a's enforcing node-scoped policy corrected
+  its coverage while the two report-only fields won by the fleet policy were left alone —
+  so node-a reads `drifted` with `driftCount` exactly 2 and `appliedCount` 0 on the
+  following pass. A node is drifted if ANY governed field disagrees, which is right
+- the enforced write left every ungoverned field in the section byte-identical
+- report-only wrote **nothing** to node-b
+- **idempotent**: a second pass over the corrected field produced no new `policy.enforce`
+  audit entry
+- `docker stop node-b` → the next sweep reported it **`unknown`** with `driftCount` 0 and
+  the reason "node is not connected", while node-a continued to be judged normally
+- unauthenticated read and write both refused; a policy naming a section its node kind does
+  not have, and a policy with no settings, are both refused **in a readable sentence**
+
+Only the SCREEN is unexercised — the API beneath it is. Worth a look in Arabic when
+somebody is next in the UI; the page uses logical CSS properties throughout.
 
 **W2-2 · Node state history + SLA reporting** (F-08). `reports.go:205` states the gap in
 its own footnote. Add a node-state history table fed by the existing liveness

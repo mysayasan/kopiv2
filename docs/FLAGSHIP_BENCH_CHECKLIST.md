@@ -247,18 +247,69 @@ unreachable node reports `unknown`.
 - Restore each field to the node's own starting value between subtests, or later fields are
   measured against a node the earlier ones moved.
 
-**Still owed, in the order that wastes least setup:**
+**DONE (2026-08-19).** Benched a second time against a real two-node fleet — see the
+plan's W2-1 entry for the full result. Transport over the mTLS control channel,
+fleet/site/node precedence with the winning policy named per field, enforce-per-field,
+idempotence, the audit trail (including `cp:fleet-policy` on the NODE's own trail),
+unauthenticated refusals, and `docker stop` → `unknown`. Only the screen is unexercised.
 
-1. **Transport.** The same assertions over the mTLS control channel with an actually adopted
-   node, not HTTP+Basic. This proves the tunnel carries a PUT body and that `Role: "admin"`
-   resolves to the node's superadmin (it maps through `normalizeControlRole`; the node's own
-   audit should show the actor as `cp:fleet-policy`).
-2. **Precedence in a real fleet.** Two nodes at different sites; a fleet policy, a site policy
-   overriding one field, and a node policy overriding another. The compliance detail must name
-   the winning policy per field. This is the one thing unit tests model rather than observe.
-3. **The API and its gating.** A non-superadmin can read `/api/fleet-policies/compliance` and
-   is refused `POST /api/fleet-policies`.
-4. **The screen.** Drifted/unknown/compliant tiles, the detail table, and the enforce switch's
-   warning copy. Worth a look in Arabic — the page uses logical CSS properties throughout.
-5. **The audit trail.** An enforced write records `policy.enforce` with the before/after; a
-   FAILED enforce records it too (point a policy at a node, stop the node mid-sweep).
+---
+
+# The fleet harness — build it once, reuse it
+
+Standing up a real control plane with two genuinely adopted nodes is the setup several
+benches share (W2-1 done, W1-3 and W1-5 still owe it). It takes about ten minutes and the
+awkward parts are all in the wiring, not the apps.
+
+```
+# 1. cross-compile (sqlite is modernc/pure Go, so CGO is not needed)
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/myseliasan ./cmd/myseliasan
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/mymatasan  ./cmd/mymatasan
+
+# 2. one docker network; bind-mount the app dir as HOME (read-only) and a scratch DATA dir
+docker network create benchnet
+docker run -d --name cp --network benchnet -p 18080:8080   -v .../bin:/bin/app:ro -v .../apps/myseliasan:/home/app:ro -v .../cp/data:/data   -e MYSELIASAN_HOME=/home/app -e MYSELIASAN_DATA=/data   -w /data debian:bookworm-slim /bin/app/myseliasan
+# nodes the same, with MYMATASAN_*, published HTTP ports, and TLS ENABLED (see below)
+```
+
+Config goes in the DATA dir and **must be BOM-free** — PowerShell's `Out-File -Encoding
+utf8` writes one and the Go loader then silently falls back to ALL DEFAULTS (empty JWT,
+bootstrap disabled, a baffling `dial tcp lookup port=0` panic) instead of erroring.
+
+Then: rotate both must-change admins, generate the fleet key on the control plane, push it
+to each node, take a claim code off each node, and `POST /api/nodes/adopt`.
+
+## The wiring traps, all of which cost time
+
+- **The two apps do not authenticate the same way.** mymatasan accepts `Authorization:
+  Basic` on every request. myseliasan does **not** — it answers `auth cookie not found`
+  and needs `POST /api/auth/local-login`, a cookie jar, and the CSRF token echoed from its
+  cookie into `X-CSRF-Token` on every write.
+- **Three names for two values.** The control plane returns the key as `fleetKey`
+  (`GET /api/nodes/fleet-key`); the node's `PUT /api/pairing/fleet-key` takes it as
+  **`key`**; the claim code comes back as **`code`**, not `claimCode`. Sending the wrong
+  name fails with the misleading *"node rejected adoption: fleet key is not configured"*.
+- **Adoption is parent → node over HTTPS**, with an `InsecureSkipVerify` client. The nodes
+  must have `server.tlsPorts` set or adoption cannot reach them at all — a self-signed
+  cert is fine.
+- **Ports**: the control plane listens on **39533** (control channel) and 39534 (media).
+  `pairing.mtlsPort` **39532** is not something the parent listens on — it is STAMPED ONTO
+  NODES, so every node app must use it.
+- **Turn the node's rate limiter off.** A tunneled request carries no JWT, so every
+  tunneled call shares one bucket per path (`authOnly`, 120 req / 20s). Real traffic is
+  nowhere near it, but any exhaustive sweep trips it, and pacing does not help — the window
+  is 20 seconds wide.
+- **`/tmp` is not one place.** Git Bash and Windows Python disagree about it, so a script
+  that writes JSON in bash and reads it in python must use a relative path.
+- `python3` is not on PATH here; `python` is.
+
+## What still needs cameras
+
+W1-3 (recording continuity) and W1-5 (camera tamper) both need real RTSP sources on the
+nodes, which the harness above does not provide: the node containers are
+`debian:bookworm-slim` with no ffmpeg. Add an ffmpeg layer to the node image and serve a
+generated stream with ffmpeg's own RTSP listener
+(`ffmpeg -re -f lavfi -i testsrc2 -c:v libx264 -f rtsp -rtsp_flags listen rtsp://0.0.0.0:8554/cam`)
+rather than pulling in a media server. Use `testsrc2`/`mandelbrot`, never a flat gray
+frame — flat synthetic frames hash near-identically, so the perceptual-hash dedup collapses
+them in capture and they are useless as tamper test data.
