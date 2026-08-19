@@ -674,3 +674,76 @@
   color: var(--text-primary);
   padding: 8px 10px;
 }
+
+/* --- Backup & Restore --------------------------------------------------- */
+
+/* The section picker. Each row is a checkbox, a name with a one-line explanation of
+   what is actually in it, and the current row count — because "fleetca: 6" means
+   nothing to an operator, and "the trust root every node authenticates against"
+   is the difference between ticking it and leaving the fleet unrecoverable. */
+.settings-backup-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 18px;
+}
+
+.settings-backup-section {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 11px 13px;
+  border: 1px solid var(--border-panel);
+  border-radius: 9px;
+  background: var(--bg-surface);
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.settings-backup-section:hover {
+  border-color: var(--accent);
+}
+
+.settings-backup-section input[type='checkbox'] {
+  margin-top: 3px;
+  flex: none;
+}
+
+/* An empty section cannot be exported, so it is dimmed and its checkbox disabled
+   rather than hidden — an operator looking for "Sites" needs to see that it exists
+   and is empty, not wonder whether the backup silently omits it. */
+.settings-backup-section.is-empty {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.settings-backup-section.is-empty:hover {
+  border-color: var(--border-panel);
+}
+
+.settings-backup-name {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.settings-backup-name .settings-field-note {
+  font-weight: 400;
+  margin: 0;
+}
+
+/* Restore is the one destructive button on this screen. It reads as destructive. */
+.settings-btn-danger {
+  background: var(--danger, #d23f3f);
+  border-color: var(--danger, #d23f3f);
+  color: #fff;
+}
+
+.settings-btn-danger:hover:not(:disabled) {
+  filter: brightness(0.94);
+}
