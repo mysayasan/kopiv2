@@ -4,7 +4,7 @@ import { Tabs } from '@shared/Tabs';
 import { CameraHero, statusTone } from '@shared/CameraHero';
 import { useT } from '@shared/i18n';
 import { HelpButton } from '@shared/Manual';
-import { FormBusyOverlay, InfoButton, Tracks, LayoutDropdown } from './ui';
+import { FormAlert, FormBusyOverlay, InfoButton, Tracks, LayoutDropdown } from './ui';
 import { CameraAiPanel } from './vision';
 import { defaultDeviceCredentials } from '../lib/constants';
 import {apiBase,fieldValue,formatTimestamp,cameraTitle,cameraDescription,orderedSavedCameras,sameCamera,streamOptionLabel,layoutCapacity,layoutColumns,layoutRows,fetchTalkCapability,saveTalkPassword } from '../lib/helpers';
@@ -230,6 +230,15 @@ export function ViewsTab({
   function toggleMaximize(id) {
     setMaximizedTileId((current) => (current === id ? null : id));
   }
+  // Double-clicking the picture maximizes the tile, but a control layered over it owns
+  // its own clicks: double-tapping mute, talk, an alert pill or the PTZ ring means "do
+  // that twice", not "maximize". Controls are identified by role rather than by class so
+  // anything added to the tile later is covered without revisiting this.
+  const CONTROL_SELECTOR = 'button, [role="button"], a, input, select, textarea';
+  function maximizeFromDoubleClick(event, id) {
+    if (event.target?.closest?.(CONTROL_SELECTOR)) return;
+    toggleMaximize(id);
+  }
 
   return (
     <section className={`workspace${isFullscreen ? ' views-fullscreen' : ''}`} ref={workspaceRef}>
@@ -277,7 +286,7 @@ export function ViewsTab({
               tile && maximizedId === tile.id ? 'maximized' : '',
             ].filter(Boolean).join(' ')}
             key={tile ? tile.id : `empty-${idx}`}
-            onDoubleClick={() => tile && toggleMaximize(tile.id)}
+            onDoubleClick={(event) => tile && maximizeFromDoubleClick(event, tile.id)}
             draggable={Boolean(tile)}
             onDragStart={(event) => {
               if (!tile) {
@@ -530,15 +539,15 @@ function AddCameraDialog({ device, busy, onCancel, onSave }) {
           <div className="credential-row">
             <label>
               {t('cam.credUsername')}
-              <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" placeholder="admin" />
+              <input className={error ? 'input-error' : ''} value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" placeholder={t('cam.credUsernamePlaceholder')} />
             </label>
             <label>
               {t('cam.credPassword')}
-              <PasswordField value={password} onChange={setPassword} autoComplete="off" />
+              <PasswordField value={password} onChange={setPassword} autoComplete="off" error={!!error} />
             </label>
           </div>
           <p className="field-hint">{t('cam.addDialogHint')}</p>
-          {error ? <p className="field-hint danger-text">{error}</p> : null}
+          {error ? <FormAlert title={t('cam.verifyFailed')} message={error} /> : null}
           <div className="add-camera-actions">
             <button type="button" className="quiet" onClick={onCancel} disabled={saving}>{t('common.cancel')}</button>
             <button type="submit" disabled={saving || busy}>
@@ -1681,13 +1690,13 @@ function CameraAuthGate({ device, busy, onUnlock, onRemove }) {
         <p className="field-hint">{t('cam.authGateHint')}</p>
         <label>
           {t('cam.credUsername')}
-          <input className={error ? 'input-error' : ''} value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" placeholder="admin" />
+          <input className={error ? 'input-error' : ''} value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" placeholder={t('cam.credUsernamePlaceholder')} />
         </label>
         <label>
           {t('cam.credPassword')}
           <PasswordField value={password} onChange={setPassword} autoComplete="off" error={!!error} />
         </label>
-        {error ? <p className="field-hint danger-text">{error}</p> : null}
+        {error ? <FormAlert title={t('cam.verifyFailed')} message={error} /> : null}
         <button type="submit" disabled={saving || busy}>
           <span className="btn-icon"><Ico n="shield" /> {saving ? t('cam.verifying') : t('cam.unlock')}</span>
         </button>
