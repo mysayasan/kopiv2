@@ -90,6 +90,9 @@ Also check:
 - A segment recorded **before** this upgrade exports with `hashOrigin: "computed-at-export"`,
   not `"recorded"`.
 - An operator (not admin) can export and still cannot delete.
+- **Run a Secure Wipe with a bundle still on disk and confirm `<dataDir>/exports` is gone.**
+  A bundle is decrypted footage; a wipe that shredded every encrypted recording and left
+  plaintext copies beside it would defeat the point of crypto-erase.
 
 ---
 

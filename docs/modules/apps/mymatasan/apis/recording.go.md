@@ -19,6 +19,7 @@ Exposes HTTP endpoints for managing per-camera recording configs, downloading or
 | `PUT`    | `/api/recording/config`                    | Create or update the recording config for a camera (see below). |
 | `GET`    | `/api/recording/status`                    | Return a `[]CameraStatus` snapshot for all configured recorders. |
 | `GET`    | `/api/recording/storage/status`            | Report whether the configured at-rest storage codec can actually be produced on this host (see below). |
+| `GET`    | `/api/recording/coverage?cameraId=&from=&to=&bucket=hour\|day` | Was there actually footage for a camera over a range, bucketed hourly or daily (see below). |
 | `GET`    | `/api/recording/streams/{cameraId}`        | List all ONVIF media stream profiles for a camera using stored credentials. |
 | `POST`   | `/api/recording/streams/{cameraId}/live`   | Update the camera's configured live-view RTSP URI from a selected profile or explicit URL. |
 
@@ -114,6 +115,21 @@ Returns all ONVIF media profiles using the credentials already stored for the de
 ### POST /api/recording/streams/{cameraId}/live
 
 Body: `{"rtspUrl": "rtsp://..."}`. Updates the camera's configured live-view RTSP stream URI via `ResolveStream`.
+
+### GET /api/recording/coverage
+
+The read model behind the coverage strip UI — and the same one `RecordingContinuityMonitor` scores against, so the screen and the alert can never disagree (see `services/recording_coverage.go.md`). `cameraId` is required; `to` defaults to now, `from` defaults to the last day (hour buckets) or last month (day buckets) when omitted. Bounded to `coverageMaxBuckets` (768) buckets per request — a month of days, or roughly a month of hours — and returns a `400` naming the cap rather than silently truncating the response, since a silently shortened coverage report reads as "the footage is missing" when it only means "you asked for too much".
+
+## Auditing
+
+`NewRecordingApi` takes an extra `audit *Auditor` parameter (`apis/audit.go.md`); a nil value is tolerated (a no-op) so a partially-wired test handler still works. Recorded:
+
+- `recording.view` / `recording.download` (`downloadSegment`) — once per playback. A ranged request is a scrubbing `<video>` element rather than a distinct viewing, so only the FIRST range of a playback is recorded (the opening request of any playback is unranged), otherwise seeking through one clip would write dozens of rows and bury the trail.
+- `recording.delete` (`deleteSegment`) — the row is read BEFORE the delete so the camera and time window are captured in the entry; afterwards "recording 412 was deleted" answers nothing about what footage was lost.
+- `recording.purge` (`purgeExpired`, `purgeCameraNow`).
+- `recording.config_change` (`saveConfig`) — carries the retention days and enabled flag BEFORE and AFTER the save, since shortening retention is a slower way of deleting footage and only the before/after pair says whether footage was given up.
+
+See `apis/audit.go.md` for the full "what is recorded" table across the app.
 
 ## Notes
 

@@ -571,6 +571,12 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 	// Everything is built. Gather it once, and let the remaining phases take ONE parameter
 	// instead of thirty free variables out of an 800-line scope.
+	// Where evidence bundles are built. Held in a variable because two places need it:
+	// the export service writes here, and the factory reset must SHRED it. A bundle is
+	// DECRYPTED footage, so a wipe that missed this directory would shred every encrypted
+	// recording and leave the plaintext copies of them sitting beside it.
+	evidenceExportDir := apphost.ResolveWritablePath(deps.DataDir, "exports")
+
 	// The running version, resolved once. Both the self-update service and the evidence
 	// export manifest need it, and a second manifest read would be the start of a drift.
 	currentVersion := ""
@@ -652,7 +658,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		evidence: services.NewEvidenceExportService(
 			recordingService, cameraService, atrestCipher,
 			ffmpegPath,
-			apphost.ResolveWritablePath(deps.DataDir, "exports"),
+			evidenceExportDir,
 			currentVersion,
 		),
 
@@ -682,6 +688,12 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		}
 		if fp := strings.TrimSpace(deps.Config.FileStorage.Path); fp != "" {
 			paths = append(paths, fp)
+		}
+		// Evidence bundles are DECRYPTED footage. Shredding every encrypted recording
+		// while leaving plaintext copies of them in the export directory would defeat the
+		// whole point of a crypto-erase wipe.
+		if evidenceExportDir != "" {
+			paths = append(paths, evidenceExportDir)
 		}
 		if cfgs, err := recordingService.ListConfigs(ctx); err == nil {
 			for _, c := range cfgs {

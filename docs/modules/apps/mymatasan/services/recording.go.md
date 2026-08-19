@@ -7,7 +7,7 @@ Implements `IRecordingService`, persisting per-camera recording configs and clip
 ## Responsibilities
 
 - List, fetch by ID, and filter recording segments by camera ID or alert ID.
-- Create a segment row from a `recording.SegmentResult` produced by the infra recorder.
+- Create a segment row from a `recording.SegmentResult` produced by the infra recorder, including `Sha256` (the plaintext-at-finalize digest; empty when the source segment was never hashed — see `entities/recording_segment.go.md`).
 - Delete a segment row and securely remove the corresponding file from disk.
 - Fetch, create, and update per-camera `RecordingConfig` rows; upsert by camera ID.
 - Persist all config fields including `LiveStreamUrl`, `StreamURL`, `FallbackStreamUrl`, and `MetadataEnabled`/`MetadataGapSeconds` (the object metadata recorder / Object Search toggle + presence-interval close window) on save. `MetadataEnabled` is written from the request's `Enabled` field, not a separate `MetadataEnabled` input — object-metadata capture always tracks whether recording itself is on (without footage there is nothing for a search result to link to), so there is no independent UI toggle for it.

@@ -82,6 +82,7 @@ Declares service contracts for app-specific domain.
 - `IRecordingService` (also implements `recording.SegmentSink`)
   - `GetSegments(ctx, limit, offset, cameraId, alertId, startedAfter, startedBefore)` — paginated clip list with optional camera, alert, and time-range filters
   - `GetSegmentById(ctx, id)` — fetch one clip row by ID
+  - `Coverage(ctx, cameraId, from, to, bucket)` — how much of `[from, to)` actually has footage on disk, bucketed hourly or daily; the read model behind the coverage strip UI and the continuity monitor (`services/recording_coverage.go.md`)
   - `SaveSegment(ctx, seg recording.SegmentResult)` — called by the infra recorder after a clip is written; satisfies `SegmentSink`
   - `DeleteSegment(ctx, id)` — removes the DB row and the file on disk
   - `ListConfigs(ctx)` — all per-camera recording configs

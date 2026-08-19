@@ -33,7 +33,9 @@ Weighted deliberately toward **evidence handling** rather than configuration, be
 | `recording.delete` | `deleteSegment` | The row is read BEFORE the delete, so the camera and time range are in the entry; afterwards "recording 412 was deleted" is not an answer to "what footage did we lose" |
 | `recording.purge` | `purgeExpired`, `purgeCameraNow` | |
 | `recording.config_change` | `saveConfig` | Carries retention before/after — shortening retention is a slower way of deleting footage |
+| `recording.export` | `apis/evidence.go` `create`, `download` | Two entries per export on purpose: at request (deciding to take a copy out is the auditable act) and at download (collecting it can be a shift later). See `apis/evidence.go.md`/`services/evidence_export.go.md` |
 | `camera.credential_change` | `apis/camera.go` `saveCredentials` | The username is recorded, the password never is |
+| `settings.change` | `apis/settings.go` `saveTamper`, `saveContinuity` | Target id names which settings block changed (`"tamper"`/`"continuity"`) — retuning either changes what the system will and will not alarm about |
 | `user.create` / `user.update` / `user.delete` | `apis/settings.go` | |
 
 `user.update` records the RESULTING role rather than a before/after pair: the shared `ILocalUserService` has no by-id read, and widening an interface three apps implement just to decorate an audit entry is the wrong trade. "This user now holds role N, set by this actor at this time" is the security-relevant fact.

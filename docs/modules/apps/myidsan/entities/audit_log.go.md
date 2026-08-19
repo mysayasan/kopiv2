@@ -2,10 +2,18 @@
 
 ## Purpose
 
-One immutable record of a security-relevant event on the identity server: a sign-in (or a
-failed one), a lockout, a second-factor enrolment or admin reset, a role assignment, an
-account or SSO-client change, a password reset, a session revocation, or a backup
-export/restore.
+`AuditLog` is now a type alias onto `domain/shared/audit.AuditLog`
+(`docs/modules/domain/shared/audit/service.go.md`): one immutable record of a
+security-relevant event on the identity server (a sign-in or a failed one, a lockout, a
+second-factor enrolment or admin reset, a role assignment, an account or SSO-client change,
+a password reset, a session revocation, a backup export/restore).
+
+myidsan's shape was the superset the shared entity adopted wholesale — it records events for
+people who are not (yet) authenticated, which turned out to be the harder case that
+myseliasan and mymatasan also benefit from. The alias keeps every existing reference and the
+bootstrap entity registration compiling unchanged; the table is untouched, since the schema
+bootstrapper derives the table name from the struct name alone, and the shared type kept the
+name `AuditLog` for exactly that reason.
 
 ## Responsibilities
 
@@ -30,19 +38,21 @@ export/restore.
 
 ## Notes
 
-- The service (`services/audit.go.md`) only ever `INSERT`s during normal operation: there is
-  no update path and no way to delete a chosen row, so the trail is append-only. The one
-  removal path is age-based retention (`config.audit.retention`, off by default — see
-  `infra/config/audit_retention.go.md`), and it is built not to lose anything: expired rows
-  are archived to a JSON-lines file on disk before they ever leave the table
-  (`services/audit_retention.go.md`'s `PurgeOlderThan`), a run that cannot finish its archive
-  deletes nothing, and the purge records itself here (`ActionAuditPurge =
-  "audit.retention_purge"`) naming the cutoff, row count, and archive file. That is still
-  deliberately stricter than `api_log`, a per-request HTTP access log freely subject to
-  retention deletion that carries no action semantics — "someone called
-  `PUT /api/user-credential` and got a `200`" does not answer "who granted that role, from
-  where, and when".
-- Two fields differ from myseliasan's equivalent audit log, because an identity server
+- The service (`services/audit.go.md`, backed by `domain/shared/audit`) only ever `INSERT`s
+  during normal operation: there is no update path and no way to delete a chosen row, so the
+  trail is append-only. The one removal path is age-based retention
+  (`config.audit.retention`, off by default — see `infra/config/audit_retention.go.md`), now
+  implemented in `domain/shared/audit/retention.go` and still wired the same way from
+  `apps/myidsan/app/audit_retention.go.md`: expired rows are archived to a JSON-lines file on
+  disk before they ever leave the table, a run that cannot finish its archive deletes
+  nothing, and the purge records itself here (`ActionAuditPurge = "audit.retention_purge"`)
+  naming the cutoff, row count, and archive file. That is still deliberately stricter than
+  `api_log`, a per-request HTTP access log freely subject to retention deletion that carries
+  no action semantics — "someone called `PUT /api/user-credential` and got a `200`" does not
+  answer "who granted that role, from where, and when".
+- Two fields differ from myseliasan's and mymatasan's usage, because an identity server
   records events for people who are not (yet) authenticated: the actor may be anonymous
   (above), and `UserAgent` is captured — for login, MFA, and session events, the client is
   what distinguishes "signed in from a new laptop" from "someone replayed a cookie".
+  myseliasan's own entity previously lacked `UserAgent`; it now gains the column additively
+  (`domain/shared/audit/service.go.md`).

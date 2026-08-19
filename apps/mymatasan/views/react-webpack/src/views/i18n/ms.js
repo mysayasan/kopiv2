@@ -600,6 +600,8 @@ export default {
   'st.tamperSaveFailed': 'Semakan pandangan kamera tidak dapat disimpan.',
   'st.continuitySaved': 'Semakan rakaman disimpan.',
   'st.continuitySaveFailed': 'Semakan rakaman tidak dapat disimpan.',
+  'st.continuityFailureThresholdHint': 'Berapa jam berturut-turut mesti di bawah minimum sebelum amaran dikeluarkan. Satu jam pendek biasanya mula semula; beberapa jam berturut-turut bermakna kamera telah berhenti merakam.',
+  'st.continuityRecoveryThresholdHint': 'Berapa jam baik berturut-turut untuk mengosongkan amaran sedia ada. Nilai lebih tinggi mengelakkan amaran berkelip-kelip pada kamera yang hanya sihat sekejap-sekejap.',
   'rec.title': 'Rakaman',
   'rec.subtitle': 'Rakaman NVR berterusan dengan pengekstrakan klip peristiwa.',
   'rec.purgeTitle': 'Padam rakaman yang sudah melebihi pengekalan setiap kamera. Rakaman dalam tempoh pengekalan dikekalkan.',

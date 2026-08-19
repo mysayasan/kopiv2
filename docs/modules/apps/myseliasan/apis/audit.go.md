@@ -8,7 +8,7 @@ Read-only, superadmin-gated HTTP surface over the append-only audit trail (`serv
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/api/audit?limit=&offset=&action=&targetType=&targetId=` | List audit entries newest-first. All query params optional; `limit`/`offset` parse failures are treated as `0`. **Superadmin only.** |
+| `GET` | `/api/audit?limit=&offset=&action=&outcome=&actorEmail=&targetType=&targetId=&from=&to=` | List audit entries newest-first. All query params optional; `limit`/`offset`/`from`/`to` parse failures are treated as `0`. **Superadmin only.** `outcome`, `actorEmail`, `from`/`to` are new — they came free with the move to the shared `domain/shared/audit` trail (`services/audit.go.md`); myseliasan's own `List` previously only offered `action`/`targetType`/`targetId`. |
 
 ## Authorization
 

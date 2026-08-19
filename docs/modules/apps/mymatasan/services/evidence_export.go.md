@@ -26,6 +26,7 @@ A bundle is a `.zip` containing one video file, `manifest.json`, and `VERIFY.txt
 ## Notes
 
 - Bundles land under `<dataDir>/exports`, not the OS temp dir: a bundle is DECRYPTED footage and belongs on the volume the operator already governs. `exportRetention` (6h) removes it afterwards, so decrypted evidence does not accumulate beside the encrypted recordings.
+- **The export directory is in the factory reset's shred list** (`resetMediaPaths` in `app/app.go`). A Secure Wipe that shredded every encrypted recording and left plaintext copies of them in `exports/` would defeat the entire point of crypto-erase. Uninstall is already covered — both the Windows and deb/rpm uninstallers remove the whole data root.
 - Builds run detached from the request context, so a bundle is not abandoned half-built when the operator's browser navigates away.
 - `exportMaxRangeSeconds` caps one export at 24 hours. Beyond that an operator wants several exports, each with its own stated reason.
 - **RBAC: exporting is an operator capability, deleting is not.** `PageRecordings` gained a second level (`use`) granting `/api/evidence`; deleting footage remains superadmin-only. That is the same line drawn twice — an operator who was present at an incident must be able to hand the footage to somebody, and must not be able to destroy it.

@@ -3229,7 +3229,7 @@ function ContinuitySettingsCard({ authHeader }) {
           />
         </label>
         <label>
-          <FieldTitle info={t('st.continuityMinCoverageHint')}>
+          <FieldTitle info={t('st.continuityFailureThresholdHint')}>
             {t('st.continuityFailureThreshold')}
           </FieldTitle>
           <input
@@ -3242,7 +3242,7 @@ function ContinuitySettingsCard({ authHeader }) {
           />
         </label>
         <label>
-          <FieldTitle info={t('st.continuityMinCoverageHint')}>
+          <FieldTitle info={t('st.continuityRecoveryThresholdHint')}>
             {t('st.continuityRecoveryThreshold')}
           </FieldTitle>
           <input

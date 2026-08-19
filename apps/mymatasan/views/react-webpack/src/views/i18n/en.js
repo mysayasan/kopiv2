@@ -612,6 +612,8 @@ export default {
   'st.tamperSaveFailed': 'Could not save the camera view checks.',
   'st.continuitySaved': 'Recording checks saved.',
   'st.continuitySaveFailed': 'Could not save the recording checks.',
+  'st.continuityFailureThresholdHint': 'How many hours in a row must fall below the minimum before an alert is raised. One short hour is usually a restart; several in a row is a camera that has stopped recording.',
+  'st.continuityRecoveryThresholdHint': 'How many good hours in a row clear an existing alert. Higher values avoid an alert flapping on a camera that is only intermittently healthy.',
   'rec.title': 'Recordings',
   'rec.subtitle': 'Continuous NVR recording with event clip extraction.',
   'rec.purgeTitle': "Delete recordings already older than each camera's retention. In-retention footage is kept.",

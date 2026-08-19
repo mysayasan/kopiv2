@@ -49,12 +49,14 @@ sequencing, and the helpers that don't belong to any one subsystem.
   `appentities.ObjectObservation{}` and `sharedentities.NotificationRollup{}` (object
   metadata recorder + dashboard-analytics rollup table), `appentities.FacePerson{}` and
   `appentities.FaceEmbedding{}` (the global face-recognition gallery — see
-  `entities/face_person.go.md`/`entities/face_embedding.go.md`), plus `sharedentities.AccessRole{}`
+  `entities/face_person.go.md`/`entities/face_embedding.go.md`), `sharedentities.AccessRole{}`
   and `sharedentities.AccessRolePermission{}` — mymatasan uses the shared accessrbac role +
   permission **data model** (so the suite has one authorization schema and myiotsan
   inherits it) but not the shared `AccessSessionMidware` middleware, which hard-requires JWT
-  claims mymatasan does not have. See `apis/authorization.go.md` and
-  `services/rbac.go.md`.
+  claims mymatasan does not have (see `apis/authorization.go.md` and
+  `services/rbac.go.md`) — and `sharedaudit.AuditLog{}`, the append-only audit trail shared
+  with myidsan and myseliasan (`docs/modules/domain/shared/audit/service.go.md`). A brand-new
+  table on this app; the auto-migrator creates it, so no migration entry is needed.
 - Registers built-in and config-driven seeders: RBAC endpoint metadata, the
   `is_diagnostic`/camera-health/`recording_config` metadata NULL-backfills for columns
   added via `ALTER TABLE`, and `CREATE INDEX IF NOT EXISTS` secondary indexes for the
@@ -136,8 +138,12 @@ sequencing, and the helpers that don't belong to any one subsystem.
     `wire_services.go.md`.
 13. `registerRoutes(api, w)` (see `wire_routes.go.md`) — mounts the public routes, the
     middleware chain, and every protected API group; returns the protected subrouter.
-14. Builds `resetMediaPaths` (a closure over `detectorPaths.TrainingDir` and `appCfg.Vision.
-    SnapshotDir`), assembles `monitorSettings` inline via `visionMonitorSettingsFromAppConfig
+14. Builds `resetMediaPaths` (a closure over `detectorPaths.TrainingDir`,
+    `appCfg.Vision.SnapshotDir`, `deps.Config.FileStorage.Path`, every recording config's
+    `StoragePath`, and `evidenceExportDir`). The export directory is in that list because a
+    bundle is DECRYPTED footage: a wipe that shredded every encrypted recording and left
+    plaintext copies of them sitting beside it would defeat the point of crypto-erase.
+    Then assembles `monitorSettings` inline via `visionMonitorSettingsFromAppConfig
     (appCfg)` + `wrapMonitorDetector(appCfg, objectBackend)` (it threads together the
     detector, recorder, notifier and metadata sink — none of which the pure `config_map.go`
     mapper can know about) and stores it on `w.visionMonitorSettings`.

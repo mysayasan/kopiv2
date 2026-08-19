@@ -2,8 +2,9 @@
 
 ## Purpose
 
-Wires the audit-log retention purge (`services/audit_retention.go.md`) into the shared
-`apphost.Dependencies.Scheduler` as a periodic background task, gated entirely on
+Wires the audit-log retention purge (`PurgeOlderThan`, now implemented in
+`domain/shared/audit/retention.go` — see `docs/modules/domain/shared/audit/service.go.md`) into
+the shared `apphost.Dependencies.Scheduler` as a periodic background task, gated entirely on
 `config.audit.retention.enabled`.
 
 ## Responsibilities

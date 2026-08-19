@@ -600,6 +600,8 @@ export default {
   'st.tamperSaveFailed': '无法保存摄像机画面检查。',
   'st.continuitySaved': '录像检查已保存。',
   'st.continuitySaveFailed': '无法保存录像检查。',
+  'st.continuityFailureThresholdHint': '需要连续多少小时低于最低值才发出警报。偶尔一小时偏低通常是重启所致；连续多小时则说明摄像机已停止录像。',
+  'st.continuityRecoveryThresholdHint': '需要连续多少个正常小时才解除现有警报。数值越高，越能避免警报在时好时坏的摄像机上反复跳动。',
   'rec.title': '录像',
   'rec.subtitle': '连续 NVR 录像并提取事件片段。',
   'rec.purgeTitle': '删除已超过各摄像头保留期的录像。保留期内的录像会保留。',

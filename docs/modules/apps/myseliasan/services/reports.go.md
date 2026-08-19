@@ -92,7 +92,11 @@ and each gets its **own page** (`H1` = `"<site> — <floor>"`) with:
 role: a superadmin role gets a one-line "unrestricted" note (its access is a bypass, not
 rows); every other role's endpoint grants come from `perms.ListForRole`, path-sorted, GET/
 POST/PUT/DELETE as bullet ticks. `H1 "Audit Trail (last N days)"` reads up to 500 entries
-via `audit.List` and keeps only `CreatedAt >= from`. `H1 "Data Protection"` is a fixed
+via `audit.List(ctx, 500, 0, AuditFilter{From: from})` — the window is applied by the QUERY
+now, not filtered afterwards in Go: the previous `List(ctx, 500, 0, "", "", "")` fetched the
+newest 500 rows unconditionally and then kept only `CreatedAt >= from`, so a busy period
+outside the report's window could push in-window entries off the end of those 500 and
+silently shorten the report's trail. `H1 "Data Protection"` is a fixed
 attestation paragraph describing AES-256-GCM at-rest encryption of fleet secrets and
 floor-plan images, and the audit trail's append-only, tamper-evident nature.
 

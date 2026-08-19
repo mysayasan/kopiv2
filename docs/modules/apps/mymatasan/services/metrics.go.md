@@ -14,8 +14,13 @@ Declares the app-specific runtime metric names mymatasan records — the numbers
 - `MetricDiskUsedPercent` = `mymatasan_disk_used_percent` (gauge, `{mount}`) — per-mount disk usage, including the recordings volume.
 - `MetricRecordingPaused` = `mymatasan_recording_paused` (gauge) — `1` while the machine-health disk guard has recording paused. Footage is not being written while this is `1` — the most important single bit on the box.
 - `MetricDiskMitigationTotal` = `mymatasan_disk_mitigation_total` (`{action=pause|resume|overwrite}`) — counts disk-guard actions taken.
+- `MetricAuditWriteFailuresTotal` = `mymatasan_audit_write_failures_total` — audit entries that could not be persisted. The audit service (`domain/shared/audit`) swallows its own write errors on purpose (auditing must never fail the action being audited), so this counter is the ONLY symptom a trail that has stopped recording produces — every other signal stays green while the evidence history quietly develops a hole.
+- `MetricAuditRetentionPurgedTotal` = `mymatasan_audit_retention_purged_total` — audit rows removed by age-based retention.
+- `MetricRecordingCoveragePercent` = `mymatasan_recording_coverage_percent` (`{camera}`) — percentage of the last scored hour that has footage on disk, per camera. Declared in `services/recording_continuity.go`; described here.
+- `MetricRecordingGapCameras` = `mymatasan_recording_gap_cameras` (gauge) — cameras currently alerting for missing footage; declared in `services/recording_continuity.go`.
+- `MetricCameraTamperTotal` = `mymatasan_camera_tamper_total` (`{kind=frozen|covered|moved}`) — camera tamper alerts raised, by kind. Declared in `services/camera_tamper_monitor.go`.
 
-`DescribeMetrics(m telemetry.Metrics)` registers help text for all eight; called once at startup from `app.go`.
+`DescribeMetrics(m telemetry.Metrics)` registers help text for all thirteen; called once at startup from `app.go`. Note that three of them (`MetricRecordingCoveragePercent`, `MetricRecordingGapCameras`, `MetricCameraTamperTotal`) are declared as constants in their owning monitor's own file rather than here — this file is where every metric's help text is registered regardless of where its name is declared.
 
 ## Naming convention
 

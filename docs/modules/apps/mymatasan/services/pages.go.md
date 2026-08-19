@@ -30,10 +30,13 @@ func Pages() sharedservices.PageCatalog
     physical world): PTZ, talk-back offer.
   - `notifications` — *view*: read notifications and vision alerts. *use*: acknowledge an alert,
     mark a notification read.
-  - `recordings` — *view* only, deliberately with no higher rung: reads `/api/recording`.
-    Deleting footage stays superadmin-only and is never a page an administrator can hand out —
-    an operator present at an incident must not be able to destroy the footage of it, and that
-    property cannot survive being a checkbox.
+  - `recordings` — *view*: reads `/api/recording`. *use* (a second rung, added for evidence
+    export): grants `/api/evidence` — exporting a verifiable bundle. Deleting footage stays
+    superadmin-only and is still never a level this page can hand out — an operator present
+    at an incident must be able to hand the footage of it to somebody, and must not be able
+    to destroy it. That is the same line drawn twice, and every export is audited with the
+    operator's stated reason, which is what makes granting `use` safe rather than merely
+    convenient.
   - `objects` — *view*: reads `/api/observations`.
 - **`AdminOnly` pages** — listed so the catalog stays a complete description of the app, but
   `DerivePermissions` will never grant them regardless of what a role's rows say:
@@ -43,6 +46,10 @@ func Pages() sharedservices.PageCatalog
   - `people` → `/api/faces` (manage/full) — the page that made the `/api/faces` gap in
     `Policy()` visible; see `rbac.go.md`.
   - `settings` → `/api/settings`, `/api/system`, `/api/pairing` (manage/full)
+  - `audit` (`PageAudit`) → `/api/audit` (view only, at every level — the API has no
+    mutating route to grant). Its own page rather than a corner of Settings, because it
+    answers a different question from every other screen: not "how is this configured" but
+    "what did people do", and it is what an auditor is actually sent to look at.
 - **`Carveouts`** — `/api/settings/users`, `/api/settings/roles`. Required because `live-views`
   grants `GET /api/settings` (the SPA needs runtime settings to render the wall at all); without
   an explicit all-false row under each, a role with only `live-views` would be able to enumerate
@@ -50,9 +57,10 @@ func Pages() sharedservices.PageCatalog
   with nothing narrower to shadow it.
 
 Page ids (`PageDashboard`, `PageLiveViews`, `PageCameras`, `PageDetection`, `PageTeach`,
-`PagePeople`, `PageObjects`, `PageRecordings`, `PageNotifications`, `PageSettings`) are stable
-and are what the SPA will later map to nav entries and labels. Level ids (`LevelView`,
-`LevelUse`, `LevelManage`) are cumulative in that order wherever a page declares more than one.
+`PagePeople`, `PageObjects`, `PageRecordings`, `PageNotifications`, `PageSettings`,
+`PageAudit`) are stable and are what the SPA will later map to nav entries and labels. Level
+ids (`LevelView`, `LevelUse`, `LevelManage`) are cumulative in that order wherever a page
+declares more than one.
 
 ## Presets: RolePresets()
 
@@ -63,8 +71,9 @@ func RolePresets() map[string][]sharedservices.PageGrant
 Maps the two grantable built-in roles onto page grants:
 
 - `viewer` → `dashboard`(view), `live-views`(view), `notifications`(view).
-- `operator` → `dashboard`(view), `live-views`(use), `notifications`(use), `recordings`(view),
-  `objects`(view).
+- `operator` → `dashboard`(view), `live-views`(use), `notifications`(use), `recordings`(**use**,
+  was `view` — the built-in operator preset gained evidence-export capability alongside the
+  new `recordings` `use` level), `objects`(view).
 
 `admin` has no preset — it is the superadmin builtin and bypasses the matrix entirely, same as
 in `Policy()`.
