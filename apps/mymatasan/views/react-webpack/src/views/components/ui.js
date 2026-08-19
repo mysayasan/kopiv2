@@ -145,6 +145,24 @@ export function FormBusyOverlay({ busy }) {
   );
 }
 
+// FormAlert is the in-form failure banner. Inline errors used to render as
+// `<p class="field-hint danger-text">`, which read as another neutral hint — a
+// rejected camera login looked identical to the informational line above it, so
+// a wrong password was easy to miss. This states the failure explicitly (icon +
+// red panel + title) and announces it to screen readers.
+export function FormAlert({ title, message }) {
+  if (!message && !title) return null;
+  return (
+    <div className="form-alert" role="alert">
+      <span className="form-alert-icon"><Ico n="warning" sz={16} /></span>
+      <span className="form-alert-body">
+        {title ? <strong className="form-alert-title">{title}</strong> : null}
+        {message ? <span className="form-alert-msg">{message}</span> : null}
+      </span>
+    </div>
+  );
+}
+
 export function InfoButton({ text }) {
   return (
     <button type="button" className="info-button" title={text} aria-label={text}>

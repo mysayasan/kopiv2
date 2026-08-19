@@ -4,7 +4,7 @@ import { useT } from '@shared/i18n';
 import { LanguageDropdown } from '@shared/LanguageDropdown';
 import { useManual } from '@shared/Manual';
 import { BrandLogo, PasswordField } from './layout';
-import { Message, FormBusyOverlay } from './ui';
+import { Message, FormAlert, FormBusyOverlay } from './ui';
 import { cameraTitle, sameCamera, apiBase } from '../lib/helpers';
 import { CapacityRetentionNote } from './settings';
 import { defaultDestination } from '../lib/constants';
@@ -665,13 +665,13 @@ function DiscoveredRow({ device, busy, onAdd }) {
           </label>
           <span className="field-hint">{t('setup.cameraNameHint')}</span>
           <label>{t('setup.username')}
-            <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" placeholder={t('setup.usernamePlaceholder')} />
+            <input className={error ? 'input-error' : ''} value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" placeholder={t('setup.usernamePlaceholder')} />
           </label>
           <label>{t('setup.password')}
-            <PasswordField value={password} onChange={setPassword} autoComplete="off" />
+            <PasswordField value={password} onChange={setPassword} autoComplete="off" error={!!error} />
           </label>
           <span className="field-hint">{t('setup.passwordHint')}</span>
-          {error ? <span className="field-hint danger-text">{error}</span> : null}
+          {error ? <FormAlert title={t('cam.verifyFailed')} message={error} /> : null}
           <button type="button" className="setup-cred-add" onClick={add} disabled={busy || adding}>
             <span className="btn-icon"><Ico n="shield" /> {adding ? t('setup.adding') : t('setup.addCamera')}</span>
           </button>

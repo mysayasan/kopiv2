@@ -1315,11 +1315,16 @@ body .toast-stack {
   background: rgba(15, 23, 33, 0.92);
 }
 
+/* The overlay is a square box around a circular control, so its corners are dead
+   space that used to swallow clicks meant for the picture (double-click-to-maximize,
+   drag-to-reorder). Only the ring's own sectors are hit-testable; everything else in
+   the box falls through to the tile. */
 .ptz-ring-overlay {
   position: absolute;
   right: 8px;
   bottom: 8px;
   z-index: 2;
+  pointer-events: none;
 }
 
 .preview-viewport .ptz-ring-overlay {
@@ -1338,6 +1343,7 @@ body .toast-stack {
   cursor: pointer;
   outline: none;
   transition: fill 0.1s;
+  pointer-events: auto;
 }
 
 .ptz-sector:hover {
@@ -1930,6 +1936,67 @@ body .toast-stack {
 
 .field-hint.good {
   color: var(--ok-text);
+}
+
+/* `.danger-text` was only ever styled on <button> (see the button block above), so
+   every inline error rendered as `<p class="field-hint danger-text">` silently kept
+   the muted hint colour — a failure looked exactly like the neutral hint beside it.
+   Colour the class wherever it lands; the compound selectors outrank the plain
+   `.field-hint`/`.settings-hint` colour regardless of rule order. */
+.danger-text,
+.field-hint.danger-text,
+.settings-hint.danger-text {
+  color: var(--danger-text);
+}
+
+/* FormAlert (components/ui.js): a form-level failure, deliberately unlike a hint —
+   red rule, tinted panel and a warning glyph, so a rejected login can't be read as
+   more informational text. */
+.form-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 9px 11px;
+  border: 1px solid var(--danger);
+  border-left-width: 4px;
+  border-radius: 6px;
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.form-alert-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--danger);
+}
+
+.form-alert-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.form-alert-title {
+  font-weight: 700;
+}
+
+.form-alert-msg {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* Camera credentials: the placeholder is an example, never a stored value. Italic
+   and dimmed so "e.g. admin" can't be mistaken for a username already filled in. */
+.add-camera-form input::placeholder,
+.credential-row input::placeholder,
+.setup-cred-form input::placeholder,
+.camera-auth-card input::placeholder {
+  font-style: italic;
+  opacity: 0.65;
 }
 
 .capability-panel {
