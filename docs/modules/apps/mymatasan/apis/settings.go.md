@@ -19,6 +19,10 @@ Registers runtime settings routes for standalone `mymatasan`.
 - `GET /api/settings/vision/ai-runtime/install/status`: poll the AI-runtime install job (`running`, `status`, `log`, `python`, `supported`).
 - `GET /api/settings/fs/browse`: server-side directory picker used to choose the ffmpeg binary. Returns one directory level (`path`, `parent`, `separator`, `entries[]` of `{name, path, dir}`) for the `path` query param. Admin-only and read-only — names only, never file contents. Browsing is confined to a whitelist of roots (see `services/filesystem_browse.go`); an empty/out-of-whitelist `path` lists the allowed roots.
 - `GET /api/settings/roles`: list the roles (`superadmin`/`admin`, `operator`, `viewer`) an admin can assign to a user. Admin-only — the role list describes the authorization model itself, and a viewer has no business enumerating it. Assignment goes through the normal user create/update endpoints below (`roleId` field), not this route.
+- `GET /api/settings/continuity`: return the recording-continuity monitor's configuration (`services.ContinuitySettings`).
+- `PUT /api/settings/continuity`: save it. Admin-only; audited (`services.ActionSettingsChange`, target `settings`/`continuity`) since it changes what the system will and will not alarm about.
+- `GET /api/settings/tamper`: return the camera tamper monitor's configuration (`services.TamperSettings`).
+- `PUT /api/settings/tamper`: save it. Admin-only; audited the same way, target `settings`/`tamper`.
 - `GET /api/settings/notification`: return current notification settings (destinations, retention, and legacy singleton fields).
 - `PUT /api/settings/notification`: save the full notification settings blob.
 - `PUT /api/settings/notification/destination`: upsert a single delivery destination (create when the body has no `id`, otherwise replace the destination with that `id`) without touching other destinations or the retention section. Returns `{destination, settings}`.
@@ -30,6 +34,10 @@ Registers runtime settings routes for standalone `mymatasan`.
 - `PUT /api/settings/users/{id}`: update user profile, role, and active flag. Same `roleId`/legacy-`isAdmin` fallback as create.
 - `POST /api/settings/users/{id}/password`: reset a local user's password.
 - `DELETE /api/settings/users/{id}`: delete a local user.
+
+## Auditing
+
+`NewSettingsApi` takes three extra parameters: `audit *Auditor` (`apis/audit.go.md`), `continuity services.IContinuitySettingsService`, and `tamper services.ITamperSettingsService`. `createUser`/`updateUser`/`deleteUser` record `user.create`/`user.update`/`user.delete` on success and failure. `updateUser` records the RESULTING role rather than a before/after pair — the shared `ILocalUserService` has no by-id read, and widening an interface three apps implement just to decorate an audit entry is the wrong trade; successive entries give the transition anyway.
 
 ## Notes
 

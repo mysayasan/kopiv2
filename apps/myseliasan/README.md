@@ -385,7 +385,7 @@ See `docs/modules/apps/myseliasan/apis/agent.go.md`, `services/agent_digest.go.m
 
 ## Audit log
 
-`myseliasan` keeps an immutable, append-only audit trail of sensitive control-plane actions in its own `audit_log` table — distinct from `api_log`, which is a per-request HTTP access log subject to retention-based deletion and carries no action semantics. There is no update/delete path and no retention cleanup for `audit_log`: entries are written once by the handler that performed the action and never touched again.
+`myseliasan` keeps an immutable, append-only audit trail of sensitive control-plane actions in its own `audit_log` table — distinct from `api_log`, which is a per-request HTTP access log subject to retention-based deletion and carries no action semantics. There is no update/delete path for `audit_log`: entries are written once by the handler that performed the action and never touched again. The implementation now lives in a shared package (`domain/shared/audit`), adopted by `myidsan` and `mymatasan` too, which is where myseliasan's copy gained an age-based retention purge (config-driven, archive-before-delete — not yet scheduled here the way `myidsan` schedules it) and a `user_agent` column it previously lacked.
 
 Actions recorded:
 
@@ -399,7 +399,13 @@ Actions recorded:
 
 Recording is best-effort: a failure to write an audit entry is logged but never blocks or fails the action being audited. Each entry captures the actor (user id, email/name, role), the target (type + id), an outcome (`success`/`denied`/`error`), a short detail string, optional structured `Metadata`, and the client IP.
 
-The trail is read-only over `GET /api/audit?limit=&offset=&action=&targetType=&targetId=`, gated to **superadmins only** (the audit log can expose sensitive operator activity). The SPA exposes it as its own **Audit Log** nav item under **Administration** (superadmin-only), styled as a standard admin page (settings-panel + header, like Users/Roles) with per-column filtering and sorting on the shared `DataTable`.
+The trail is read-only over `GET /api/audit?limit=&offset=&action=&outcome=&actorEmail=&targetType=&targetId=&from=&to=` (the `outcome`/`actorEmail`/`from`/`to` filters are new, gained free from the shared implementation), gated to **superadmins only** (the audit log can expose sensitive operator activity). The SPA exposes it as its own **Audit Log** nav item under **Administration** (superadmin-only), styled as a standard admin page (settings-panel + header, like Users/Roles) with per-column filtering and sorting on the shared `DataTable`.
+
+## Backup & Restore
+
+Settings gains a **Backup & Restore** tab (superadmin-only) that exports a passphrase-encrypted `.selbackup` and restores from one — until now the control plane had a factory reset and nothing else, while `mymatasan` (`.mmbackup`) and `myidsan` (`.idbackup`) both already shipped this. myseliasan is the app holding state that cannot be rebuilt from anywhere else: the fleet certificate authority's private key, the node registry with each node's heartbeat token, RBAC, sites and floor plans, fleet rules, and the audit trail — losing that database does not degrade the fleet, it orphans it, and every node has to be physically re-adopted with a fresh claim code.
+
+Eight selectable sections (access, users, fleetca, fleet, sites, rules, settings, audit) with row counts shown before export. Secrets and on-disk floor-plan images are unsealed on export and RE-SEALED with the destination host's own at-rest key on restore, so a bundle restores cleanly onto a fresh install with a completely different encryption key. Restoring the fleet CA reports that a restart is required — the running process caches the CA in memory and would otherwise keep serving mTLS from the old one and reject every node. The audit section is append-only and ignores replace mode, so restoring an empty backup cannot be used to erase the trail. Both export and restore are themselves audited (never with the passphrase).
 
 ## Settings
 
@@ -507,7 +513,10 @@ node adoption, done) show an extra hint when `clustered` was chosen.
 
 Deliberately **not** offered, unlike mymatasan's and myidsan's wizards: an alerts step
 (myseliasan has no notification-destination API to configure yet) and a restore-from-backup
-step (myseliasan has no backup/restore capability at all). See `apis/setup.go.md`.
+step — myseliasan does now have backup/restore (see *Backup & Restore* below), but restoring
+is an existing-install action reached from Settings, not something a fresh, unconfigured
+install needs in its first-run flow; a restore does mark setup complete so the wizard does
+not reappear afterward. See `apis/setup.go.md`.
 
 ## Built-in user manual
 

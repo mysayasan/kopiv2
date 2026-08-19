@@ -57,3 +57,4 @@ Returns a `"succeed"` envelope on success.
 
 - The route group is registered under `/api/cameras` with Basic Auth applied to all camera routes.
 - `PUT /api/cameras/{id}` was added to fix a bug where "Save Details" in the Camera tab silently reported success without persisting data (the previous implementation called `POST /api/cameras` which had no POST handler, causing the request to be silently dropped by the router).
+- `NewCameraApi` takes an extra `audit *Auditor` parameter (`apis/audit.go.md`). `saveCredentials` records `services.ActionCameraCredentialChange` (target `camera`, id) on both success and failure — the USERNAME is recorded, the password never is, since the trail is readable by every admin and exported to CSV.

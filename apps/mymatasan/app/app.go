@@ -17,6 +17,7 @@ import (
 	appentities "github.com/mysayasan/kopiv2/apps/mymatasan/entities"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
+	sharedaudit "github.com/mysayasan/kopiv2/domain/shared/audit"
 	apiaccessenums "github.com/mysayasan/kopiv2/domain/enums/apiaccess"
 	"github.com/mysayasan/kopiv2/domain/notification"
 	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
@@ -155,6 +156,9 @@ func (m *module) Entities() []any {
 		appentities.ObjectObservation{},
 		sharedentities.Notification{},
 		sharedentities.NotificationRollup{},
+		// The append-only audit trail, shared with myidsan and myseliasan. New table on
+		// this app; the auto-migrator creates it, so no migration is needed.
+		sharedaudit.AuditLog{},
 	}
 }
 
@@ -567,6 +571,36 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 	// Everything is built. Gather it once, and let the remaining phases take ONE parameter
 	// instead of thirty free variables out of an 800-line scope.
+	// Where evidence bundles are built. Held in a variable because two places need it:
+	// the export service writes here, and the factory reset must SHRED it. A bundle is
+	// DECRYPTED footage, so a wipe that missed this directory would shred every encrypted
+	// recording and leave the plaintext copies of them sitting beside it.
+	evidenceExportDir := apphost.ResolveWritablePath(deps.DataDir, "exports")
+
+	// The running version, resolved once. Both the self-update service and the evidence
+	// export manifest need it, and a second manifest read would be the start of a drift.
+	currentVersion := ""
+	if manifest, err := versioning.LoadDefault(); err == nil {
+		if info, err := manifest.InfoForApp(m.Name()); err == nil {
+			currentVersion = info.AppVersion
+		}
+	}
+
+	// The append-only audit trail. Built before the wiring bag because the handlers that
+	// record into it are constructed from that bag, and because a trail that is wired late
+	// is a trail that quietly misses the first actions after boot.
+	//
+	// The trusted-proxy list is the rate limiter's, so "which hops may set
+	// X-Forwarded-For" has exactly one answer in this app — an untrusted caller must not
+	// be able to forge the address recorded against their own deletion.
+	auditService := services.WithAuditMetrics(
+		services.NewAuditService(deps.Db, func(format string, args ...any) {
+			deps.Logger.Warnf("mymatasan.audit", format, args...)
+		}),
+		deps.Metrics,
+	)
+	auditApi := apis.NewAuditor(auditService, deps.Config.RateLimit.TrustedProxies)
+
 	w := &wiring{
 		deps:           deps,
 		appCfg:         appCfg,
@@ -612,6 +646,22 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		accessRoles:          deps.AccessRoles,
 		accessPerms:          deps.AccessPerms,
 
+		audit:        auditApi,
+		auditService: auditService,
+
+		continuitySettings: services.NewContinuitySettingsService(repo.RuntimeSetting),
+		tamperSettings:     services.NewTamperSettingsService(repo.RuntimeSetting),
+
+		// Evidence export. Work lands under the data dir rather than the OS temp dir: a
+		// bundle is DECRYPTED footage, and it belongs on the volume the operator already
+		// governs, not somewhere a system cleaner may or may not reach.
+		evidence: services.NewEvidenceExportService(
+			recordingService, cameraService, atrestCipher,
+			ffmpegPath,
+			evidenceExportDir,
+			currentVersion,
+		),
+
 		ffmpegInstaller: services.NewFFmpegInstaller(ffmpegBinDir, settingsService),
 		pythonInstaller: services.NewPythonInstaller(deps.DataDir, deps.ConfigPath),
 	}
@@ -638,6 +688,12 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		}
 		if fp := strings.TrimSpace(deps.Config.FileStorage.Path); fp != "" {
 			paths = append(paths, fp)
+		}
+		// Evidence bundles are DECRYPTED footage. Shredding every encrypted recording
+		// while leaving plaintext copies of them in the export directory would defeat the
+		// whole point of a crypto-erase wipe.
+		if evidenceExportDir != "" {
+			paths = append(paths, evidenceExportDir)
 		}
 		if cfgs, err := recordingService.ListConfigs(ctx); err == nil {
 			for _, c := range cfgs {
@@ -729,12 +785,6 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 	// Self-update: check GitHub Releases (scheduled + on demand) and, on portable/
 	// installer installs, download+verify+swap the binary/assets and restart.
-	currentVersion := ""
-	if manifest, err := versioning.LoadDefault(); err == nil {
-		if info, err := manifest.InfoForApp(m.Name()); err == nil {
-			currentVersion = info.AppVersion
-		}
-	}
 	updateService := services.NewUpdateService(currentVersion, deps.HomeDir, deps.Restarter)
 	updateService.CleanupStaleFiles()
 	if deps.Scheduler != nil {

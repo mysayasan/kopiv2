@@ -131,6 +131,13 @@ type SegmentResult struct {
 	// "hevc"), recorded so the playback path knows whether it must transcode for the
 	// browser without re-probing the (encrypted) file. Empty when unknown.
 	Codec string
+	// Sha256 is the hex SHA-256 of the segment's PLAINTEXT mp4, taken at finalize
+	// before at-rest encryption. Empty when it could not be taken — a segment adopted
+	// after a crash is already encrypted, and rows written before hashing existed have
+	// none. An evidence export must report that difference rather than hide it: a hash
+	// computed later proves only that the file has not changed since, which is a much
+	// weaker claim. See infra/recording.HashPlaintextFile.
+	Sha256 string
 }
 
 // SegmentSink is implemented by apps to persist segment metadata.

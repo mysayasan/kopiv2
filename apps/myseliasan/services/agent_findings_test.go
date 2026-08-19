@@ -53,11 +53,15 @@ func (f *fakeFleetSource) List(context.Context) ([]*entities.ManagedNode, error)
 func (f *fakeFleetSource) FleetStatus(context.Context) (FleetStatus, error)      { return f.status, nil }
 
 type fakeDigestAudit struct {
+	// Embedded so the fake satisfies the whole trail interface without stubbing
+	// PurgeOlderThan, which nothing here calls — an unexpected call nil-panics loudly
+	// rather than quietly returning a zero result.
+	IAuditService
 	rows []*entities.AuditLog
 }
 
 func (f *fakeDigestAudit) Record(context.Context, AuditEntry) {}
-func (f *fakeDigestAudit) List(_ context.Context, _, _ uint64, _, _, _ string) ([]*entities.AuditLog, uint64, error) {
+func (f *fakeDigestAudit) List(_ context.Context, _, _ uint64, _ AuditFilter) ([]*entities.AuditLog, uint64, error) {
 	return f.rows, uint64(len(f.rows)), nil
 }
 

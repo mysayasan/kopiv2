@@ -2561,6 +2561,7 @@ export function SettingsTab({
             onChange={onHealthChange}
             onSave={onSaveHealth}
             onDiscard={onDiscardHealth}
+            authHeader={authHeader}
           />
         ) : null}
 
@@ -3138,7 +3139,258 @@ function TemplateTokenHelp() {
   );
 }
 
-export function HealthSettingsPanel({ settings, busy, hasChanges, onChange, onSave, onDiscard }) {
+// ContinuitySettingsCard configures the recording-continuity monitor.
+//
+// It sits inside the camera-health panel because both answer "is this camera OK", but it
+// asks a different question from the reachability probe above it: not "does the camera
+// answer" but "did we actually write footage". A camera can be perfectly reachable while
+// ffmpeg is wedged, the disk is full or the stream URL silently changed.
+//
+// Self-contained: it loads and saves its own settings rather than threading a fifth
+// settings object through the app's state, which is a lot of plumbing for four fields.
+function ContinuitySettingsCard({ authHeader }) {
+  const t = useT();
+  const [value, setValue] = useState(null);
+  const [saved, setSaved] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState(null);
+
+  const call = useCallback(async (options = {}) => {
+    const headers = { ...(options.headers || {}) };
+    if (authHeader) headers.Authorization = authHeader;
+    if (options.body) headers['Content-Type'] = 'application/json';
+    const resp = await fetch(`${apiBase()}/api/settings/continuity`, { credentials: 'include', ...options, headers });
+    const text = await resp.text();
+    let payload = null;
+    if (text) { try { payload = JSON.parse(text); } catch (_) { payload = { message: text }; } }
+    const body = payload?.data?.result ?? payload?.result ?? payload;
+    if (!resp.ok) throw new Error(payload?.message || t('st.continuitySaveFailed'));
+    return body;
+  }, [authHeader, t]);
+
+  useEffect(() => {
+    let alive = true;
+    call().then((body) => {
+      if (!alive || !body) return;
+      setValue(body);
+      setSaved(body);
+    }).catch(() => { /* the card simply stays hidden if it cannot load */ });
+    return () => { alive = false; };
+  }, [call]);
+
+  if (!value) return null;
+
+  const dirty = JSON.stringify(value) !== JSON.stringify(saved);
+  const patch = (values) => setValue({ ...value, ...values });
+
+  async function save() {
+    setBusy(true);
+    setNote(null);
+    try {
+      const body = await call({ method: 'PUT', body: JSON.stringify(value) });
+      setValue(body);
+      setSaved(body);
+      setNote({ kind: 'ok', text: t('st.continuitySaved') });
+    } catch (err) {
+      setNote({ kind: 'error', text: err.message });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="settings-panel span-two">
+      <header>
+        <h2><span className="btn-icon"><Ico n="video" /> {t('st.continuityTitle')}</span></h2>
+        <label className="check-row">
+          <input
+            type="checkbox"
+            checked={!!value.enabled}
+            onChange={(event) => patch({ enabled: event.target.checked })}
+          />
+          {t('st.continuityEnabled')}
+        </label>
+      </header>
+      <p className="settings-hint">{t('st.continuityHint')}</p>
+
+      <div className="settings-grid">
+        <label>
+          <FieldTitle info={t('st.continuityMinCoverageHint')}>
+            {t('st.continuityMinCoverage')}
+          </FieldTitle>
+          <input
+            type="number"
+            min="1"
+            max="100"
+            step="1"
+            value={value.minCoveragePercent}
+            onChange={(event) => patch({ minCoveragePercent: Math.min(100, Math.max(1, Number(event.target.value) || 0)) })}
+            disabled={!value.enabled}
+          />
+        </label>
+        <label>
+          <FieldTitle info={t('st.continuityFailureThresholdHint')}>
+            {t('st.continuityFailureThreshold')}
+          </FieldTitle>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={value.failureThreshold}
+            onChange={(event) => patch({ failureThreshold: Math.max(1, Number(event.target.value) || 1) })}
+            disabled={!value.enabled}
+          />
+        </label>
+        <label>
+          <FieldTitle info={t('st.continuityRecoveryThresholdHint')}>
+            {t('st.continuityRecoveryThreshold')}
+          </FieldTitle>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={value.recoveryThreshold}
+            onChange={(event) => patch({ recoveryThreshold: Math.max(1, Number(event.target.value) || 1) })}
+            disabled={!value.enabled}
+          />
+        </label>
+      </div>
+
+      {note ? (
+        <p className={note.kind === 'error' ? 'settings-hint danger-text' : 'settings-hint'}>{note.text}</p>
+      ) : null}
+
+      <div className="settings-actions">
+        <button type="button" className="primary" onClick={save} disabled={busy || !dirty}>
+          <span className="btn-icon"><Ico n="save" /> {t('common.save')}</span>
+        </button>
+      </div>
+    </section>
+  );
+}
+
+// TamperSettingsCard configures the camera tamper monitor.
+//
+// It sits with the camera-health settings because all three monitors answer versions of
+// "is this camera OK", but this one asks the question the other two cannot: the camera
+// answers, the recorder writes files, and the picture is of a bag over the lens.
+//
+// Self-contained, like the continuity card above it: four fields do not justify threading
+// another settings object through the app's state.
+function TamperSettingsCard({ authHeader }) {
+  const t = useT();
+  const [value, setValue] = useState(null);
+  const [saved, setSaved] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState(null);
+
+  const call = useCallback(async (options = {}) => {
+    const headers = { ...(options.headers || {}) };
+    if (authHeader) headers.Authorization = authHeader;
+    if (options.body) headers['Content-Type'] = 'application/json';
+    const resp = await fetch(`${apiBase()}/api/settings/tamper`, { credentials: 'include', ...options, headers });
+    const text = await resp.text();
+    let payload = null;
+    if (text) { try { payload = JSON.parse(text); } catch (_) { payload = { message: text }; } }
+    const body = payload?.data?.result ?? payload?.result ?? payload;
+    if (!resp.ok) throw new Error(payload?.message || t('st.tamperSaveFailed'));
+    return body;
+  }, [authHeader, t]);
+
+  useEffect(() => {
+    let alive = true;
+    call().then((body) => {
+      if (!alive || !body) return;
+      setValue(body);
+      setSaved(body);
+    }).catch(() => { /* stays hidden if it cannot load */ });
+    return () => { alive = false; };
+  }, [call]);
+
+  if (!value) return null;
+
+  const dirty = JSON.stringify(value) !== JSON.stringify(saved);
+  const patch = (values) => setValue({ ...value, ...values });
+
+  async function save() {
+    setBusy(true);
+    setNote(null);
+    try {
+      const body = await call({ method: 'PUT', body: JSON.stringify(value) });
+      setValue(body);
+      setSaved(body);
+      setNote({ kind: 'ok', text: t('st.tamperSaved') });
+    } catch (err) {
+      setNote({ kind: 'error', text: err.message });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="settings-panel span-two">
+      <header>
+        <h2><span className="btn-icon"><Ico n="eye" /> {t('st.tamperTitle')}</span></h2>
+        <label className="check-row">
+          <input
+            type="checkbox"
+            checked={!!value.enabled}
+            onChange={(event) => patch({ enabled: event.target.checked })}
+          />
+          {t('st.tamperEnabled')}
+        </label>
+      </header>
+      <p className="settings-hint">{t('st.tamperHint')}</p>
+
+      <div className="settings-grid">
+        <label>
+          <FieldTitle info={t('st.tamperSensitivityInfo')}>{t('st.tamperSensitivity')}</FieldTitle>
+          <input
+            type="number"
+            min="1" max="99" step="1"
+            value={Math.round(value.coveredRatio * 100)}
+            onChange={(event) => patch({ coveredRatio: Math.min(99, Math.max(1, Number(event.target.value) || 1)) / 100 })}
+            disabled={!value.enabled}
+          />
+        </label>
+        <label>
+          <FieldTitle info={t('st.tamperFrozenInfo')}>{t('st.tamperFrozen')}</FieldTitle>
+          <input
+            type="number"
+            min="10" step="10"
+            value={value.frozenSeconds}
+            onChange={(event) => patch({ frozenSeconds: Math.max(10, Number(event.target.value) || 10) })}
+            disabled={!value.enabled}
+          />
+        </label>
+        <label>
+          <FieldTitle info={t('st.tamperConfirmInfo')}>{t('st.tamperConfirm')}</FieldTitle>
+          <input
+            type="number"
+            min="1" step="1"
+            value={value.failureThreshold}
+            onChange={(event) => patch({ failureThreshold: Math.max(1, Number(event.target.value) || 1) })}
+            disabled={!value.enabled}
+          />
+        </label>
+      </div>
+
+      <p className="settings-hint">{t('st.tamperNightNote')}</p>
+
+      {note ? (
+        <p className={note.kind === 'error' ? 'settings-hint danger-text' : 'settings-hint'}>{note.text}</p>
+      ) : null}
+
+      <div className="settings-actions">
+        <button type="button" className="primary" onClick={save} disabled={busy || !dirty}>
+          <span className="btn-icon"><Ico n="save" /> {t('common.save')}</span>
+        </button>
+      </div>
+    </section>
+  );
+}
+
+export function HealthSettingsPanel({ settings, busy, hasChanges, onChange, onSave, onDiscard, authHeader }) {
   const t = useT();
   const value = { ...defaultHealthSettings, ...(settings || {}) };
   function patch(values) {
@@ -3234,6 +3486,9 @@ export function HealthSettingsPanel({ settings, busy, hasChanges, onChange, onSa
           <span className="btn-icon"><Ico n="undo" /> {t('st.discardChanges')}</span>
         </button>
       </div>
+
+      <ContinuitySettingsCard authHeader={authHeader} />
+      <TamperSettingsCard authHeader={authHeader} />
     </form>
   );
 }

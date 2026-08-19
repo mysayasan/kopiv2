@@ -1,10 +1,10 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { FactoryResetSection, DeploymentPanel, Ico, useT, Tabs } from '@shared';
+import { FactoryResetSection, DeploymentPanel, Ico, useT, Tabs, PasswordField } from '@shared';
 // The operator checklist and caveats are myseliasan-specific facts (its ports, its
 // uploads directory, which of its features are not yet cluster-safe), so they are
 // defined once beside the wizard step and reused here rather than duplicated.
 import { deploymentOperatorSteps, deploymentCaveats } from './setup';
-import { api, apiBase } from '../lib/helpers';
+import { api, apiBase, formatTimestamp } from '../lib/helpers';
 import '../styles/settings.css';
 
 // SettingsPage is the in-app editor for the SAFE SUBSET of config.json (localAuth, SSO,
@@ -298,7 +298,10 @@ export function SettingsPage({ session, onToast }) {
   }
 
   const tabs = SECTIONS.map((s) => ({ id: s.id, label: t(`settings.sec.${s.id}.title`) }))
-    .concat([{ id: 'system', label: t('settings.sec.system.title') }]);
+    .concat([
+      { id: 'backup', label: t('settings.sec.backup.title') },
+      { id: 'system', label: t('settings.sec.system.title') },
+    ]);
   const activeSection = SECTIONS.find((s) => s.id === active);
   // The Save button is enabled only when the working copy differs from what was loaded.
   // Both are the same masked shape (secrets blank + "<field>Set" flags), so a plain deep
@@ -327,6 +330,8 @@ export function SettingsPage({ session, onToast }) {
 
       {loading ? (
         <div className="settings-loading"><Ico n="reload" sz={18} /><span>{t('common.loading')}</span></div>
+      ) : active === 'backup' ? (
+        <BackupTab t={t} onToast={onToast} onRestart={restart} restarting={restarting} />
       ) : active === 'system' ? (
         <SystemTab t={t} onRestart={restart} restarting={restarting} onToast={onToast} />
       ) : !form ? (
@@ -991,6 +996,274 @@ function HealthRow({ label, ok, note, t }) {
         <span className="settings-status-dot" />
         {note || (ok ? t('settings.system.online') : t('settings.system.offline'))}
       </span>
+    </div>
+  );
+}
+
+// BackupTab exports and restores the control plane itself.
+//
+// This is the only way the fleet certificate authority leaves this machine. The CA private
+// key lives in a control_setting row and every adopted node's trust chain hangs off it, so
+// an install lost without one of these files cannot be recovered — every node has to be
+// physically re-adopted with a fresh claim code. The bundle is passphrase-encrypted because
+// it necessarily carries that key in the clear inside the envelope; there is deliberately no
+// way to export without one. See apps/myseliasan/services/backup.go.
+function BackupTab({ t, onToast, onRestart, restarting }) {
+  const [sections, setSections] = useState([]);
+  const [selected, setSelected] = useState({});
+  const [pass, setPass] = useState('');
+  const [confirmPass, setConfirmPass] = useState('');
+  const [file, setFile] = useState({ data: '', name: '' });
+  const [restorePass, setRestorePass] = useState('');
+  const [manifest, setManifest] = useState(null);
+  const [mode, setMode] = useState('replace');
+  const [result, setResult] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    const r = await api('/api/backup/sections', { noRedirect: true });
+    if (!r.ok || !Array.isArray(r.body)) return;
+    setSections(r.body);
+    // Default to every section that currently holds something. An operator who wants a
+    // partial backup opts out; one who accepts the default gets everything, which is the
+    // safer mistake.
+    setSelected(Object.fromEntries(r.body.map((s) => [s.id, s.count > 0])));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const label = (id) => t(`settings.backup.section.${id}`);
+  const chosen = sections.filter((s) => selected[s.id]).map((s) => s.id);
+
+  async function createBackup() {
+    if (pass.length < 8) { onToast(t('settings.backup.passTooShort'), 'error'); return; }
+    if (pass !== confirmPass) { onToast(t('settings.backup.passMismatch'), 'error'); return; }
+    if (!chosen.length) { onToast(t('settings.backup.pickOne'), 'error'); return; }
+    setBusy(true);
+    try {
+      const r = await api('/api/backup/export', {
+        method: 'POST',
+        body: JSON.stringify({ sections: chosen, passphrase: pass }),
+        noRedirect: true,
+      });
+      if (!r.ok || !r.body?.dataBase64) { onToast(r.message || t('settings.backup.exportFailed'), 'error'); return; }
+      const bytes = Uint8Array.from(atob(r.body.dataBase64), (c) => c.charCodeAt(0));
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = r.body.filename || 'myseliasan-backup.selbackup';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setPass('');
+      setConfirmPass('');
+      onToast(t('settings.backup.exported'), 'success');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function onPickFile(event) {
+    const picked = event.target.files?.[0];
+    setManifest(null);
+    setResult(null);
+    if (!picked) { setFile({ data: '', name: '' }); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const buf = new Uint8Array(reader.result);
+      let binary = '';
+      for (let i = 0; i < buf.length; i += 1) binary += String.fromCharCode(buf[i]);
+      setFile({ data: btoa(binary), name: picked.name });
+    };
+    reader.readAsArrayBuffer(picked);
+  }
+
+  async function preview() {
+    if (!file.data) { onToast(t('settings.backup.pickFile'), 'error'); return; }
+    setBusy(true);
+    try {
+      const r = await api('/api/backup/preview', {
+        method: 'POST',
+        body: JSON.stringify({ dataBase64: file.data, passphrase: restorePass }),
+        noRedirect: true,
+      });
+      if (!r.ok) { setManifest(null); onToast(r.message || t('settings.backup.previewFailed'), 'error'); return; }
+      setManifest(r.body);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function restore() {
+    setBusy(true);
+    try {
+      const r = await api('/api/backup/restore', {
+        method: 'POST',
+        body: JSON.stringify({
+          dataBase64: file.data,
+          passphrase: restorePass,
+          sections: manifest?.sections || [],
+          mode,
+        }),
+        noRedirect: true,
+      });
+      if (!r.ok) { onToast(r.message || t('settings.backup.restoreFailed'), 'error'); return; }
+      setResult(r.body);
+      onToast(t('settings.backup.restored'), 'success');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const manifestSections = Array.isArray(manifest?.sections) ? manifest.sections : [];
+  // A restore that brought the CA back leaves this process still serving mTLS from the OLD
+  // one, because fleetCA caches it in memory and only reloads on construction. Until the
+  // restart happens, every node presenting a restored certificate is rejected — so the
+  // prompt is the point of the screen, not a footnote on it.
+  const needsRestart = !!result?.restartRequired;
+
+  return (
+    <div className="settings-body">
+      <div className="settings-hero tone-amber">
+        <span className="settings-hero-ico"><Ico n="save" sz={22} /></span>
+        <div className="settings-hero-text">
+          <h3>{t('settings.sec.backup.title')}</h3>
+          <p>{t('settings.sec.backup.desc')}</p>
+        </div>
+      </div>
+
+      {needsRestart ? (
+        <div className="settings-restart-banner" role="alert">
+          <span><Ico n="warning" sz={16} /> {result.restartReason || t('settings.restartRequired')}</span>
+          <button type="button" className="settings-btn settings-btn-primary" onClick={onRestart} disabled={restarting}>
+            <Ico n={restarting ? 'reload' : 'refresh'} sz={15} />
+            <span>{restarting ? t('settings.restarting') : t('settings.restartNow')}</span>
+          </button>
+        </div>
+      ) : null}
+
+      <div className="settings-cards">
+        <section className="settings-card">
+          <h3 className="settings-card-title">{t('settings.backup.exportTitle')}</h3>
+          <p className="settings-field-note">{t('settings.backup.exportHint')}</p>
+
+          <div className="settings-backup-sections">
+            {sections.map((s) => (
+              <label key={s.id} className={`settings-backup-section${s.count === 0 ? ' is-empty' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={!!selected[s.id]}
+                  disabled={s.count === 0}
+                  onChange={() => setSelected((prev) => ({ ...prev, [s.id]: !prev[s.id] }))}
+                />
+                <span className="settings-backup-name">
+                  {label(s.id)}
+                  <span className="settings-field-note">{t(`settings.backup.sectionDesc.${s.id}`)}</span>
+                </span>
+                <span className="settings-status-pill">{s.count}</span>
+              </label>
+            ))}
+          </div>
+
+          <div className="settings-grid">
+            <label className="settings-field">
+              <span className="settings-field-label-text">{t('settings.backup.passphrase')}</span>
+              <PasswordField value={pass} onChange={setPass} autoComplete="new-password" />
+            </label>
+            <label className="settings-field">
+              <span className="settings-field-label-text">{t('settings.backup.confirmPassphrase')}</span>
+              <PasswordField value={confirmPass} onChange={setConfirmPass} autoComplete="new-password" />
+            </label>
+          </div>
+          <p className="settings-field-note">{t('settings.backup.passphraseNote')}</p>
+
+          <div className="settings-actions">
+            <button type="button" className="settings-btn settings-btn-primary" onClick={createBackup} disabled={busy}>
+              <Ico n="download" sz={15} /><span>{t('settings.backup.exportBtn')}</span>
+            </button>
+          </div>
+        </section>
+
+        <section className="settings-card">
+          <h3 className="settings-card-title">{t('settings.backup.restoreTitle')}</h3>
+          <p className="settings-field-note">{t('settings.backup.restoreHint')}</p>
+
+          <div className="settings-grid">
+            <label className="settings-field">
+              <span className="settings-field-label-text">{t('settings.backup.file')}</span>
+              <input type="file" accept=".selbackup,application/octet-stream" onChange={onPickFile} />
+            </label>
+            <label className="settings-field">
+              <span className="settings-field-label-text">{t('settings.backup.passphrase')}</span>
+              <PasswordField value={restorePass} onChange={setRestorePass} autoComplete="off" />
+            </label>
+          </div>
+
+          <div className="settings-actions">
+            <button type="button" className="settings-btn settings-btn-quiet" onClick={preview} disabled={busy || !file.data}>
+              <Ico n="search" sz={15} /><span>{t('settings.backup.previewBtn')}</span>
+            </button>
+          </div>
+
+          {manifest ? (
+            <>
+              <h3 className="settings-card-title">{t('settings.backup.manifestTitle')}</h3>
+              <div className="settings-metrics">
+                <MetricTile label={t('settings.backup.madeBy')} value={manifest.appVersion ? `v${manifest.appVersion}` : '—'} />
+                <MetricTile label={t('settings.backup.madeAt')} value={formatTimestamp(manifest.createdAt) || '—'} />
+              </div>
+              <div className="settings-health">
+                {manifestSections.map((id) => (
+                  <div key={id} className="settings-health-row">
+                    <span className="settings-health-label">{label(id)}</span>
+                    <span className="settings-status-pill">{(manifest.counts && manifest.counts[id]) || 0}</span>
+                  </div>
+                ))}
+              </div>
+
+              <label className="settings-field">
+                <span className="settings-field-label-text">{t('settings.backup.mode')}</span>
+                <select value={mode} onChange={(e) => setMode(e.target.value)}>
+                  <option value="replace">{t('settings.backup.modeReplace')}</option>
+                  <option value="merge">{t('settings.backup.modeMerge')}</option>
+                </select>
+              </label>
+              <p className="settings-field-note settings-hint--error">
+                <Ico n="warning" sz={14} />{' '}
+                {mode === 'replace' ? t('settings.backup.replaceWarn') : t('settings.backup.mergeWarn')}
+              </p>
+              {manifestSections.includes('fleetca') ? (
+                <p className="settings-field-note settings-hint--error">
+                  <Ico n="warning" sz={14} /> {t('settings.backup.caWarn')}
+                </p>
+              ) : null}
+
+              <div className="settings-actions">
+                <button type="button" className="settings-btn settings-btn-danger" onClick={restore} disabled={busy}>
+                  <Ico n="reload" sz={15} /><span>{t('settings.backup.restoreBtn')}</span>
+                </button>
+              </div>
+            </>
+          ) : null}
+
+          {result ? (
+            <div className="settings-health">
+              {(result.sections || []).map((id) => (
+                <div key={id} className="settings-health-row">
+                  <span className="settings-health-label">{label(id)}</span>
+                  <span className="settings-status-pill">
+                    {t('settings.backup.restoredCount', {
+                      n: (result.restored && result.restored[id]) || 0,
+                      skipped: (result.skipped && result.skipped[id]) || 0,
+                    })}
+                  </span>
+                </div>
+              ))}
+              {result.schemaWarning ? <p className="settings-field-note settings-hint--error">{result.schemaWarning}</p> : null}
+            </div>
+          ) : null}
+        </section>
+      </div>
     </div>
   );
 }

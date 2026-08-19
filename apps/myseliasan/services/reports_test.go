@@ -53,7 +53,7 @@ type fakeAudit struct {
 	rows []*entities.AuditLog
 }
 
-func (f *fakeAudit) List(context.Context, uint64, uint64, string, string, string) ([]*entities.AuditLog, uint64, error) {
+func (f *fakeAudit) List(context.Context, uint64, uint64, AuditFilter) ([]*entities.AuditLog, uint64, error) {
 	return f.rows, uint64(len(f.rows)), nil
 }
 

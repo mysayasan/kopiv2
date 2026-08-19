@@ -58,10 +58,16 @@ Implements the `myidsan` app module for the shared runtime host.
   age-based, archive-first trim of the trail as a periodic `deps.Scheduler` task.
 - Wires up **IdP metrics** (`docs/MYIDSAN_PRODUCTIZATION_PLAN.md` §4.4, `services/metrics.go.md`):
   calls `services.DescribeMetrics(deps.Metrics)` before constructing `auditService`; attaches
-  `deps.Metrics` to it via a type-asserted `WithMetrics` call (so `auditService`'s package-private
-  concrete type does not have to be exported just to hand back the same `IAuditService`) right
-  after construction, so `MetricAuditWriteFailuresTotal` is live before anything can call
-  `Record`; and calls `startSessionGauge(deps, sessionService)`
+  `deps.Metrics` to it via a direct `services.WithAuditMetrics(auditService, deps.Metrics)` call
+  right after construction, so `MetricAuditWriteFailuresTotal` is live before anything can call
+  `Record`. Now that the trail lives in `domain/shared/audit`, this used to be a type-asserted
+  optional `WithMetrics` call; it is a direct call now because the assertion form would have
+  silently stopped matching the moment the shared package's setter gained a second parameter
+  (`MetricNames`) — and metrics would have been dropped with no error anywhere, which is exactly
+  the failure this counter exists to make visible. `WithAuditMetrics` supplies myidsan's own
+  series names (`MetricAuditWriteFailuresTotal`/`MetricAuditRetentionPurgedTotal`) to the shared
+  `sharedaudit.WithMetrics`; see `services/audit.go.md`. Also calls
+  `startSessionGauge(deps, sessionService)`
   (`app/audit_retention.go.md`) right after `sessionService` is built, registering the
   `myidsan_sessions_active` polling task. `apis.NewFederatedAuthApi`'s call site gained a
   trailing `deps.Metrics` argument so `POST /api/auth/token` can record

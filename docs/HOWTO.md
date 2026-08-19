@@ -1300,8 +1300,11 @@ filesystem access to the server, not just a session on it. Enable it with the `a
   starting abruptly can tell a deliberate trim from an empty past.
 
 See `docs/modules/infra/config/audit_retention.go.md` and
-`docs/modules/apps/myidsan/services/audit_retention.go.md` for the implementation, and
-`docs/MYIDSAN_PRODUCTIZATION_PLAN.md` Phase 4 for the design rationale.
+`docs/modules/domain/shared/audit/service.go.md` (the retention purge itself now lives in
+the shared `domain/shared/audit` package, adopted by myidsan, myseliasan, and mymatasan —
+`apps/myidsan/services/audit.go` and `apps/myidsan/app/audit_retention.go` only wire it up)
+for the implementation, and `docs/MYIDSAN_PRODUCTIZATION_PLAN.md` Phase 4 for the design
+rationale.
 
 ## systemd Deployment
 

@@ -773,6 +773,16 @@ func (r *rtspRecorder) adoptSegment(ctx context.Context, f liveSegInfo, endedAt 
 			codec = probeVideoCodec(ffmpegPath, f.path)
 		}
 	}
+	// A plaintext file can still be digested; an already-encrypted one cannot, and is
+	// deliberately left without a hash rather than given a ciphertext one that would
+	// change on the next key rotation and prove nothing about the video.
+	adoptSha := ""
+	if !encrypted {
+		if sum, herr := HashPlaintextFile(f.path); herr == nil {
+			adoptSha = sum
+		}
+	}
+
 	if r.cfg.Cipher != nil && !encrypted {
 		// Legacy safety net: a segment finalized by an older build (which encrypted in
 		// place AFTER publishing the .mp4) can still be plaintext on disk. Encrypt it
@@ -801,6 +811,7 @@ func (r *rtspRecorder) adoptSegment(ctx context.Context, f liveSegInfo, endedAt 
 		EndedAt:   endedAt,
 		FileSize:  fi.Size(),
 		Codec:     codec,
+		Sha256:    adoptSha,
 	}); err != nil {
 		log.Printf("recording rtsp cam%d: save segment %s: %v", r.cfg.CameraId, f.stem, err)
 		// The file is intact; only the DB write failed. Retry on the next tick.
@@ -936,6 +947,18 @@ func (r *rtspRecorder) remuxSegment(ctx context.Context, f liveSegInfo, endedAt 
 		storedCodec = probeVideoCodec(ffmpegPath, partPath)
 	}
 
+	// Digest the finished video BEFORE encryption. This is the only moment the plaintext
+	// mp4 exists in its final form, and hashing here — rather than at export — is what
+	// lets an evidence bundle claim the footage was not altered between recording and
+	// export. A failure is not fatal: losing the digest costs the strong claim for this
+	// one segment, and dropping the footage over it would be a far worse trade.
+	segSha := ""
+	if sum, herr := HashPlaintextFile(partPath); herr == nil {
+		segSha = sum
+	} else {
+		log.Printf("recording rtsp cam%d: hash segment %s: %v (stored without a digest)", r.cfg.CameraId, f.stem, herr)
+	}
+
 	// Encrypt the finalized segment at rest so it can be crypto-erased. Done after the
 	// duration probe; the on-disk size becomes the ciphertext size (correct for disk
 	// accounting). Playback decrypts on the fly.
@@ -978,6 +1001,7 @@ func (r *rtspRecorder) remuxSegment(ctx context.Context, f liveSegInfo, endedAt 
 			EndedAt:   endedAt,
 			FileSize:  fi.Size(),
 			Codec:     storedCodec,
+			Sha256:    segSha,
 		})
 		saveCancel()
 		if err != nil {

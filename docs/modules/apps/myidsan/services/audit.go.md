@@ -2,10 +2,14 @@
 
 ## Purpose
 
-`IAuditService` — the append-only security trail: record, list, and one narrowly-shaped
-retention purge. Deliberately no update and no targeted delete, so the trail cannot be
-edited from inside the product by the same superadmin whose actions it records (see
-`entities/audit_log.go.md`).
+myidsan's slice of the audit trail. The trail itself — entity, record/list/purge, retention
+— now lives in `domain/shared/audit` (`docs/modules/domain/shared/audit/service.go.md`):
+myidsan and myseliasan had each grown an independent copy that had already begun to drift
+(only myidsan truncated hostile input, only myidsan had retention, only myidsan recorded the
+user agent), and mymatasan — the app holding the actual video evidence — had none at all.
+What stays in this file is the part that is genuinely myidsan's: the identity-server action
+vocabulary and sign-in-method constants, plus the two constructors that wire the shared
+service to myidsan's own database and metric names.
 
 ## Responsibilities
 
@@ -19,12 +23,33 @@ edited from inside the product by the same superadmin whose actions it records (
   `ActionAppCreate/Update/Delete`, `ActionAppSecretRotate`, `ActionAppRedirectSet`,
   `ActionDirectoryUpdate`, `ActionGroupMapChange`, `ActionStepUpSuccess/Failure`,
   `ActionSessionRevoke`/`ActionSessionRevokeAll`, `ActionBackupExport`/`ActionBackupRestore`)
-  are kept as named constants, convention `<subject>.<verb>`, rather than inline strings, so
-  the set stays greppable and a UI filter can offer a closed list — an audit trail whose
-  action names drift is one nobody can query. `Outcome*` constants (`success`/`denied`/
-  `error`) and `Method*` sign-in-method constants (`local`/`ldap`/`kerberos`/`oidc`/
-  `social`/`recovery_code`) live alongside them.
-  The five `ActionWebAuthn*` constants are separate from the `ActionMfa*` (TOTP) ones above
+  are kept as named constants, convention `<subject>.<verb>`, so the set stays greppable and
+  a UI filter can offer a closed list. `Method*` sign-in-method constants (`local`/`ldap`/
+  `kerberos`/`oidc`/`social`/`recovery_code`) live alongside them.
+- Type aliases onto `domain/shared/audit`: `AuditEntry = sharedaudit.Entry`,
+  `AuditFilter = sharedaudit.Filter`, `IAuditService = sharedaudit.IService`,
+  `PurgeResult = sharedaudit.PurgeResult` — so every existing call site (handlers, tests,
+  `app/app.go`) keeps compiling unchanged. `Outcome*` (`success`/`denied`/`error`) are
+  re-exported the same way, and `ActionAuditPurge` (the action the retention purge records
+  itself under) is re-exported from `sharedaudit.ActionAuditPurge`.
+- `NewAuditService(repo dbsql.IGenericRepo[sharedaudit.AuditLog], logf) IAuditService` —
+  thin wrapper over `sharedaudit.NewService`. The table is unchanged: the schema
+  bootstrapper derives the table name from the struct name alone, and the shared entity
+  keeps the name `AuditLog` for exactly that reason.
+- `WithAuditMetrics(svc, m telemetry.Metrics) IAuditService` — attaches the recorder under
+  myidsan's own series names (`MetricAuditWriteFailuresTotal`/`MetricAuditRetentionPurgedTotal`,
+  `services/metrics.go.md`) via `sharedaudit.WithMetrics(svc, m, sharedaudit.MetricNames{...})`.
+  Called directly from `app.go` now, not through an optional type assertion — see
+  `app/app.go.md` for why the assertion form was a silent-failure trap once the shared
+  package's setter gained a second parameter.
+
+## Notes
+
+- `PurgeOlderThan` and its archive-then-delete mechanics, previously implemented in this
+  app's own `services/audit_retention.go` (now deleted), live in
+  `domain/shared/audit/retention.go`; `apps/myidsan/app/audit_retention.go` (`app/audit_retention.go.md`)
+  still wires it into the scheduler exactly as before.
+- The five `ActionWebAuthn*` constants are separate from the `ActionMfa*` (TOTP) ones above
   them because they answer different investigative questions: "which key was added, and
   from where" is per-**credential**, not per-account. `ActionWebAuthnAdminReset` is an
   administrator clearing SOMEONE ELSE's keys (see `apis/webauthn.go.md`'s
@@ -32,44 +57,8 @@ edited from inside the product by the same superadmin whose actions it records (
   fails to advance — the sign-in is still allowed (see `services/webauthn.go.md` for why
   that ambiguity is not treated as proof), so this entry is the only durable trace that it
   happened.
-- `AuditEntry` is the caller-facing shape for recording an event; the service fills in
-  `CreatedAt`, marshals `Metadata`, and defaults `Outcome` to `success`.
-- `AuditFilter` narrows a listing (`Action`, `Outcome`, `ActorEmail`, `TargetType`,
-  `TargetId`, and an inclusive `From`/`To` unix-second `CreatedAt` range). Zero values mean
-  no filter on that field.
-- `Record(ctx, e)` persists one entry and is **best-effort by design**: a write failure is
-  counted (`MetricAuditWriteFailuresTotal`, when a metrics recorder is attached) and logged
-  (via the injected `logf`) but never returned, so auditing can never block or fail the
-  action being audited — refusing a login because the audit table is full would be worse
-  than a gap in the trail. The counter exists because that swallowed error is otherwise the
-  ONLY trace: every other signal stays green while the trail quietly stops recording (see
-  `services/metrics.go.md`). Every free-text field is length-truncated before insert
-  (`truncate`, e.g. 1024 bytes for `Detail`, 320 for `ActorEmail`) so a hostile identifier
-  (a huge "username" on a failed login) cannot bloat the table.
-- `List(ctx, limit, offset, f)` applies `AuditFilter` as `Equal`/range filters and sorts
-  newest-first by `Id` (not `CreatedAt` alone — that field has only second resolution, so
-  several events in the same second would otherwise come back in an arbitrary order).
-  `limit` defaults/caps to 100/1000.
-- `PurgeOlderThan(ctx, maxRetentionDays, archiveDir)` — the one exception to "no delete",
-  implemented in `services/audit_retention.go.md`. It cannot be reached over the API: it
-  runs only from `startAuditRetention` (`app/audit_retention.go.md`) when
-  `config.audit.retention.enabled` is on. It takes an age, never a selection of rows;
-  archives every row older than the cutoff to a JSON-lines file under `archiveDir` and
-  fsyncs/renames it into place **before** deleting anything from the table, so a run that
-  cannot finish its archive deletes nothing; and it records its own run in the trail
-  (`ActionAuditPurge = "audit.retention_purge"`) naming the cutoff, row count, and archive
-  file, so a reader who finds history starting abruptly can tell a deliberate trim from an
-  empty past.
-
-## Notes
-
-- `NewAuditService(repo, logf)` takes a plain `dbsql.IGenericRepo[entities.AuditLog]` and a
-  `func(format string, args ...any)` diagnostics sink (may be `nil`), so a silently-failing
-  trail is still visible somewhere.
-- `WithMetrics(m telemetry.Metrics) IAuditService` attaches a recorder after construction
-  and returns the same service (chainable), so the one existing construction site in
-  `app/app.go.md` only needed a follow-up call, not a new constructor parameter. `metrics`
-  is optional and nil-safe — `Record`/`PurgeOlderThan` work identically without it, just
-  without the counters.
+- Action vocabularies stay per-app by design (see `domain/shared/audit/service.go.md`): the
+  verbs are what each app does, and one shared list of every app's actions would be a list
+  nobody can read.
 - Constructed once in `app/app.go.md` and passed by value into every handler that performs
   a sensitive action, rather than reached through a global.

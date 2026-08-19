@@ -26,6 +26,7 @@ type cameraApi struct {
 	settings      services.IRuntimeSettingsService
 	streamManager *stream.Manager
 	healthProber  services.ICameraHealthProber
+	audit         *Auditor
 }
 
 type saveDiscoveredRequest struct {
@@ -83,7 +84,7 @@ type cameraEncoderRequest struct {
 }
 
 // NewCameraApi registers camera CRUD, streaming, and PTZ routes under /cameras.
-func NewCameraApi(router *mux.Router, serv services.ICameraService, settings services.IRuntimeSettingsService, streamManager *stream.Manager, healthProber services.ICameraHealthProber) {
+func NewCameraApi(router *mux.Router, serv services.ICameraService, settings services.IRuntimeSettingsService, streamManager *stream.Manager, healthProber services.ICameraHealthProber, audit *Auditor) {
 	handler := &cameraApi{serv: serv, settings: settings, streamManager: streamManager, healthProber: healthProber}
 	group := router.PathPrefix("/cameras").Subrouter()
 
@@ -229,10 +230,16 @@ func (a *cameraApi) saveCredentials(w http.ResponseWriter, r *http.Request) {
 		Username: body.Username,
 		Password: body.Password,
 	})
+	target := strconv.FormatUint(id, 10)
 	if err != nil {
+		a.audit.Failure(r, services.ActionCameraCredentialChange, services.TargetCamera, target, err.Error(), nil)
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return
 	}
+	// The USERNAME is recorded, the password never is. The trail is readable by every
+	// admin and exported to CSV, so a credential in it would be a credential published.
+	a.audit.Success(r, services.ActionCameraCredentialChange, services.TargetCamera, target,
+		"changed the stored camera sign-in", map[string]any{"username": body.Username})
 	controllers.SendResult(w, res, "succeed")
 }
 

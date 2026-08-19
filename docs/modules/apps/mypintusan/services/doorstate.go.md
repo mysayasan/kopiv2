@@ -59,6 +59,14 @@ without sleeping.
 
 - Pure state machine, no I/O, no goroutine of its own — `Tick`/`ContactChanged`/etc. are called
   by `services.Controller` (`services/controller.go.md`).
+- **Safe for concurrent use.** Every exported method takes the machine's own `mu`. It has to:
+  `Controller.mu` only ever guarded the MAP of machines and is released before `tickDoors` calls
+  `Tick`, so the bus goroutine's tick ran concurrently with whatever an HTTP handler was doing to
+  the same door. That is a live path, not a hypothetical one — `apis/doors.go`'s lockdown
+  endpoint reaches `SetLockdown` on every machine while `Controller.Run` is ticking them. The
+  race was found by the nightly `-race` CI job (`.github/workflows/go-check.yml`) on the day it
+  was added. Events are returned to the caller after the lock is dropped, so `emitDoorEvents`
+  can never re-enter the machine under its own lock.
 - `ContactChanged` and `Tick`'s held-open detection are exercised in `doorstate_test.go`, but
   **`Controller.ContactChanged` is never invoked in a real deployment** — see
   `services/controller.go.md`'s Notes.

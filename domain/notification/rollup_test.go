@@ -3,6 +3,7 @@ package notification
 import (
 	"context"
 	"sort"
+	"sync"
 	"testing"
 	"time"
 
@@ -68,8 +69,15 @@ func (f *fakeNotifRepo) Get(_ context.Context, _ string, limit, offset uint64, f
 // fakeRollupRepo is an in-memory rollup store. Get returns COPIES so a bucket
 // count only persists when flush actually calls UpdateById (or Create) — this
 // keeps the test faithful to real repositories.
+// fakeRollupRepo stands in for the notification_rollup table.
+//
+// The mutex is not decoration. RollupMaintainer.Start spawns a sweep goroutine that
+// writes through this fake while the test body reads it back with count()/totalCount(),
+// so an unsynchronized version reports a data race that belongs to the TEST rather than
+// to the maintainer — noise that would sit in every nightly -race run.
 type fakeRollupRepo struct {
 	dbsql.IGenericRepo[entities.NotificationRollup]
+	mu     sync.Mutex
 	rows   []*entities.NotificationRollup
 	nextID int64
 }
@@ -110,6 +118,8 @@ func rollupMatches(r *entities.NotificationRollup, filters []sqldataenums.Filter
 }
 
 func (f *fakeRollupRepo) Get(_ context.Context, _ string, limit, offset uint64, filters []sqldataenums.Filter, _ []sqldataenums.Sorter) ([]*entities.NotificationRollup, uint64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	var matched []*entities.NotificationRollup
 	for _, r := range f.rows {
 		if rollupMatches(r, filters) {
@@ -136,6 +146,8 @@ func (f *fakeRollupRepo) Get(_ context.Context, _ string, limit, offset uint64, 
 }
 
 func (f *fakeRollupRepo) Create(_ context.Context, _ string, model entities.NotificationRollup) (uint64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.nextID++
 	model.Id = f.nextID
 	cp := model
@@ -144,6 +156,8 @@ func (f *fakeRollupRepo) Create(_ context.Context, _ string, model entities.Noti
 }
 
 func (f *fakeRollupRepo) UpdateById(_ context.Context, _ string, model entities.NotificationRollup) (uint64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for _, r := range f.rows {
 		if r.Id == model.Id {
 			*r = model
@@ -155,6 +169,8 @@ func (f *fakeRollupRepo) UpdateById(_ context.Context, _ string, model entities.
 
 // count returns the stored count for a bucket, or 0 if the bucket is absent.
 func (f *fakeRollupRepo) count(bucketStart, cameraID, ruleID int64, category, severity, label string) int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for _, r := range f.rows {
 		if r.BucketStart == bucketStart && r.CameraId == cameraID && r.RuleId == ruleID &&
 			r.Category == category && r.Severity == severity && r.Label == label {
@@ -165,6 +181,8 @@ func (f *fakeRollupRepo) count(bucketStart, cameraID, ruleID int64, category, se
 }
 
 func (f *fakeRollupRepo) totalCount() int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	var sum int64
 	for _, r := range f.rows {
 		sum += r.Count

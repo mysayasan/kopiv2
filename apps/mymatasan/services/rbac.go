@@ -92,6 +92,11 @@ func Policy() []PolicyRule {
 		// deleting a segment, purging a camera's footage. THAT denial is the evidentiary line
 		// — an operator who was present at an incident cannot delete the footage of it.
 		{Path: "/api/recording", Description: "Play back and download recorded footage", Viewer: none, Operator: read},
+		// Exporting is an OPERATOR capability and deleting is not, which is the same line
+		// drawn twice: an operator who was present at an incident must be able to hand the
+		// footage of it to somebody, and must not be able to destroy it. Every export is
+		// audited with the operator's stated reason.
+		{Path: "/api/evidence", Description: "Export footage as a verifiable evidence bundle", Viewer: none, Operator: write},
 		{Path: "/api/observations", Description: "Search what objects a camera saw", Viewer: none, Operator: read},
 
 		// --- Operating (operator only) ----------------------------------------------------
@@ -118,6 +123,11 @@ func Policy() []PolicyRule {
 		{Path: "/api/system", Description: "Restart, update, factory reset, secure wipe", Viewer: none, Operator: none},
 		{Path: "/api/settings/users", Description: "Manage users and their roles", Viewer: none, Operator: none},
 		{Path: "/api/settings/roles", Description: "See the roles that can be assigned", Viewer: none, Operator: none},
+		// The audit trail names who watched, downloaded and deleted which footage, so it is
+		// itself sensitive: it is a record of people's viewing, not just of configuration.
+		// Admin-only, and read-only for everyone — there is no delete route at all, because a
+		// trail the recorded party can trim is not a trail.
+		{Path: "/api/audit", Description: "Review the audit trail (who viewed, downloaded or deleted footage)", Viewer: none, Operator: none},
 	}
 }
 

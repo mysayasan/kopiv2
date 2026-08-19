@@ -27,6 +27,13 @@ thirty free variables pulled out of an 800-line scope.
     `recorderConfig`, `streamManager`, `cameraHealth`, `machineHealth`,
     `visionMonitorSettings`.
   - Fleet: `enrollment`, `control`, `media` (see `wire_fleet.go.md`).
+  - Audit + the three new monitors' settings/services: `audit *apis.Auditor` (the
+    API-layer wrapper, not the bare service — every audited handler also needs the
+    trusted-proxy list to resolve a caller's real address), `auditService
+    services.IAuditService`, `continuitySettings services.IContinuitySettingsService`,
+    `tamperSettings services.ITamperSettingsService`, `evidence
+    services.IEvidenceExportService` (builds verifiable export bundles; work lands under
+    the data dir, not the OS temp dir, because a bundle is decrypted footage).
   - Auth + authorization: `loginGuard`, `loginLockoutNotifier`, `accessRoles`
     (`sharedservices.IAccessRoleService`), `accessPerms`
     (`sharedservices.IAccessPermissionService`) — the shared accessrbac role/permission
@@ -41,9 +48,10 @@ thirty free variables pulled out of an 800-line scope.
 - `(*wiring) validate() error` — fails fast, naming every missing field, if a pointer/struct
   field on `wiring` was left unset (nil) when the composition root finished populating it.
   Checks every field except `systemReset` (legitimately nil at the point `validate` runs;
-  set later) and `deps`/`httpsPort` (not pointers) — `accessRoles`/`accessPerms` are
-  included. Called from `app.go`'s `RegisterAppRoutes` immediately after the `wiring` struct
-  literal is built, before `registerRoutes(api, w)`.
+  set later) and `deps`/`httpsPort` (not pointers) — `accessRoles`/`accessPerms`, `audit`,
+  `continuitySettings`, `evidence`, and `tamperSettings` are all included. Called from
+  `app.go`'s `RegisterAppRoutes` immediately after the `wiring` struct literal is built,
+  before `registerRoutes(api, w)`.
 
 ## Notes
 

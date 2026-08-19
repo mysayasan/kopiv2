@@ -1065,6 +1065,25 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// contract mymatasan and myidsan use).
 	setupStateService := sharedservices.NewSetupStateService(runtimeSettingRepo)
 	apis.NewSetupApi(api, *deps.Auth, controlSession, setupStateService)
+
+	// Backup & Restore. This is the ONLY way the fleet certificate authority leaves this
+	// machine: the CA private key lives in a control_setting row, and every node's trust
+	// chain hangs off it, so losing the database without a copy of this file means
+	// physically re-adopting every node with a fresh claim code.
+	//
+	// It is built here rather than beside the other settings routes because it needs
+	// setupStateService (a restored instance is already configured and must not be sent
+	// back through the first-run wizard) and planDir + secretCipher (floor plan images are
+	// encrypted on disk with the same key as the CA, and are unsealed on export / re-sealed
+	// on restore so a bundle can move between hosts with different at-rest keys).
+	backupVersion := ""
+	if manifest, err := versioning.LoadDefault(); err == nil {
+		if info, err := manifest.InfoForApp(m.Name()); err == nil {
+			backupVersion = info.AppVersion
+		}
+	}
+	backupService := services.NewBackupService(deps.Db, secretCipher, planDir, setupStateService, backupVersion)
+	apis.NewBackupApi(api, *deps.Auth, controlSession, backupService, auditService)
 	// The built-in manual. No auth middleware, deliberately — it has to be readable from the
 	// sign-in screen and the first-run wizard. See apis.NewManualApi.
 	apis.NewManualApi(api)

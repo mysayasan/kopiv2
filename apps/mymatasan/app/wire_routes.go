@@ -46,14 +46,14 @@ func registerRoutes(api *mux.Router, w *wiring) *mux.Router {
 
 	apis.NewLocalAuthApi(protected, w.localUser)
 	apis.NewOnvifApi(protected, w.camera, w.settings, w.streamManager)
-	apis.NewCameraApi(protected, w.camera, w.settings, w.streamManager, w.cameraHealth)
+	apis.NewCameraApi(protected, w.camera, w.settings, w.streamManager, w.cameraHealth, w.audit)
 	apis.NewVisionApi(protected, w.vision, w.detectionClass, w.recorder, w.notification, w.camera, w.settings, w.notificationSettings, w.atrestCipher)
 	apis.NewTrainingApi(protected, w.training)
 	apis.NewTeachApi(protected, w.teach)
 	apis.NewFacesApi(protected, w.faceGallery)
 	apis.NewSettingsApi(protected, w.settings, w.camera, w.localUser, w.notificationSettings, w.healthSettings, w.machineHealthSettings, w.machineHealth,
-		visionToolSettingsFromAppConfig(w.appCfg, w.detectorPaths.DetectorArgs), w.ffmpegInstaller, w.pythonInstaller, w.appCfg.Decoder.BrowseRoots, w.accessRoles)
-	apis.NewRecordingApi(protected, w.recording, w.recorder, w.camera, w.settings, w.atrestCipher, w.vision, w.recorderConfig)
+		visionToolSettingsFromAppConfig(w.appCfg, w.detectorPaths.DetectorArgs), w.ffmpegInstaller, w.pythonInstaller, w.appCfg.Decoder.BrowseRoots, w.accessRoles, w.audit, w.continuitySettings, w.tamperSettings)
+	apis.NewRecordingApi(protected, w.recording, w.recorder, w.camera, w.settings, w.atrestCipher, w.vision, w.recorderConfig, w.audit)
 	apis.NewObservationApi(protected, w.observation)
 	apis.NewNotificationApi(protected, w.notification)
 	apis.NewAnomalyApi(protected, w.anomalySettings, w.notification, w.camera)
@@ -62,6 +62,13 @@ func registerRoutes(api *mux.Router, w *wiring) *mux.Router {
 	// Single-instance by design (local recordings + host-pinned capture/GPU).
 	apis.NewDeploymentApi(protected)
 	apis.NewPairingApi(protected, w.pairing)
+	// The audit trail's READ surface. Writing happens inside the handlers above; this
+	// only exposes the trail for review and CSV export, and has no delete or update
+	// route by design — see apis/audit.go.
+	apis.NewAuditApi(protected, w.auditService)
+	// Evidence export: a verifiable bundle of a span of footage. Operator-grantable,
+	// separately from deleting — see services/pages.go.
+	apis.NewEvidenceApi(protected, w.evidence, w.audit)
 
 	return protected
 }

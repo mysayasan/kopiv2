@@ -50,6 +50,23 @@ func startBackgroundWorkers(ctx context.Context, w *wiring) {
 	w.cameraHealth.Start(ctx)
 	w.machineHealth.Start(ctx)
 
+	// Recording continuity. The health monitors above answer "is the camera reachable",
+	// which is a different question from "did we actually write video" — a wedged ffmpeg,
+	// a full disk or a quarantine loop all leave a camera reachable and record nothing.
+	// It scores whole CLOSED hours, so it reads its settings live like the others but only
+	// ever acts on completed history.
+	services.NewRecordingContinuityMonitor(
+		w.recording, w.camera, w.continuitySettings, w.notification, w.recorder, deps.Metrics,
+	).Start(ctx)
+
+	// Camera tamper. The third health question, and the only one that notices a camera
+	// which answers, records, and is pointing at a wall. It reads the JPEG the recorder
+	// already siphons for the detector, so it costs a decode per camera per sweep and
+	// nothing else.
+	services.NewCameraTamperMonitor(
+		w.recorder, w.camera, w.recording, w.tamperSettings, w.notification, deps.Metrics,
+	).Start(ctx)
+
 	// Incrementally aggregates the notifications feed into the hourly rollup table that
 	// backs dashboard analytics. The first sweep backfills existing history.
 	w.notificationRollup.Start(ctx)

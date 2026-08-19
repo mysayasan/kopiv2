@@ -58,10 +58,22 @@ Returns the full catalog, grouped by what it governs: read-your-own-session and
 change-own-password (everyone), watching live, seeing that something happened
 (alerts/notifications/capacity/settings/setup reads), reviewing recorded footage (operator and
 up — the evidentiary line), operating (acknowledge/PTZ/talk, operator only), and admin-only
-areas (onvif, **faces**, training, teach, anomaly, pairing, system, user/role management) listed
-with **no grants** so the catalog stays a complete description of the API surface — an area
-missing from it is an area nobody can see they aren't granting, and the admin UI renders this
-list.
+areas (onvif, **faces**, training, teach, anomaly, pairing, system, user/role management,
+**the audit trail**) listed with **no grants** so the catalog stays a complete description of
+the API surface — an area missing from it is an area nobody can see they aren't granting, and
+the admin UI renders this list.
+
+`{Path: "/api/evidence", ..., Viewer: none, Operator: write}` — exporting footage as a
+verifiable evidence bundle is an OPERATOR capability, same as reading `/api/recording`, while
+deleting stays denied at every level. That is the same evidentiary line drawn twice: an
+operator who was present at an incident must be able to hand the footage of it to somebody,
+and must not be able to destroy it. Every export is audited with the operator's stated reason
+(`apps/mymatasan/services/evidence_export.go.md`).
+
+`{Path: "/api/audit", ..., Viewer: none, Operator: none}` — admin-only and read-only for
+everyone (there is no delete route at all in `apis/audit.go`). The trail names who watched,
+downloaded and deleted which footage, so it is itself sensitive: a record of people's viewing,
+not just of configuration.
 
 `{Path: "/api/faces", ...}` (no grants) was added after the page-catalog test in
 `apps/mymatasan/services/pages_test.go` (`TestPages_GrantOnlyPathsThePolicyGoverns`) found face

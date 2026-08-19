@@ -19,6 +19,16 @@ phase D2).
   - Always starts `w.cameraHealth.Start(ctx)` and `w.machineHealth.Start(ctx)` — both read
     their settings live on every sweep, so there is deliberately no startup `Enabled` gate;
     enabling/retuning from the Settings UI takes effect without a restart.
+  - Always starts `services.NewRecordingContinuityMonitor(w.recording, w.camera,
+    w.continuitySettings, w.notification, w.recorder, deps.Metrics).Start(ctx)` — the third
+    health question after "is it reachable" (`cameraHealth`): "did we actually write video".
+    Scores whole CLOSED hours, so it reads its settings live like the others but only ever
+    acts on completed history. See `services/recording_continuity.go.md`.
+  - Always starts `services.NewCameraTamperMonitor(w.recorder, w.camera, w.recording,
+    w.tamperSettings, w.notification, deps.Metrics).Start(ctx)` — the fourth: the only one
+    that notices a camera which answers, records, and is pointing at a wall. Reads the JPEG
+    the recorder already siphons for the detector, so it costs a decode per camera per sweep
+    and nothing else. See `services/camera_tamper_monitor.go.md`.
   - Starts `w.notificationRollup.Start(ctx)` — incrementally aggregates the notifications
     feed into the hourly rollup table backing dashboard analytics; the first sweep
     backfills existing history.

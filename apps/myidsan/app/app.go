@@ -27,7 +27,6 @@ import (
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	logininfra "github.com/mysayasan/kopiv2/infra/login"
 	"github.com/mysayasan/kopiv2/infra/mailer"
-	"github.com/mysayasan/kopiv2/infra/telemetry"
 	"github.com/mysayasan/kopiv2/infra/versioning"
 	webauthninfra "github.com/mysayasan/kopiv2/infra/webauthn"
 )
@@ -393,11 +392,13 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	)
 	// The audit trail swallows its own write errors on purpose, so the counter is the
 	// only way a broken trail becomes visible.
-	if withMetrics, ok := auditService.(interface {
-		WithMetrics(telemetry.Metrics) services.IAuditService
-	}); ok {
-		auditService = withMetrics.WithMetrics(deps.Metrics)
-	}
+	//
+	// Called directly rather than through an optional type assertion. The assertion form
+	// was silently skippable: once the trail moved to domain/shared/audit and the setter
+	// took a second argument, the assertion would simply have stopped matching and metrics
+	// would have been dropped with no error anywhere — which is the exact failure this
+	// counter exists to make visible.
+	auditService = services.WithAuditMetrics(auditService, deps.Metrics)
 	startAuditRetention(deps, auditService)
 
 	// Session index. The cache entry remains the authority on whether a session is valid;

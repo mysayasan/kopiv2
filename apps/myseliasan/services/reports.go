@@ -549,13 +549,10 @@ func (r *reportService) Security(ctx context.Context, now time.Time, rangeDays i
 	}
 
 	doc.H1(fmt.Sprintf("Audit Trail (last %d days)", rangeDays))
-	entries, _, _ := r.audit.List(ctx, 500, 0, "", "", "")
-	var recent []*entities.AuditLog
-	for _, e := range entries {
-		if e.CreatedAt >= from {
-			recent = append(recent, e)
-		}
-	}
+	// The window is applied by the QUERY, not afterwards: filtering the newest 500 rows in
+	// Go meant a busy period outside the window could push in-window entries off the end,
+	// silently shortening the report's trail.
+	recent, _, _ := r.audit.List(ctx, 500, 0, AuditFilter{From: from})
 	if len(recent) == 0 {
 		doc.Empty("No audited actions in the selected period.")
 	} else {
