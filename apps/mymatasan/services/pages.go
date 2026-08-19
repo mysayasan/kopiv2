@@ -120,14 +120,24 @@ func Pages() sharedservices.PageCatalog {
 			},
 			{
 				Id: PageRecordings, Group: groupWorkspace, Order: 30,
-				Levels: []sharedservices.PageLevel{{
-					// Read-only, and there is deliberately no higher rung. Deleting footage is
-					// superadmin-only and is not a page an administrator can hand out — an
-					// operator who was present at an incident must not be able to destroy the
-					// footage of it, and that property cannot survive being a checkbox.
-					Id:     LevelView,
-					Grants: []sharedservices.PathGrant{canRead("/api/recording")},
-				}},
+				Levels: []sharedservices.PageLevel{
+					{
+						Id:     LevelView,
+						Grants: []sharedservices.PathGrant{canRead("/api/recording")},
+					},
+					{
+						// The second rung adds EXPORTING and nothing else. Deleting footage is
+						// still superadmin-only and is deliberately not a level an administrator
+						// can hand out: an operator who was present at an incident must be able
+						// to hand the footage of it to somebody, and must not be able to destroy
+						// it. Those are different capabilities and this is where they separate.
+						//
+						// Every export is audited with the operator's stated reason, which is
+						// what makes granting this rung safe rather than merely convenient.
+						Id:     LevelUse,
+						Grants: []sharedservices.PathGrant{canWrite("/api/evidence")},
+					},
+				},
 			},
 			{
 				Id: PageObjects, Group: groupIntelligence, Order: 30,
@@ -192,7 +202,7 @@ func RolePresets() map[string][]sharedservices.PageGrant {
 			{PageId: PageDashboard, Level: LevelView},
 			{PageId: PageLiveViews, Level: LevelUse},
 			{PageId: PageNotifications, Level: LevelUse},
-			{PageId: PageRecordings, Level: LevelView},
+			{PageId: PageRecordings, Level: LevelUse},
 			{PageId: PageObjects, Level: LevelView},
 		},
 	}

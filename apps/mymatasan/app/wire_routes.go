@@ -66,6 +66,9 @@ func registerRoutes(api *mux.Router, w *wiring) *mux.Router {
 	// only exposes the trail for review and CSV export, and has no delete or update
 	// route by design — see apis/audit.go.
 	apis.NewAuditApi(protected, w.auditService)
+	// Evidence export: a verifiable bundle of a span of footage. Operator-grantable,
+	// separately from deleting — see services/pages.go.
+	apis.NewEvidenceApi(protected, w.evidence, w.audit)
 
 	return protected
 }

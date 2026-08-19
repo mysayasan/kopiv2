@@ -571,6 +571,15 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 	// Everything is built. Gather it once, and let the remaining phases take ONE parameter
 	// instead of thirty free variables out of an 800-line scope.
+	// The running version, resolved once. Both the self-update service and the evidence
+	// export manifest need it, and a second manifest read would be the start of a drift.
+	currentVersion := ""
+	if manifest, err := versioning.LoadDefault(); err == nil {
+		if info, err := manifest.InfoForApp(m.Name()); err == nil {
+			currentVersion = info.AppVersion
+		}
+	}
+
 	// The append-only audit trail. Built before the wiring bag because the handlers that
 	// record into it are constructed from that bag, and because a trail that is wired late
 	// is a trail that quietly misses the first actions after boot.
@@ -635,6 +644,16 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		auditService: auditService,
 
 		continuitySettings: services.NewContinuitySettingsService(repo.RuntimeSetting),
+
+		// Evidence export. Work lands under the data dir rather than the OS temp dir: a
+		// bundle is DECRYPTED footage, and it belongs on the volume the operator already
+		// governs, not somewhere a system cleaner may or may not reach.
+		evidence: services.NewEvidenceExportService(
+			recordingService, cameraService, atrestCipher,
+			ffmpegPath,
+			apphost.ResolveWritablePath(deps.DataDir, "exports"),
+			currentVersion,
+		),
 
 		ffmpegInstaller: services.NewFFmpegInstaller(ffmpegBinDir, settingsService),
 		pythonInstaller: services.NewPythonInstaller(deps.DataDir, deps.ConfigPath),
@@ -753,12 +772,6 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 	// Self-update: check GitHub Releases (scheduled + on demand) and, on portable/
 	// installer installs, download+verify+swap the binary/assets and restart.
-	currentVersion := ""
-	if manifest, err := versioning.LoadDefault(); err == nil {
-		if info, err := manifest.InfoForApp(m.Name()); err == nil {
-			currentVersion = info.AppVersion
-		}
-	}
 	updateService := services.NewUpdateService(currentVersion, deps.HomeDir, deps.Restarter)
 	updateService.CleanupStaleFiles()
 	if deps.Scheduler != nil {

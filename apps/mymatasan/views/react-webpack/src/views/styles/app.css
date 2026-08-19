@@ -6863,3 +6863,33 @@ input.input-error:focus,
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
 }
+
+/* --- Evidence export ----------------------------------------------------- */
+
+/* A visible warning panel. mymatasan's `.danger-text` is only ever styled on <button>
+   elements on this branch, so an error rendered as a plain hint comes out the same muted
+   grey as a neutral one — and the gap warning is the single most important thing on the
+   export dialog. It gets its own class rather than borrowing one that does not work. */
+.export-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--danger);
+  border-left-width: 3px;
+  border-radius: 6px;
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.modal.evidence-export {
+  max-width: 620px;
+}
+
+.modal.evidence-export .mono {
+  font-family: ui-monospace, Consolas, monospace;
+  word-break: break-all;
+}

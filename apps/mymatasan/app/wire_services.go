@@ -94,6 +94,9 @@ type wiring struct {
 	// actually footage" rather than "is the camera reachable".
 	continuitySettings services.IContinuitySettingsService
 
+	// evidence builds verifiable export bundles of recorded footage.
+	evidence services.IEvidenceExportService
+
 	// Installers.
 	ffmpegInstaller *services.FFmpegInstaller
 	pythonInstaller *services.PythonInstaller
@@ -153,6 +156,7 @@ func (w *wiring) validate() error {
 	check("accessRoles", w.accessRoles != nil)
 	check("audit", w.audit != nil)
 	check("continuitySettings", w.continuitySettings != nil)
+	check("evidence", w.evidence != nil)
 	check("accessPerms", w.accessPerms != nil)
 	check("ffmpegInstaller", w.ffmpegInstaller != nil)
 	check("pythonInstaller", w.pythonInstaller != nil)

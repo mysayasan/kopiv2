@@ -313,6 +313,216 @@ export function CoverageStrip({ cameraId, authHeader }) {
   );
 }
 
+// ExportAlert is a visible warning panel.
+//
+// mymatasan's `.danger-text` is only ever styled on <button> elements on this branch, so
+// an error rendered as a plain hint comes out the same muted grey as a neutral one — and
+// the gap warning below is the single most important thing on this dialog. It gets its
+// own class rather than borrowing one that does not work.
+function ExportAlert({ children }) {
+  return (
+    <p className="export-alert" role="alert">
+      <span className="btn-icon"><Ico n="warning" /></span>
+      <span>{children}</span>
+    </p>
+  );
+}
+
+// localInputToUnix converts a <input type="datetime-local"> value to unix seconds.
+// The input is in the viewer's local zone; the API and the manifest are UTC throughout,
+// so the conversion happens once, here.
+function localInputToUnix(value) {
+  if (!value) return 0;
+  const ms = new Date(value).getTime();
+  return Number.isNaN(ms) ? 0 : Math.floor(ms / 1000);
+}
+
+function unixToLocalInput(unix) {
+  const d = new Date(unix * 1000);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// EvidenceExportDialog produces a verifiable bundle of a span of footage.
+//
+// Two things about it are deliberate and load-bearing. The reason field is REQUIRED,
+// because an evidence export with no stated purpose is the one nobody can account for
+// afterwards — and it is recorded in the audit trail and printed in the bundle. And the
+// range is PREVIEWED before it can be built, so an operator sees that the footage they
+// are about to hand over has holes in it beforehand rather than discovering it later.
+export function EvidenceExportDialog({ camera, authHeader, onClose, onMessage }) {
+  const t = useT();
+  const cameraId = Number(camera?.id) || 0;
+  const now = Math.floor(Date.now() / 1000);
+  const [from, setFrom] = useState(unixToLocalInput(now - 3600));
+  const [to, setTo] = useState(unixToLocalInput(now));
+  const [reason, setReason] = useState('');
+  const [preview, setPreview] = useState(null);
+  const [job, setJob] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const call = useCallback(async (path, options = {}) => {
+    const headers = { ...(options.headers || {}) };
+    if (authHeader) headers.Authorization = authHeader;
+    if (options.body) headers['Content-Type'] = 'application/json';
+    const resp = await fetch(`${apiBase()}${path}`, { credentials: 'include', ...options, headers });
+    const text = await resp.text();
+    let payload = null;
+    if (text) { try { payload = JSON.parse(text); } catch (_) { payload = { message: text }; } }
+    const body = payload?.data?.result ?? payload?.result ?? payload;
+    if (!resp.ok) throw new Error(payload?.message || t('rec.exportFailed'));
+    return body;
+  }, [authHeader, t]);
+
+  const fromUnix = localInputToUnix(from);
+  const toUnix = localInputToUnix(to);
+  const rangeValid = fromUnix > 0 && toUnix > fromUnix;
+
+  async function runPreview() {
+    setBusy(true);
+    setError('');
+    setJob(null);
+    try {
+      setPreview(await call('/api/evidence/preview', {
+        method: 'POST',
+        body: JSON.stringify({ cameraId, from: fromUnix, to: toUnix }),
+      }));
+    } catch (err) {
+      setPreview(null);
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function build() {
+    setBusy(true);
+    setError('');
+    try {
+      let current = await call('/api/evidence/exports', {
+        method: 'POST',
+        body: JSON.stringify({ cameraId, from: fromUnix, to: toUnix, reason }),
+      });
+      setJob(current);
+      // Poll: decrypting and joining a long range takes minutes, and the server builds
+      // it detached so navigating away does not abandon it.
+      for (let i = 0; i < 600 && current && (current.status === 'pending' || current.status === 'running'); i += 1) {
+        await new Promise((r) => setTimeout(r, 1000));
+        current = await call(`/api/evidence/exports/${current.id}`);
+        setJob(current);
+      }
+      if (current?.status === 'failed') setError(current.error || t('rec.exportFailed'));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const gaps = preview?.gaps || [];
+  const ready = job?.status === 'ready';
+
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true">
+      <div className="modal evidence-export">
+        <header>
+          <h3><span className="btn-icon"><Ico n="download" /> {t('rec.exportTitle')}</span></h3>
+          <button type="button" className="quiet" onClick={onClose}>{t('common.close')}</button>
+        </header>
+
+        <p className="field-hint">{t('rec.exportIntro')}</p>
+
+        <div className="field-grid">
+          <label className="field">
+            <span>{t('rec.exportFrom')}</span>
+            <input type="datetime-local" value={from} onChange={(e) => { setFrom(e.target.value); setPreview(null); }} />
+          </label>
+          <label className="field">
+            <span>{t('rec.exportTo')}</span>
+            <input type="datetime-local" value={to} onChange={(e) => { setTo(e.target.value); setPreview(null); }} />
+          </label>
+        </div>
+
+        <label className="field">
+          <span>{t('rec.exportReason')}</span>
+          <input
+            type="text"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder={t('rec.exportReasonPlaceholder')}
+            maxLength={200}
+          />
+          <span className="field-hint">{t('rec.exportReasonHint')}</span>
+        </label>
+
+        {error ? <ExportAlert>{error}</ExportAlert> : null}
+
+        <div className="settings-actions">
+          <button type="button" className="quiet" onClick={runPreview} disabled={busy || !rangeValid}>
+            <span className="btn-icon"><Ico n="search" /> {t('rec.exportCheck')}</span>
+          </button>
+        </div>
+
+        {preview ? (
+          <div className="auto-tune-result">
+            <strong>{t('rec.exportCoverage', { percent: (preview.coveragePercent ?? 0).toFixed(1) })}</strong>
+            {gaps.length ? (
+              <>
+                {/* The warning has to land BEFORE the build button, not after the file is
+                    handed over: a bundle that skips missing footage looks continuous. */}
+                <ExportAlert>{t('rec.exportGapWarning', { n: gaps.length })}</ExportAlert>
+                <ul>
+                  {gaps.slice(0, 8).map((g) => (
+                    <li key={g.from}>
+                      {formatTimestamp(g.from)} → {formatTimestamp(g.to)}
+                    </li>
+                  ))}
+                  {gaps.length > 8 ? <li>{t('rec.exportGapMore', { n: gaps.length - 8 })}</li> : null}
+                </ul>
+              </>
+            ) : (
+              <p className="field-hint">{t('rec.exportNoGaps')}</p>
+            )}
+            <p className="field-hint">{t('rec.exportSources', { n: (preview.sources || []).length })}</p>
+          </div>
+        ) : null}
+
+        {job && !ready ? (
+          <p className="field-hint">{t('rec.exportBuilding', { status: job.status })}</p>
+        ) : null}
+
+        {ready ? (
+          <div className="auto-tune-result">
+            <strong>{t('rec.exportReady')}</strong>
+            <p className="field-hint mono">{job.manifest?.output?.sha256}</p>
+            <div className="settings-actions">
+              <a
+                className="button primary"
+                href={`${apiBase()}/api/evidence/exports/${job.id}/download`}
+                download
+              >
+                <span className="btn-icon"><Ico n="download" /> {t('rec.exportDownload')}</span>
+              </a>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="settings-actions">
+          <button
+            type="button"
+            className="primary"
+            onClick={build}
+            disabled={busy || !rangeValid || !reason.trim() || !preview || ready}
+          >
+            <span className="btn-icon"><Ico n="save" /> {t('rec.exportBuild')}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function CameraRecordingsPanel({ camera, canManage = true, busy, authHeader, onDeleteSegment, onPurgeExpired, onPurgeNow, onReload, unacknowledgedAlertIds, onAcknowledgeAlert, alerts }) {
   const t = useT();
   const effectiveCameraId = Number(camera?.id) || 0;
@@ -323,6 +533,7 @@ export function CameraRecordingsPanel({ camera, canManage = true, busy, authHead
   );
   const [downloading, setDownloading] = useState(null);
   const [playingSegment, setPlayingSegment] = useState(null);
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
   // "Purge now" arms a 5s cancellable countdown (like the factory-reset wipe) before it
   // deletes ALL footage + snapshots for this camera, expiry ignored.
   const [purgeArmed, setPurgeArmed] = useState(false);
@@ -547,6 +758,13 @@ export function CameraRecordingsPanel({ camera, canManage = true, busy, authHead
         />
       ) : null}
       <CoverageStrip cameraId={effectiveCameraId} authHeader={authHeader} />
+      {evidenceOpen ? (
+        <EvidenceExportDialog
+          camera={selectedCamera}
+          authHeader={authHeader}
+          onClose={() => setEvidenceOpen(false)}
+        />
+      ) : null}
       <div className="toolbar">
         <div>
           <h2 className="section-title">
@@ -556,6 +774,11 @@ export function CameraRecordingsPanel({ camera, canManage = true, busy, authHead
           <p className="section-subtitle">{t('rec.subtitle')}</p>
         </div>
         <div className="toolbar-actions">
+          {effectiveCameraId ? (
+            <button type="button" className="quiet" onClick={() => setEvidenceOpen(true)}>
+              <span className="btn-icon"><Ico n="download" /> {t('rec.exportTitle')}</span>
+            </button>
+          ) : null}
           {canManage && onPurgeExpired ? (
             <button
               type="button"
