@@ -657,7 +657,15 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		// governs, not somewhere a system cleaner may or may not reach.
 		evidence: services.NewEvidenceExportService(
 			recordingService, cameraService, atrestCipher,
-			ffmpegPath,
+			// Resolved per export, from the same persisted setting the recording and
+			// playback paths read. A captured string would go stale the moment an
+			// operator installed ffmpeg through Settings.
+			func() string {
+				if dec, err := settingsService.Decoder(context.Background()); err == nil {
+					return dec.MJPEG.FFmpegPath
+				}
+				return ""
+			},
 			evidenceExportDir,
 			currentVersion,
 		),
