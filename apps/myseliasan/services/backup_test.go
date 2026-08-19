@@ -348,6 +348,44 @@ func TestBackupRestoreAcrossDifferentAtRestKeys(t *testing.T) {
 	}
 }
 
+// TestBackupRestoreKeepsLocalPasswords guards the other json:"-" field, and the reason it
+// exists is that the first real restore bench produced a control plane NOBODY COULD SIGN
+// IN TO: every local account came back with an empty password, because ControlUser's hash
+// is json:"-" and was silently dropped by the bundle's JSON encoding.
+//
+// The round-trip here deliberately goes through Export and Restore rather than the plan
+// helpers, because marshalling is exactly where the field disappeared — a test that only
+// exercises the repo layer round-trips the struct in memory and can never see it.
+func TestBackupRestoreKeepsLocalPasswords(t *testing.T) {
+	ctx := context.Background()
+	src := newTestBackupHarness(t, testCipherWithSeed(t, 1))
+	if _, err := src.users.Create(ctx, "", entities.ControlUser{
+		Username: "admin", Kind: "local", Email: "admin@example.com",
+		PasswordHash: "$2a$10$abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQR",
+	}); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+
+	blob, err := src.svc.Export(ctx, BackupRequest{Sections: []string{BackupSectionUsers}, Passphrase: "passphrase-1"})
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	dst := newTestBackupHarness(t, testCipherWithSeed(t, 99))
+	if _, err := dst.svc.Restore(ctx, blob, RestoreRequest{Passphrase: "passphrase-1", Mode: RestoreModeReplace}); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	users, _, _ := dst.users.Get(ctx, "", 0, 0, nil, nil)
+	if len(users) != 1 {
+		t.Fatalf("expected 1 restored user, got %d", len(users))
+	}
+	if users[0].PasswordHash != "$2a$10$abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQR" {
+		t.Fatalf("the password hash did not survive the round-trip (got %q) — every restored account would be locked out", users[0].PasswordHash)
+	}
+	if users[0].Username != "admin" {
+		t.Errorf("username = %q", users[0].Username)
+	}
+}
+
 // TestBackupRestoreKeepsNodeToken guards a field that is invisible to JSON. ManagedNode.Token
 // is json:"-" so it never reaches a browser, which means a naive round-trip drops it — and a
 // node restored without its token is adopted-but-unauthenticated: it fails its next heartbeat

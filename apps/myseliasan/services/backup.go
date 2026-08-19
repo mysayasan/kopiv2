@@ -137,6 +137,23 @@ type backupNode struct {
 	Token string `json:"token"`
 }
 
+// backupUser re-exposes ControlUser.PasswordHash, which is json:"-" on the entity so a
+// hash never reaches a browser.
+//
+// Without this the field is silently dropped by the JSON encoding of the bundle, and a
+// restore produces a control plane that NOBODY CAN SIGN IN TO: every local account comes
+// back with an empty password. That is the worst possible outcome for a disaster-recovery
+// feature — the operator restores after losing their server and is locked out of the
+// result. Found by benching a real restore; the unit tests could not see it because an
+// in-memory repo round-trips the struct without ever marshalling it.
+//
+// Exactly the same trap as ManagedNode.Token below. Any json:"-" field on a backed-up
+// entity needs a wrapper like this one.
+type backupUser struct {
+	entities.ControlUser
+	PasswordHash string `json:"passwordHash"`
+}
+
 // backupFloor carries a floor's plan images alongside its row. Both live on disk, not in
 // the database, and both are ENCRYPTED there with the host's at-rest key — so like the
 // sealed settings they are decrypted on export and re-encrypted on restore. Image holds
@@ -164,7 +181,7 @@ type backupFile struct {
 	Manifest    BackupManifest                       `json:"manifest"`
 	Roles       []sharedentities.AccessRole          `json:"roles,omitempty"`
 	Permissions []sharedentities.AccessRolePermission `json:"permissions,omitempty"`
-	Users       []entities.ControlUser               `json:"users,omitempty"`
+	Users       []backupUser                         `json:"users,omitempty"`
 	FleetCA     []backupSetting                      `json:"fleetCa,omitempty"`
 	Nodes       []backupNode                         `json:"nodes,omitempty"`
 	Grants      []entities.NodeAccessGrant           `json:"grants,omitempty"`
@@ -386,7 +403,9 @@ func (s *backupService) collect(ctx context.Context, file *backupFile, section s
 		if err != nil {
 			return err
 		}
-		file.Users = users
+		for _, u := range users {
+			file.Users = append(file.Users, backupUser{ControlUser: u, PasswordHash: u.PasswordHash})
+		}
 		file.Manifest.Counts[section] = len(users)
 
 	case BackupSectionFleetCA:
@@ -677,8 +696,11 @@ func (s *backupService) restoreUsers(ctx context.Context, file *backupFile, mode
 		}
 	}
 	for _, user := range file.Users {
-		row := user
+		row := user.ControlUser
 		row.Id = 0
+		// The hash arrived in the wrapper, not the embed — see backupUser. Without this
+		// line every restored account has an empty password and cannot sign in.
+		row.PasswordHash = user.PasswordHash
 		// A user whose role did not come across keeps NO role rather than inheriting
 		// whatever id happens to sit in that slot on this host. Pending-clearance is the
 		// safe landing spot; silently mapping onto a stranger's role is not.

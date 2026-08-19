@@ -14,7 +14,7 @@ lands the work.
 | # | Work item | Finding | Branch | Status |
 |---|-----------|---------|--------|--------|
 | **Phase 1 — Trust the system** |
-| W1-1 | myseliasan backup & restore (`.selbackup`) | F-01 | `feat/myseliasan-backup` | ● built, not benched |
+| W1-1 | myseliasan backup & restore (`.selbackup`) | F-01 | `feat/myseliasan-backup` | ✅ shipped (benched) |
 | W1-2 | Shared audit package + mymatasan audit log | F-02, F-22 | `feat/shared-audit` | ● built, not benched |
 | W1-3 | Recording continuity monitor + coverage report | F-03 | `feat/mymatasan-continuity` | ● built, not benched |
 | W1-4 | Evidence export with integrity manifest | F-04 | `feat/mymatasan-evidence-export` | ● built, not benched |

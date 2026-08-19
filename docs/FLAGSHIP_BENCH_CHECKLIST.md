@@ -47,6 +47,44 @@ floor plan image renders. Nothing else proves the CA survived the key change.
 Also check, while you are here:
 - The audit section appended rather than replaced (restore twice; the trail should grow).
 - Restoring only `settings` in replace mode did **not** delete the CA key.
+- **You can still sign in.** See the finding below — this is the check that caught the
+  worst bug in the feature, and it is the one an automated test is least likely to make.
+
+### RUN 2026-08-19 — PASSED, after finding one release-blocking bug
+
+Run against a containerised myseliasan on sqlite, two nodes holding certificates issued by
+the real CA through the real `/api/nodes/enroll`, destroyed by deleting the database **and**
+the at-rest key, restored onto a fresh install with a newly generated key.
+
+14 checks; every one that measures the product passed:
+
+- host B genuinely had a different at-rest key and had minted its own CA first, so a later
+  match could not be a no-op
+- the CA certificate came back **byte-identical to host A's**
+- the CA private key was **re-sealed** under host B's key, not copied verbatim
+- both nodes returned with their heartbeat tokens intact
+- **a node certificate issued by the pre-backup CA completed an mTLS handshake against the
+  restored-and-restarted control channel (:39533), and a rogue certificate was rejected** —
+  the second half matters, or the first proves only that mTLS is off
+
+**The bug it found:** `ControlUser.PasswordHash` is `json:"-"`, so the bundle's JSON
+encoding silently dropped it and **every restored account came back with an empty password.**
+The restore reported success, the fleet was intact, and nobody could sign in — the worst
+possible outcome for disaster recovery. Fixed by a `backupUser` wrapper, the same treatment
+`ManagedNode.Token` already had; a regression test now exercises Export→Restore rather than
+the repo layer, because an in-memory fake round-trips the struct and never marshals it.
+
+**Two harness traps worth knowing before re-running this:**
+
+- **Do not read the sqlite file while the app is running.** Over a bind mount you get a
+  mid-WAL view. It produced three convincing phantom failures — including a CA hash of
+  `e3b0c442…`, which is the SHA-256 of the empty string. Stop the container (so sqlite
+  checkpoints) and copy the file, or read through the app's API.
+- **A replace-mode restore invalidates the session that issued it**, because it rewrites the
+  user rows. Re-authenticate before reading anything back, or the 401 body gets mistaken for
+  a result.
+- The control plane does **not** listen on `pairing.mtlsPort` (39532) — that is the port the
+  parent stamps onto *nodes*. The node-dialed mTLS listener is the control channel, 39533.
 
 ---
 
