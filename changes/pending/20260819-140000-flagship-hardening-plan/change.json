@@ -1,0 +1,6 @@
+{
+  "type": "changed",
+  "scope": "core",
+  "summary": "Added docs/FLAGSHIP_HARDENING_PLAN.md, the phased plan closing the 24 findings (F-01..F-24) from the 2026-08-19 mymatasan + myseliasan condition register. Phase 1 (trust the system) covers the myseliasan .selbackup export/restore, a shared audit package plus the missing mymatasan audit log, recording-continuity detection, evidence export with an integrity manifest, tamper/video-loss detection, and a nightly race-detector CI job. Phases 2 and 3 cover fleet-scale operations and competitive feature depth at seam level. The plan's status board is the resume point and is updated in the same commit that lands each work item. Documentation only.",
+  "compatibility": "Documentation only. No code, API, config, or schema changes."
+}
