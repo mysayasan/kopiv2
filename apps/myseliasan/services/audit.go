@@ -39,15 +39,25 @@ const (
 //
 // Convention: "<subject>.<verb>", lower_snake for multi-word verbs.
 const (
-	ActionNodeAdopt     = "node.adopt"
-	ActionNodeRelease   = "node.release"
-	ActionNodeBlock     = "node.block"
-	ActionNodeForget    = "node.forget"
-	ActionNodeCommand   = "node.command"
-	ActionRbacSetRole   = "rbac.set_role"
+	ActionNodeAdopt      = "node.adopt"
+	ActionNodeRelease    = "node.release"
+	ActionNodeBlock      = "node.block"
+	ActionNodeForget     = "node.forget"
+	ActionNodeCommand    = "node.command"
+	ActionRbacSetRole    = "rbac.set_role"
 	ActionFleetKeyRotate = "fleet.key_rotate"
-	ActionBackupExport  = "backup.export"
-	ActionBackupRestore = "backup.restore"
+	ActionBackupExport   = "backup.export"
+	ActionBackupRestore  = "backup.restore"
+	// ActionPolicyEnforce records a fleet policy writing a setting back to a node. It is
+	// the only settings change on a node with no operator behind it — it happens on a
+	// timer, possibly long after the policy was written — so without this entry the
+	// node's own trail shows an admin action with no admin anywhere near it.
+	ActionPolicyEnforce = "policy.enforce"
+	// ActionPolicySave / ActionPolicyDelete record edits to the estate's configuration
+	// standard itself. Worth recording separately from the enforcement it causes: the
+	// enforcement says a node changed, this says who decided it should.
+	ActionPolicySave   = "policy.save"
+	ActionPolicyDelete = "policy.delete"
 )
 
 // NewAuditService builds the trail over the control plane's database. logf receives

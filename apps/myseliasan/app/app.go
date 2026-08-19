@@ -740,6 +740,10 @@ func (m *module) Entities() []any {
 		// Cross-domain correlation: the reason the suite has a fourth app.
 		appentities.FleetRule{},
 		appentities.FleetRuleClause{},
+		// Fleet configuration policy: what the estate's node settings OUGHT to be, so
+		// drift from it can be reported instead of discovered.
+		appentities.FleetPolicy{},
+		appentities.FleetPolicyItem{},
 		// Fleet map: sites + uploaded floor plans (indoor view); node/camera placements.
 		appentities.Site{},
 		appentities.FloorPlan{},
@@ -1566,6 +1570,44 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 	apis.NewRecordingStreamApi(api, *deps.Auth, nodeSender, accessService, controlSession)
 	apis.NewNodeProxyApi(api, *deps.Auth, nodeSender, accessService, controlSession, auditService)
+
+	// Fleet configuration policy. Wired HERE, after nodeSender exists, because the
+	// reconciler reads and writes node settings through the same tunnel the operator's own
+	// node screens use — it gets no private path to an appliance.
+	policyService := services.NewFleetPolicyService(deps.Db)
+	policyReconciler := services.NewFleetPolicyReconciler(policyService, registry, nodeSender, auditService,
+		func(f string, a ...any) { deps.Logger.Warnf("myseliasan.fleet-policy", f, a...) })
+	apis.NewFleetPolicyApi(api, *deps.Auth, controlSession, policyService, policyReconciler, auditService)
+	// Leader-gated: a sweep is a tunneled round trip per section per node, and N instances
+	// all reconciling the same fleet would multiply that load — and, where a policy
+	// enforces, race each other writing the same setting to the same appliance.
+	//
+	// Fifteen minutes because this is a slow-moving question. A node's configuration does
+	// not change on its own; it changes when somebody changes it, and the cost of learning
+	// about that ten minutes later is nil against the cost of every appliance in a large
+	// estate answering a settings poll continuously.
+	leaderTicker(bgCtx, deps.Leader, 15*time.Minute, func(ctx context.Context) {
+		if _, err := policyReconciler.ReconcileAll(ctx); err != nil {
+			deps.Logger.Warnf("myseliasan.fleet-policy", "reconcile sweep: %v", err)
+		}
+	})
+	// One pass shortly after boot, so the screen has an answer before the first tick. It is
+	// deliberately not immediate: nodes dial the control channel after this function
+	// returns, and a sweep run now would report the entire fleet unreachable and store that
+	// as the last known state.
+	safego.Go("fleet-policy-initial", func() {
+		select {
+		case <-bgCtx.Done():
+			return
+		case <-time.After(90 * time.Second):
+		}
+		if !deps.Leader.IsLeader() {
+			return
+		}
+		if _, err := policyReconciler.ReconcileAll(bgCtx); err != nil {
+			deps.Logger.Warnf("myseliasan.fleet-policy", "initial reconcile: %v", err)
+		}
+	})
 
 	return func(context.Context) error { stopBackground(); return nil }, nil
 }

@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mysayasan/kopiv2/apps/myseliasan/entities"
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
 	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
-	"github.com/mysayasan/kopiv2/apps/myseliasan/entities"
 	"github.com/mysayasan/kopiv2/infra/atrest"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
@@ -55,8 +55,21 @@ const (
 	// images, which live encrypted on disk rather than in the database) and the node/camera
 	// placements pinned onto those floors.
 	BackupSectionSites = "sites"
-	// BackupSectionRules is the fleet correlation rules.
+	// BackupSectionRules is the fleet correlation rules AND their clauses.
+	//
+	// The clauses were missing until the fleet-policy work went in beside this code, and
+	// their absence was invisible in exactly the way a backup defect is worst: the export
+	// succeeded, the restore reported the right number of rules, and the UI listed them
+	// all enabled — each with nothing left to match on. A rule with no required clause
+	// fires on nothing, which is why the editor refuses to create one; restore was
+	// creating them anyway. A control plane brought back after a disk failure would have
+	// shown a complete set of correlation rules and detected no correlation at all.
 	BackupSectionRules = "rules"
+	// BackupSectionPolicies is the fleet configuration policies and the settings they
+	// govern. Without them a restored control plane reports every node "unmanaged" —
+	// the estate's configuration standard is exactly the kind of thing nobody has
+	// written down anywhere else.
+	BackupSectionPolicies = "policies"
 	// BackupSectionSettings is every remaining control_setting row — deployment mode, the
 	// agent schedule, the first-run defaults snapshot. It deliberately EXCLUDES the
 	// pairing.* keys, which belong to fleetca and must not be restorable without it.
@@ -87,6 +100,7 @@ var backupAllSections = []string{
 	BackupSectionFleet,
 	BackupSectionSites,
 	BackupSectionRules,
+	BackupSectionPolicies,
 	BackupSectionSettings,
 	BackupSectionAudit,
 }
@@ -178,19 +192,22 @@ type backupSetting struct {
 }
 
 type backupFile struct {
-	Manifest    BackupManifest                       `json:"manifest"`
-	Roles       []sharedentities.AccessRole          `json:"roles,omitempty"`
+	Manifest    BackupManifest                        `json:"manifest"`
+	Roles       []sharedentities.AccessRole           `json:"roles,omitempty"`
 	Permissions []sharedentities.AccessRolePermission `json:"permissions,omitempty"`
-	Users       []backupUser                         `json:"users,omitempty"`
-	FleetCA     []backupSetting                      `json:"fleetCa,omitempty"`
-	Nodes       []backupNode                         `json:"nodes,omitempty"`
-	Grants      []entities.NodeAccessGrant           `json:"grants,omitempty"`
-	Sites       []entities.Site                      `json:"sites,omitempty"`
-	Floors      []backupFloor                        `json:"floors,omitempty"`
-	Placements  []entities.NodePlacement             `json:"placements,omitempty"`
-	Rules       []entities.FleetRule                 `json:"rules,omitempty"`
-	Settings    []backupSetting                      `json:"settings,omitempty"`
-	Audit       []entities.AuditLog                  `json:"audit,omitempty"`
+	Users       []backupUser                          `json:"users,omitempty"`
+	FleetCA     []backupSetting                       `json:"fleetCa,omitempty"`
+	Nodes       []backupNode                          `json:"nodes,omitempty"`
+	Grants      []entities.NodeAccessGrant            `json:"grants,omitempty"`
+	Sites       []entities.Site                       `json:"sites,omitempty"`
+	Floors      []backupFloor                         `json:"floors,omitempty"`
+	Placements  []entities.NodePlacement              `json:"placements,omitempty"`
+	Rules       []entities.FleetRule                  `json:"rules,omitempty"`
+	RuleClauses []entities.FleetRuleClause            `json:"ruleClauses,omitempty"`
+	Policies    []entities.FleetPolicy                `json:"policies,omitempty"`
+	PolicyItems []entities.FleetPolicyItem            `json:"policyItems,omitempty"`
+	Settings    []backupSetting                       `json:"settings,omitempty"`
+	Audit       []entities.AuditLog                   `json:"audit,omitempty"`
 }
 
 type BackupRequest struct {
@@ -247,6 +264,9 @@ type backupService struct {
 	floors      dbsql.IGenericRepo[entities.FloorPlan]
 	placements  dbsql.IGenericRepo[entities.NodePlacement]
 	rules       dbsql.IGenericRepo[entities.FleetRule]
+	ruleClauses dbsql.IGenericRepo[entities.FleetRuleClause]
+	policies    dbsql.IGenericRepo[entities.FleetPolicy]
+	policyItems dbsql.IGenericRepo[entities.FleetPolicyItem]
 	audit       dbsql.IGenericRepo[entities.AuditLog]
 
 	// cipher seals/unseals the at-rest secrets — the CA private key, the fleet PSK, and
@@ -280,6 +300,9 @@ func NewBackupService(
 		floors:      dbsql.NewGenericRepo[entities.FloorPlan](db),
 		placements:  dbsql.NewGenericRepo[entities.NodePlacement](db),
 		rules:       dbsql.NewGenericRepo[entities.FleetRule](db),
+		ruleClauses: dbsql.NewGenericRepo[entities.FleetRuleClause](db),
+		policies:    dbsql.NewGenericRepo[entities.FleetPolicy](db),
+		policyItems: dbsql.NewGenericRepo[entities.FleetPolicyItem](db),
 		audit:       dbsql.NewGenericRepo[entities.AuditLog](db),
 		cipher:      cipher,
 		planDir:     planDir,
@@ -315,6 +338,8 @@ func (s *backupService) countSection(ctx context.Context, section string) (int, 
 		return countRows(ctx, s.sites)
 	case BackupSectionRules:
 		return countRows(ctx, s.rules)
+	case BackupSectionPolicies:
+		return countRows(ctx, s.policies)
 	case BackupSectionSettings:
 		rows, err := s.settingRows(ctx, false)
 		return len(rows), err
@@ -461,7 +486,27 @@ func (s *backupService) collect(ctx context.Context, file *backupFile, section s
 			return err
 		}
 		file.Rules = rules
+		// The clauses ARE the rule. Exporting the parent without them produces a bundle
+		// that restores cleanly into rules that can never fire.
+		clauses, err := allRows(ctx, s.ruleClauses)
+		if err != nil {
+			return err
+		}
+		file.RuleClauses = clauses
 		file.Manifest.Counts[section] = len(rules)
+
+	case BackupSectionPolicies:
+		policies, err := allRows(ctx, s.policies)
+		if err != nil {
+			return err
+		}
+		file.Policies = policies
+		items, err := allRows(ctx, s.policyItems)
+		if err != nil {
+			return err
+		}
+		file.PolicyItems = items
+		file.Manifest.Counts[section] = len(policies)
 
 	case BackupSectionSettings:
 		rows, err := s.settingRows(ctx, false)
@@ -617,6 +662,11 @@ func (s *backupService) Restore(ctx context.Context, data []byte, req RestoreReq
 	}
 	if containsString(sections, BackupSectionSites) {
 		if err := s.restoreSites(ctx, file, mode, siteIDs, floorIDs, &res); err != nil {
+			return res, err
+		}
+	}
+	if containsString(sections, BackupSectionPolicies) {
+		if err := s.restorePolicies(ctx, file, mode, &res); err != nil {
 			return res, err
 		}
 	}
@@ -947,17 +997,90 @@ func removePlanImage(path string) {
 
 func (s *backupService) restoreRules(ctx context.Context, file *backupFile, mode string, res *RestoreResult) error {
 	if mode == RestoreModeReplace {
+		// Children first: a wiped rule leaves its clauses behind as rows pointing at an id
+		// that no longer exists, and the next restore would hand them to whichever rule
+		// happened to be issued that id.
+		if err := wipeAll(ctx, s.ruleClauses, func(c *entities.FleetRuleClause) int64 { return c.Id }); err != nil {
+			return err
+		}
 		if err := wipeAll(ctx, s.rules, func(r *entities.FleetRule) int64 { return r.Id }); err != nil {
 			return err
 		}
 	}
+	ruleIDs := map[int64]int64{}
 	for _, rule := range file.Rules {
+		oldID := rule.Id
 		row := rule
 		row.Id = 0
-		if _, err := s.rules.Create(ctx, "", row); err != nil {
+		newID, err := s.rules.Create(ctx, "", row)
+		if err != nil {
 			return err
 		}
+		ruleIDs[oldID] = int64(newID)
 		res.Restored[BackupSectionRules]++
+	}
+	// Clauses are remapped onto the ids the inserts actually issued — the same
+	// create-then-remap dance sites/floors/placements do, and for the same reason: the
+	// destination database is not the source database and its sequence is its own.
+	for _, clause := range file.RuleClauses {
+		newRuleID, ok := ruleIDs[clause.RuleId]
+		if !ok {
+			// A clause whose rule is not in this bundle. Attaching it to nothing would be
+			// worse than dropping it: it would sit in the table forever, and the id it
+			// names will eventually belong to some unrelated rule.
+			res.Skipped[BackupSectionRules]++
+			continue
+		}
+		row := clause
+		row.Id = 0
+		row.RuleId = newRuleID
+		if _, err := s.ruleClauses.Create(ctx, "", row); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// restorePolicies brings back the fleet's configuration standard and the settings each
+// policy governs, remapping items onto the ids the inserts issued.
+//
+// Note what is deliberately NOT preserved: LastEvaluatedAt comes back as whatever the
+// bundle held, but the restored control plane has compared nothing yet. The reconciler
+// overwrites it on its first pass, which happens within a minute of boot — until then the
+// UI shows the policy's own list with no compliance verdict beside it, which is honest.
+func (s *backupService) restorePolicies(ctx context.Context, file *backupFile, mode string, res *RestoreResult) error {
+	if mode == RestoreModeReplace {
+		if err := wipeAll(ctx, s.policyItems, func(i *entities.FleetPolicyItem) int64 { return i.Id }); err != nil {
+			return err
+		}
+		if err := wipeAll(ctx, s.policies, func(p *entities.FleetPolicy) int64 { return p.Id }); err != nil {
+			return err
+		}
+	}
+	policyIDs := map[int64]int64{}
+	for _, policy := range file.Policies {
+		oldID := policy.Id
+		row := policy
+		row.Id = 0
+		newID, err := s.policies.Create(ctx, "", row)
+		if err != nil {
+			return err
+		}
+		policyIDs[oldID] = int64(newID)
+		res.Restored[BackupSectionPolicies]++
+	}
+	for _, item := range file.PolicyItems {
+		newPolicyID, ok := policyIDs[item.PolicyId]
+		if !ok {
+			res.Skipped[BackupSectionPolicies]++
+			continue
+		}
+		row := item
+		row.Id = 0
+		row.PolicyId = newPolicyID
+		if _, err := s.policyItems.Create(ctx, "", row); err != nil {
+			return err
+		}
 	}
 	return nil
 }

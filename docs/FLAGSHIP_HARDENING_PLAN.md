@@ -21,7 +21,7 @@ lands the work.
 | W1-5 | Tamper / video-loss detection | F-05 | `feat/mymatasan-tamper` | ● built, not benched |
 | W1-6 | Nightly `-race` CI job | F-21 | `ci/race-nightly` | ✅ shipped |
 | **Phase 2 — Operate at fleet scale** |
-| W2-1 | Fleet configuration policy + drift detection | F-06 | — | ☐ not started |
+| W2-1 | Fleet configuration policy + drift detection | F-06 | `feat/myseliasan-fleet-policy` | ◑ half-benched |
 | W2-2 | Node state history + SLA reporting | F-08 | — | ☐ not started |
 | W2-3 | Critical-clip archive to control plane | F-09 | — | ☐ not started |
 | W2-4 | Federated cross-node search | F-10 | — | ☐ not started |
@@ -39,7 +39,8 @@ lands the work.
 | W3-8 | Tenant isolation (decision required first) | F-24 | — | ☐ not decided |
 | W3-9 | Mobile PWA + web push | F-20b | — | ☐ not started |
 
-Status vocabulary: `☐ not started` → `◐ in progress` → `● built, not benched` → `✅ shipped`.
+Status vocabulary: `☐ not started` → `◐ in progress` → `● built, not benched` →
+`◑ half-benched` → `✅ shipped`.
 **`● built, not benched` is never the end state.** Everything here is boot-and-exercise
 before it counts as done.
 
@@ -443,11 +444,58 @@ Target ~6–8 weeks. This is what turns myseliasan from a dashboard over nodes i
 reason someone buys the fleet instead of the appliance. Re-plan each item in detail when
 reached; seams noted now so the shape is not re-derived.
 
-**W2-1 · Fleet configuration policy + drift** (F-06). New policy entity + assignment
-model (fleet → site → node) + a reconciliation loop reporting divergence. The push
-plumbing exists — `apis/node_proxy.go` and the control channel. What is missing is the
-policy object and the reconciler. Covers retention, detection rules, notification
-routing, health thresholds.
+**W2-1 · Fleet configuration policy + drift** (F-06). **Half-benched.**
+`FleetPolicy`/`FleetPolicyItem` (fleet → site → node scope, per-node-kind, field-level
+precedence) plus a catalog-whitelisted set of governable settings (continuity, health,
+tamper, machine health, notification retention — deliberately excluding hardware/runtime
+settings and notification routing/credentials) and a reconciler that reads each node's
+settings over the existing control channel, compares only governed fields, and — only
+when the winning policy has `Enforce` on (default off, report-only) — merges the desired
+values onto the node's current section and PUTs, then re-reads to verify. Compliance
+states are compliant/drifted/unknown/unmanaged, with unknown explicitly not counted as
+compliant. Leader-gated 15-minute sweep plus one pass 90s after boot. `GET/POST
+/api/fleet-policies`, `DELETE /api/fleet-policies/{id}`, `GET
+/api/fleet-policies/catalog`, `GET/POST /api/fleet-policies/compliance[/refresh]`; reads
+follow the permission matrix, writes are superadmin-only. New audit actions
+`policy.enforce`/`policy.save`/`policy.delete`. See
+`docs/modules/apps/myseliasan/services/fleet_policy_reconciler.go.md`. Building this
+surfaced and fixed an unrelated backup gap: `FleetRuleClause` rows were never exported by
+`.selbackup`, so a restored correlation rule had zero clauses and could never fire (see
+`docs/modules/apps/myseliasan/services/backup.go.md`).
+
+**Benched against a real appliance (2026-08-19) — the half that could hide a real bug.**
+A real mymatasan node was booted and the reconciler run against its real settings
+handlers, driven by `fleet_policy_live_test.go` (gated on `RUN_NODE_IT=1`; it is a
+permanent, re-runnable bench, not a throwaway script). What passed:
+
+- every catalog section is readable from a real node, and **all 21 declared fields exist
+  and have the declared type** — a catalog naming a path or field the appliance does not
+  serve would have produced nodes that were permanently, unfixably "drifted"
+- **all 21 fields can actually be set**; none is normalized away by the node, which would
+  have meant a policy that could never go green
+- a report-only policy saw the difference and **issued no write at all**
+- an enforcing policy corrected the value and left every ungoverned field in the same
+  section byte-identical — the merge crux, and the most expensive thing this design could
+  get wrong, since the node decodes each section with `DisallowUnknownFields`
+- retention wrote on its own path with the node's webhook/Telegram credentials **absent
+  from the request body**
+- a second pass over an already-correct node wrote nothing
+- an unreachable node reported `unknown`, never `compliant`
+
+**What the bench found:** the node rate-limits the control plane like any other caller,
+and a tunneled request carries no JWT, so every tunneled call shares one bucket per path.
+A real sweep is ≤15 requests per node per 15 minutes and is nowhere near the limit — the
+429 came from the exhaustive field test firing ~150 requests in ten seconds — but "node
+returned 429" is not something an operator should have to decode, so it now has its own
+message. Two other gaps were fixed while benching: a failed unattended write was not being
+audited (the more interesting of the two records — a policy that has been failing to
+configure an appliance for a month is otherwise invisible), and the ticker and the "check
+now" button could start concurrent sweeps against the same fleet.
+
+**Still owed before this is `✅ shipped`**, and none of it is about the logic above:
+transport (the same run over the mTLS control channel with an adopted node rather than
+HTTP), the API and RBAC gating, the UI, and multi-node precedence in a real fleet
+(fleet + site + node policies over two nodes at different sites).
 
 **W2-2 · Node state history + SLA reporting** (F-08). `reports.go:205` states the gap in
 its own footnote. Add a node-state history table fed by the existing liveness

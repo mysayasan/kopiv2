@@ -10,9 +10,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/mysayasan/kopiv2/apps/myseliasan/entities"
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
-	"github.com/mysayasan/kopiv2/apps/myseliasan/entities"
 	"github.com/mysayasan/kopiv2/infra/atrest"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
@@ -159,15 +159,19 @@ func (noResultErr) Error() string { return "no result found" }
 // testBackupHarness is one fully-wired backup service over in-memory repos, plus a temp
 // plan directory. cipher is what its at-rest secrets are sealed with.
 type testBackupHarness struct {
-	svc      *backupService
-	settings *memRepo[entities.ControlSetting]
-	roles    *memRepo[sharedentities.AccessRole]
-	users    *memRepo[entities.ControlUser]
-	nodes    *memRepo[entities.ManagedNode]
-	sites    *memRepo[entities.Site]
-	floors   *memRepo[entities.FloorPlan]
-	audit    *memRepo[entities.AuditLog]
-	planDir  string
+	svc         *backupService
+	settings    *memRepo[entities.ControlSetting]
+	roles       *memRepo[sharedentities.AccessRole]
+	users       *memRepo[entities.ControlUser]
+	nodes       *memRepo[entities.ManagedNode]
+	sites       *memRepo[entities.Site]
+	floors      *memRepo[entities.FloorPlan]
+	rules       *memRepo[entities.FleetRule]
+	ruleClauses *memRepo[entities.FleetRuleClause]
+	policies    *memRepo[entities.FleetPolicy]
+	policyItems *memRepo[entities.FleetPolicyItem]
+	audit       *memRepo[entities.AuditLog]
+	planDir     string
 }
 
 func newTestBackupHarness(t *testing.T, cipher *atrest.Cipher) *testBackupHarness {
@@ -182,6 +186,10 @@ func newTestBackupHarness(t *testing.T, cipher *atrest.Cipher) *testBackupHarnes
 		audit:    newMemRepo[entities.AuditLog](nil),
 		planDir:  t.TempDir(),
 	}
+	h.rules = newMemRepo[entities.FleetRule](nil)
+	h.ruleClauses = newMemRepo[entities.FleetRuleClause](nil)
+	h.policies = newMemRepo[entities.FleetPolicy](nil)
+	h.policyItems = newMemRepo[entities.FleetPolicyItem](nil)
 	h.svc = &backupService{
 		roles:       h.roles,
 		permissions: newMemRepo[sharedentities.AccessRolePermission](nil),
@@ -192,7 +200,10 @@ func newTestBackupHarness(t *testing.T, cipher *atrest.Cipher) *testBackupHarnes
 		sites:       h.sites,
 		floors:      h.floors,
 		placements:  newMemRepo[entities.NodePlacement](nil),
-		rules:       newMemRepo[entities.FleetRule](nil),
+		rules:       h.rules,
+		ruleClauses: h.ruleClauses,
+		policies:    h.policies,
+		policyItems: h.policyItems,
 		audit:       h.audit,
 		cipher:      cipher,
 		planDir:     h.planDir,
@@ -673,3 +684,155 @@ var _ dbsql.IGenericRepo[entities.ControlSetting] = (*memRepo[entities.ControlSe
 // keep base64 imported for the harness helpers above even if a future edit drops the last
 // direct use; the plan-image assertions rely on it.
 var _ = base64.StdEncoding
+
+// A correlation rule IS its clauses. Exporting the parent without them produced a bundle
+// that restored "successfully" into rules the UI listed as enabled and that could never
+// fire — a control plane brought back after a disk failure would have shown a complete set
+// of correlation rules and detected no correlation at all. The same class of defect as the
+// dropped password hash, and equally invisible to a test that does not go through the
+// whole Export→Restore round trip.
+func TestRestoreBringsBackRuleClausesRemappedToTheNewRuleIds(t *testing.T) {
+	ctx := context.Background()
+	cipher := testCipherWithSeed(t, 30)
+	src := newTestBackupHarness(t, cipher)
+
+	// Two rules, so a restore that ignored the remap and kept the source ids would have a
+	// plausible-looking but wrong answer to attach the clauses to.
+	quietRuleID, err := src.rules.Create(ctx, "", entities.FleetRule{Name: "decoy", Enabled: true, WindowSeconds: 60})
+	if err != nil {
+		t.Fatalf("seed decoy rule: %v", err)
+	}
+	ruleID, err := src.rules.Create(ctx, "", entities.FleetRule{Name: "intrusion", Enabled: true, WindowSeconds: 120})
+	if err != nil {
+		t.Fatalf("seed rule: %v", err)
+	}
+	if _, err := src.ruleClauses.Create(ctx, "", entities.FleetRuleClause{
+		RuleId: int64(ruleID), Mode: "required", Category: "device.alert", Match: "Front door opened",
+	}); err != nil {
+		t.Fatalf("seed clause: %v", err)
+	}
+	if _, err := src.ruleClauses.Create(ctx, "", entities.FleetRuleClause{
+		RuleId: int64(ruleID), Mode: "absent", Kind: "door", Match: "Badge accepted",
+	}); err != nil {
+		t.Fatalf("seed clause: %v", err)
+	}
+	if _, err := src.ruleClauses.Create(ctx, "", entities.FleetRuleClause{
+		RuleId: int64(quietRuleID), Mode: "required", Match: "decoy",
+	}); err != nil {
+		t.Fatalf("seed decoy clause: %v", err)
+	}
+
+	blob, err := src.svc.Export(ctx, BackupRequest{Sections: []string{BackupSectionRules}, Passphrase: "pp-rules"})
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+
+	dst := newTestBackupHarness(t, testCipherWithSeed(t, 31))
+	// Seed the destination with an unrelated rule so its id sequence does NOT line up with
+	// the source's. A remap that silently kept the old RuleId would then attach the
+	// intrusion rule's clauses to somebody else's rule.
+	if _, err := dst.rules.Create(ctx, "", entities.FleetRule{Name: "pre-existing", Enabled: true, WindowSeconds: 30}); err != nil {
+		t.Fatalf("seed destination rule: %v", err)
+	}
+	if _, err := dst.svc.Restore(ctx, blob, RestoreRequest{Sections: []string{BackupSectionRules}, Passphrase: "pp-rules", Mode: RestoreModeReplace}); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	rules, _, err := dst.rules.Get(ctx, "", 100, 0, nil, nil)
+	if err != nil {
+		t.Fatalf("read rules: %v", err)
+	}
+	var restored *entities.FleetRule
+	for _, r := range rules {
+		if r.Name == "intrusion" {
+			restored = r
+		}
+	}
+	if restored == nil {
+		t.Fatal("the intrusion rule did not come back")
+	}
+	clauses, _, err := dst.ruleClauses.Get(ctx, "", 100, 0, nil, nil)
+	if err != nil {
+		t.Fatalf("read clauses: %v", err)
+	}
+	mine := 0
+	required := 0
+	for _, c := range clauses {
+		if c.RuleId != restored.Id {
+			continue
+		}
+		mine++
+		if c.Mode == "required" {
+			required++
+		}
+	}
+	if mine != 2 {
+		t.Fatalf("the rule came back with %d of its 2 clauses — a rule with fewer clauses than it was written with is a rule that no longer means what it said", mine)
+	}
+	// A rule made only of absences fires on nothing. The editor refuses to create one;
+	// restore must not create one either.
+	if required != 1 {
+		t.Fatalf("the required clause is what makes the rule able to fire; got %d", required)
+	}
+}
+
+// The estate's configuration standard exists nowhere else. A restored control plane that
+// lost it reports every node "unmanaged" and quietly stops noticing drift.
+func TestRestoreBringsBackFleetPoliciesAndTheirItems(t *testing.T) {
+	ctx := context.Background()
+	src := newTestBackupHarness(t, testCipherWithSeed(t, 32))
+
+	policyID, err := src.policies.Create(ctx, "", entities.FleetPolicy{
+		Name: "estate standard", Enabled: true, Scope: entities.PolicyScopeFleet, NodeKind: "camera",
+	})
+	if err != nil {
+		t.Fatalf("seed policy: %v", err)
+	}
+	for _, it := range []entities.FleetPolicyItem{
+		{PolicyId: int64(policyID), Section: "continuity", Field: "minCoveragePercent", Value: "95"},
+		{PolicyId: int64(policyID), Section: "notificationRetention", Field: "days", Value: "30"},
+	} {
+		if _, err := src.policyItems.Create(ctx, "", it); err != nil {
+			t.Fatalf("seed item: %v", err)
+		}
+	}
+
+	blob, err := src.svc.Export(ctx, BackupRequest{Sections: []string{BackupSectionPolicies}, Passphrase: "pp-pol"})
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+
+	dst := newTestBackupHarness(t, testCipherWithSeed(t, 33))
+	if _, err := dst.policies.Create(ctx, "", entities.FleetPolicy{Name: "unrelated", Enabled: true, Scope: entities.PolicyScopeFleet, NodeKind: "camera"}); err != nil {
+		t.Fatalf("seed destination policy: %v", err)
+	}
+	if _, err := dst.svc.Restore(ctx, blob, RestoreRequest{Sections: []string{BackupSectionPolicies}, Passphrase: "pp-pol", Mode: RestoreModeReplace}); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	policies, _, err := dst.policies.Get(ctx, "", 100, 0, nil, nil)
+	if err != nil {
+		t.Fatalf("read policies: %v", err)
+	}
+	if len(policies) != 1 || policies[0].Name != "estate standard" {
+		t.Fatalf("want just the restored policy, got %+v", policies)
+	}
+	items, _, err := dst.policyItems.Get(ctx, "", 100, 0, nil, nil)
+	if err != nil {
+		t.Fatalf("read items: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("a policy with no items governs nothing; got %d", len(items))
+	}
+	for _, it := range items {
+		if it.PolicyId != policies[0].Id {
+			t.Fatalf("item %q points at policy %d, not the restored %d", it.Field, it.PolicyId, policies[0].Id)
+		}
+	}
+	// The restored policy must be resolvable end to end — the point of keeping it.
+	node := &entities.ManagedNode{NodeId: "n1", Kind: "camera"}
+	eff := ResolveEffectivePolicy(node, []*FleetPolicyDetail{{Policy: policies[0], Items: items}})
+	if eff.Empty() {
+		t.Fatal("the restored policy governs nothing, so restoring it achieved nothing")
+	}
+}

@@ -214,3 +214,51 @@ main
 
 Either PR them as a stack, each based on the previous, or rebase each onto `main` — they are
 logically independent.
+
+
+---
+
+# Phase 2 bench checklist
+
+## W2-1 · Fleet configuration policy + drift  ⟵ half done
+
+The logic half is **done and re-runnable**. `apps/myseliasan/services/fleet_policy_live_test.go`
+benches the reconciler against a REAL mymatasan node; it skips unless asked for:
+
+```
+# boot a throwaway node (see the mymatasan verify recipe): fresh sqlite, nonTlsPorts=[18089],
+# pairing off, rateLimit.enabled=false, then rotate the must-change password.
+RUN_NODE_IT=1 NODE_URL=http://127.0.0.1:18089 NODE_AUTH=$(printf 'admin:PASS' | base64)   go test ./apps/myseliasan/services/ -run TestLive -v
+```
+
+Passing on 2026-08-19: all 21 catalog fields exist on a real node with the declared types
+and can all actually be set; report-only issues no write; enforcing corrects the value and
+leaves every ungoverned field in the section untouched; retention writes without the node's
+notification credentials in the body; a second pass over a correct node writes nothing; an
+unreachable node reports `unknown`.
+
+**Two harness traps:**
+
+- **Turn the node's rate limiter off for this bench.** A tunneled request carries no JWT, so
+  every tunneled call shares one bucket per path (`authOnly`, 120 req / 20s). A real sweep is
+  ≤15 requests per node per 15 minutes and never comes close, but the exhaustive field test
+  fires ~150 in ten seconds and trips it. Same reason the ZAP runs disable it. Pacing is not
+  enough — the window is 20 seconds wide.
+- Restore each field to the node's own starting value between subtests, or later fields are
+  measured against a node the earlier ones moved.
+
+**Still owed, in the order that wastes least setup:**
+
+1. **Transport.** The same assertions over the mTLS control channel with an actually adopted
+   node, not HTTP+Basic. This proves the tunnel carries a PUT body and that `Role: "admin"`
+   resolves to the node's superadmin (it maps through `normalizeControlRole`; the node's own
+   audit should show the actor as `cp:fleet-policy`).
+2. **Precedence in a real fleet.** Two nodes at different sites; a fleet policy, a site policy
+   overriding one field, and a node policy overriding another. The compliance detail must name
+   the winning policy per field. This is the one thing unit tests model rather than observe.
+3. **The API and its gating.** A non-superadmin can read `/api/fleet-policies/compliance` and
+   is refused `POST /api/fleet-policies`.
+4. **The screen.** Drifted/unknown/compliant tiles, the detail table, and the enforce switch's
+   warning copy. Worth a look in Arabic — the page uses logical CSS properties throughout.
+5. **The audit trail.** An enforced write records `policy.enforce` with the before/after; a
+   FAILED enforce records it too (point a policy at a node, stop the node mid-sweep).
