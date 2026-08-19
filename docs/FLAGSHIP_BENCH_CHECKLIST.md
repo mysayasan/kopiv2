@@ -134,6 +134,49 @@ Also check:
 
 ---
 
+### RUN 2026-08-19 — W1-4 and W1-2 PASSED, W1-3 partially
+
+Containerised mymatasan on sqlite with encryption-at-rest on and real ffmpeg. Four genuine
+H.264 clips were produced with ffmpeg, hashed as plaintext and sealed with the app's own
+`infra/atrest` (via `tools/benchseal`, so the bench exercised the real cipher rather than a
+reimplementation), then registered as segments across one hour **with a deliberate
+15-minute gap**.
+
+22/22 checks passed, plus a tamper check run separately. The ones worth naming:
+
+- the export's **ffmpeg concat ran against real segments for the first time** and produced a
+  12.02s H.264+AAC file that ffprobe reads cleanly — a concat that silently produced a
+  broken container would still have hashed fine, so the probe is the check that matters
+- **recomputing SHA-256 on the downloaded media matched `output.sha256` in the manifest**
+- all three sources were labelled `hashOrigin: "recorded"`, i.e. digested at finalize
+- the manifest and `VERIFY.txt` both reported the gap, and the preview reported it *before*
+  the export could be built
+- **corrupting one stored digest made the export REFUSE to run** ("segment 5 failed its
+  integrity check"). Without that, the evidentiary claim would be decoration
+- the audit trail recorded the export at both request and download, with the actor and the
+  operator's stated reason; `/api/audit.csv` downloads
+
+**The bug it found:** the evidence service captured the ffmpeg path **once at boot**, while
+every other consumer resolves it live. `services/ffmpeg_install.go` rewrites that setting at
+runtime, so an operator who installs ffmpeg **through the product** and then exports gets a
+failure that persists until someone restarts the app — on precisely the install where the
+product was asked to set ffmpeg up. Now resolved per export.
+
+**Harness notes:** the `Sha256` field's column is `sha_256` (`strcase.ToSnake`), and a
+dict-filter seeding by the wrong name silently drops it. A PowerShell here-string piped into
+python prepends a BOM to the first line — it ended up inside a stored `file_path` and
+produced a puzzling "no such file". The ffmpeg path lives in the `runtime_setting` table
+seeded from config at first boot, so editing config.json afterwards changes nothing.
+
+### W1-3 — still owed
+
+Coverage is benched: `GET /api/recording/coverage` reported exactly 75% for the seeded hour
+with its 15-minute hole. **The gap ALERT is not benched** — that needs a camera recording
+across two closed hours with its ffmpeg child killed mid-way, and the overnight
+false-positive run. Same for W1-5, which needs live siphon frames.
+
+---
+
 ## W1-2 · Audit trail
 
 Mostly falls out of the benches above — do it last and read the trail they produced.

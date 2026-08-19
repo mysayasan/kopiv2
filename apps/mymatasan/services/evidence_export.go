@@ -167,10 +167,14 @@ type IEvidenceExportService interface {
 }
 
 type evidenceExportService struct {
-	recording  IRecordingService
-	camera     ICameraService
-	cipher     *atrest.Cipher
-	ffmpegPath string
+	recording IRecordingService
+	camera    ICameraService
+	cipher    *atrest.Cipher
+	// ffmpegPath is resolved on every export, not captured at construction. The path
+	// lives in runtime settings and the in-app installer rewrites it, so a boot-time
+	// copy goes stale the moment an operator installs ffmpeg through the product —
+	// and every export after that fails until someone restarts the app.
+	ffmpegPath func() string
 	workDir    string
 	appVersion string
 
@@ -183,7 +187,7 @@ func NewEvidenceExportService(
 	rec IRecordingService,
 	camera ICameraService,
 	cipher *atrest.Cipher,
-	ffmpegPath string,
+	ffmpegPath func() string,
 	workDir string,
 	appVersion string,
 ) IEvidenceExportService {
@@ -504,7 +508,14 @@ func (s *evidenceExportService) concat(ctx context.Context, parts []string, out 
 	}
 	defer os.Remove(listPath)
 
-	cmd := exec.CommandContext(ctx, s.ffmpegPath,
+	ffmpeg := ""
+	if s.ffmpegPath != nil {
+		ffmpeg = strings.TrimSpace(s.ffmpegPath())
+	}
+	if ffmpeg == "" {
+		return fmt.Errorf("no ffmpeg is configured — set it in Settings before exporting footage")
+	}
+	cmd := exec.CommandContext(ctx, ffmpeg,
 		"-hide_banner", "-loglevel", "error",
 		"-f", "concat", "-safe", "0", "-i", filepath.ToSlash(listPath),
 		"-c", "copy", "-movflags", "+faststart", "-f", "mp4", "-y", filepath.ToSlash(out))
