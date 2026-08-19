@@ -18,7 +18,7 @@ lands the work.
 | W1-2 | Shared audit package + mymatasan audit log | F-02, F-22 | `feat/shared-audit` | ● built, not benched |
 | W1-3 | Recording continuity monitor + coverage report | F-03 | `feat/mymatasan-continuity` | ● built, not benched |
 | W1-4 | Evidence export with integrity manifest | F-04 | `feat/mymatasan-evidence-export` | ● built, not benched |
-| W1-5 | Tamper / video-loss detection | F-05 | `feat/mymatasan-tamper` | ☐ not started |
+| W1-5 | Tamper / video-loss detection | F-05 | `feat/mymatasan-tamper` | ● built, not benched |
 | W1-6 | Nightly `-race` CI job | F-21 | `ci/race-nightly` | ✅ shipped |
 | **Phase 2 — Operate at fleet scale** |
 | W2-1 | Fleet configuration policy + drift detection | F-06 | — | ☐ not started |

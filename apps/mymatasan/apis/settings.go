@@ -32,6 +32,43 @@ type settingsApi struct {
 	audit *Auditor
 	// continuity configures the recording-continuity monitor.
 	continuity services.IContinuitySettingsService
+	// tamper configures the camera tamper monitor.
+	tamper services.ITamperSettingsService
+}
+
+// getTamper / saveTamper expose the camera tamper monitor's configuration. Retuning it is
+// changing what the system will and will not alarm about, so the save is audited.
+func (a *settingsApi) getTamper(w http.ResponseWriter, r *http.Request) {
+	cfg, err := a.tamper.Get(r.Context())
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, cfg, "succeed")
+}
+
+func (a *settingsApi) saveTamper(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+	var body services.TamperSettings
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	cfg, err := a.tamper.Save(r.Context(), body)
+	if err != nil {
+		a.audit.Failure(r, services.ActionSettingsChange, services.TargetSettings, "tamper", err.Error(), nil)
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	a.audit.Success(r, services.ActionSettingsChange, services.TargetSettings, "tamper",
+		fmt.Sprintf("camera tamper monitoring %s", map[bool]string{true: "on", false: "off"}[cfg.Enabled]),
+		map[string]any{"enabled": cfg.Enabled, "coveredRatio": cfg.CoveredRatio, "frozenSeconds": cfg.FrozenSeconds})
+	controllers.SendResult(w, cfg, "succeed")
 }
 
 // getContinuity / saveContinuity expose the recording-continuity monitor's configuration.
@@ -73,8 +110,8 @@ func (a *settingsApi) saveContinuity(w http.ResponseWriter, r *http.Request) {
 
 // NewSettingsApi registers runtime settings routes. browseRoots are extra
 // site-specific directories the file picker may browse (config decoder.browseRoots).
-func NewSettingsApi(router *mux.Router, serv services.IRuntimeSettingsService, camera services.ICameraService, userServ services.ILocalUserService, notifServ services.INotificationSettingsService, healthServ services.IHealthSettingsService, machineHealth services.IMachineHealthSettingsService, machineMetrics services.IMachineMetricsProvider, visionTool services.VisionToolSettings, ffmpeg *services.FFmpegInstaller, pyRuntime *services.PythonInstaller, browseRoots []string, roles sharedservices.IAccessRoleService, audit *Auditor, continuity services.IContinuitySettingsService) {
-	handler := &settingsApi{serv: serv, camera: camera, userServ: userServ, notifServ: notifServ, healthServ: healthServ, machineHealth: machineHealth, machineMetrics: machineMetrics, visionTool: visionTool, ffmpeg: ffmpeg, pyRuntime: pyRuntime, browseRoots: browseRoots, roles: roles, audit: audit, continuity: continuity}
+func NewSettingsApi(router *mux.Router, serv services.IRuntimeSettingsService, camera services.ICameraService, userServ services.ILocalUserService, notifServ services.INotificationSettingsService, healthServ services.IHealthSettingsService, machineHealth services.IMachineHealthSettingsService, machineMetrics services.IMachineMetricsProvider, visionTool services.VisionToolSettings, ffmpeg *services.FFmpegInstaller, pyRuntime *services.PythonInstaller, browseRoots []string, roles sharedservices.IAccessRoleService, audit *Auditor, continuity services.IContinuitySettingsService, tamper services.ITamperSettingsService) {
+	handler := &settingsApi{serv: serv, camera: camera, userServ: userServ, notifServ: notifServ, healthServ: healthServ, machineHealth: machineHealth, machineMetrics: machineMetrics, visionTool: visionTool, ffmpeg: ffmpeg, pyRuntime: pyRuntime, browseRoots: browseRoots, roles: roles, audit: audit, continuity: continuity, tamper: tamper}
 	group := router.PathPrefix("/settings").Subrouter()
 
 	group.HandleFunc("/runtime", handler.getRuntime).Methods("GET")
@@ -97,6 +134,8 @@ func NewSettingsApi(router *mux.Router, serv services.IRuntimeSettingsService, c
 	group.HandleFunc("/health", handler.saveHealth).Methods("PUT")
 	group.HandleFunc("/continuity", handler.getContinuity).Methods("GET")
 	group.HandleFunc("/continuity", handler.saveContinuity).Methods("PUT")
+	group.HandleFunc("/tamper", handler.getTamper).Methods("GET")
+	group.HandleFunc("/tamper", handler.saveTamper).Methods("PUT")
 	group.HandleFunc("/machine-health", handler.getMachineHealth).Methods("GET")
 	group.HandleFunc("/machine-health", handler.saveMachineHealth).Methods("PUT")
 	group.HandleFunc("/machine-health/metrics", handler.getMachineMetrics).Methods("GET")

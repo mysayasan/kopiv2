@@ -644,6 +644,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		auditService: auditService,
 
 		continuitySettings: services.NewContinuitySettingsService(repo.RuntimeSetting),
+		tamperSettings:     services.NewTamperSettingsService(repo.RuntimeSetting),
 
 		// Evidence export. Work lands under the data dir rather than the OS temp dir: a
 		// bundle is DECRYPTED footage, and it belongs on the volume the operator already

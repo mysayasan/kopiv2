@@ -66,5 +66,6 @@ func DescribeMetrics(m telemetry.Metrics) {
 	m.Describe(MetricRecordingCoveragePercent, "Percentage of the last scored hour that has footage on disk, per camera.")
 	m.Describe(MetricRecordingGapCameras, "Cameras currently alerting for missing footage.")
 	m.Describe(MetricAuditWriteFailuresTotal, "Audit entries that could not be persisted. The audit service swallows its own write errors, so this is the only symptom a trail that stopped recording produces.")
+	m.Describe(MetricCameraTamperTotal, "Camera tamper alerts raised, by kind (frozen, covered, moved).")
 	m.Describe(MetricAuditRetentionPurgedTotal, "Audit rows removed by age-based retention.")
 }

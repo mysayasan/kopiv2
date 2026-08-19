@@ -97,6 +97,10 @@ type wiring struct {
 	// evidence builds verifiable export bundles of recorded footage.
 	evidence services.IEvidenceExportService
 
+	// tamperSettings backs the camera tamper monitor — the third health question, after
+	// "does it answer" and "is it recording": is it still showing its scene?
+	tamperSettings services.ITamperSettingsService
+
 	// Installers.
 	ffmpegInstaller *services.FFmpegInstaller
 	pythonInstaller *services.PythonInstaller
@@ -157,6 +161,7 @@ func (w *wiring) validate() error {
 	check("audit", w.audit != nil)
 	check("continuitySettings", w.continuitySettings != nil)
 	check("evidence", w.evidence != nil)
+	check("tamperSettings", w.tamperSettings != nil)
 	check("accessPerms", w.accessPerms != nil)
 	check("ffmpegInstaller", w.ffmpegInstaller != nil)
 	check("pythonInstaller", w.pythonInstaller != nil)

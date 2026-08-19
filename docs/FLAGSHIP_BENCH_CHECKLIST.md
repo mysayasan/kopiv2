@@ -129,6 +129,32 @@ docker run --rm -v "D:/github/mysayasan/kopiv2:/src" -w /src -e CGO_ENABLED=1 \
 
 ---
 
+## W1-5 · Camera tamper
+
+Needs one camera you can physically reach, and one overnight run.
+
+1. Let the camera watch its normal scene for ~15 minutes (it has to build a baseline).
+2. **Cover the lens** — a hand, tape, a bag.
+3. Uncover it.
+4. **Pan the camera** to face somewhere else, then put it back.
+5. **Freeze the stream** (pause the source, or SIGSTOP the ffmpeg child so the connection
+   stays up while the picture stops).
+
+**Pass:** each of the three produces its own alert within the debounce window, and each
+clears when the condition is removed.
+
+The one that actually matters, and it cannot be rushed:
+
+- **Leave a healthy camera running overnight, through dusk and dawn.** It must produce
+  **no** tamper alerts. A dark scene legitimately loses the detail this monitor measures,
+  which is why blocked-view checks pause in low light — if a normal night still trips it,
+  the fix is the low-light threshold, not a bigger debounce. A tamper monitor that cries
+  wolf gets muted within a week, and after that it catches nothing at all.
+- Also confirm a lens covered *in daylight* is still caught after the overnight run — i.e.
+  the baseline did not quietly learn the dark scene as normal.
+
+---
+
 ## After the benches
 
 Once these pass, the branches are ready to push and PR. They are currently a stack:
@@ -140,7 +166,9 @@ main
          └─ 0286729d  W1-1  feat/myseliasan-backup
              └─ b3078b13  W1-2  feat/shared-audit
                  └─ dae09a09  W1-3  feat/mymatasan-continuity
-                     └─ 79ca7c2f  W1-4  feat/mymatasan-evidence-export   (HEAD)
+                     └─ 79ca7c2f  W1-4  feat/mymatasan-evidence-export
+                         └─ f3194ab9  docs: this checklist
+                             └─ (W1-5)  feat/mymatasan-tamper            (HEAD)
 ```
 
 Either PR them as a stack, each based on the previous, or rebase each onto `main` — they are
