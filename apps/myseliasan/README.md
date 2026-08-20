@@ -315,6 +315,41 @@ See `docs/modules/apps/myseliasan/services/correlate.go.md` for the evaluation e
 node and a live sensor node, including a deliberately late badge swipe that correctly
 disarmed the rule.
 
+## Fleet configuration policy
+
+A **Fleet policy** page (its own nav item) states what a group of nodes' settings *ought* to
+be, and reports where the fleet has drifted from it — the control plane could already reach
+into any node's settings (the node proxy tunnel), it just had no way to say what they should
+hold, so a node that got reimaged, restored from an old backup, or hand-tuned by a site
+engineer at 2am simply stopped matching its siblings with nothing anywhere noticing.
+
+A policy targets the **fleet**, one **site**, or one **node** (most specific wins, field by
+field, when policies overlap) and a **node kind**, and governs a whitelisted set of settings
+across five sections — recording continuity, camera reachability, tamper detection,
+appliance health thresholds, and alert retention (~21 fields total). Two categories are
+deliberately never governable from here: hardware/runtime settings (GPU device, ffmpeg path —
+properties of the box, not the fleet) and notification **routing** (webhook URLs, bot tokens —
+credential distribution needs a different story than a settings comparison; alert *retention*
+carries no secret, so that part is included).
+
+Every policy defaults to **report only** (`Enforce` off) — a background sweep (every 15
+minutes, plus shortly after boot) compares each node's live settings against whichever policy
+wins and shows **compliant** / **drifted** / **unknown** / **unmanaged** per node, with
+**unknown kept explicitly separate from compliant**: an unreachable node — the one most likely
+to have actually drifted — must never show up green. Only when an operator deliberately turns
+**Enforce** on for a policy does a drifted field get written back to the node (merged onto its
+current settings, then read back and verified — a `200` from the node is not proof the value
+stuck). Every enforced write is audited (`policy.enforce`) even though no operator triggered
+it at the moment it happened.
+
+Writing a policy (`POST`/`DELETE /api/fleet-policies`) is superadmin-only, the same reasoning
+as a fleet rule above — an estate-wide control that can also silently rewrite fifty machines'
+settings. Reading the policy list and the compliance report is open to any authenticated
+session. See `docs/modules/apps/myseliasan/services/fleet_policy_reconciler.go.md` for the
+comparison/enforcement engine and `docs/modules/apps/myseliasan/services/policy_catalog.go.md`
+for exactly what can be governed. **Built, not yet live-benched against a real fleet** — see
+`docs/FLAGSHIP_HARDENING_PLAN.md` (W2-1).
+
 ## Notifications
 
 A consolidated **Notifications** page (its own badged nav item under a **System** group) lists the control plane's unified feed — `myseliasan`'s own events (node going-offline, login/security, and now proactive fleet-health alerts — see below), and every event a managed node pushes up its control channel, tagged `source: node:<id>` by `ingestNodeEvent` in `app.go` (any event kind the node reports, not just recognized ones, now surfaces here rather than being dropped). It reads `GET /api/notifications`, with **Unread**/**All** toggle, a per-node source filter, and infinite scroll. The side-nav badge and an SSE-driven live update both come from `GET /api/notifications/stream`: the App shell keeps one `EventSource` open and bumps a refresh signal + re-polls the unread count on every arrival. Clicking **Acknowledge** marks the notification read (`POST /api/notifications/{id}/read`) and — for a node AI detection (`refType: "alert_event"`) — also propagates the acknowledgement to the source alert on the node over the proxy (`POST /api/nodes/{id}/proxy/api/vision/alerts/{id}/ack`), so the node's own review state stays in sync. AI-detection rows show the annotated event snapshot, streamed through the node proxy so the browser never contacts the node directly.
@@ -396,6 +431,7 @@ Actions recorded:
 - **Node access grant changes** (`node_access.set`, `node_access.revoke`).
 - **Mutating tunneled node commands** (`node.command`) — every `POST`/`PUT`/`PATCH`/`DELETE` sent through the reverse command tunnel (`/api/nodes/{id}/proxy/...`) is audited, since that single choke point is how remote wipe, factory-reset, and settings writes reach a node. Read-only tunneled traffic (`GET`/`HEAD`) is intentionally not audited, to keep the trail free of routine page-load noise.
 - **AI agent actions** (`agent.digest.generate`, `agent.chat` — question text only, truncated, never the model's answer; `agent.llm.test`, `agent.llm.install.binary`/`.model`, `agent.llm.import`, `agent.llm.sidecar.restart`) — see "AI Agent" above.
+- **Fleet policy changes** (`policy.save`, `policy.delete`) — edits to the configuration standard itself; and **fleet policy enforcement** (`policy.enforce`) — a policy writing a drifted setting back to a node on the reconcile sweep, the one settings change on a node with no operator behind it at the moment it happens. See "Fleet configuration policy" above.
 
 Recording is best-effort: a failure to write an audit entry is logged but never blocks or fails the action being audited. Each entry captures the actor (user id, email/name, role), the target (type + id), an outcome (`success`/`denied`/`error`), a short detail string, optional structured `Metadata`, and the client IP.
 
@@ -405,7 +441,7 @@ The trail is read-only over `GET /api/audit?limit=&offset=&action=&outcome=&acto
 
 Settings gains a **Backup & Restore** tab (superadmin-only) that exports a passphrase-encrypted `.selbackup` and restores from one — until now the control plane had a factory reset and nothing else, while `mymatasan` (`.mmbackup`) and `myidsan` (`.idbackup`) both already shipped this. myseliasan is the app holding state that cannot be rebuilt from anywhere else: the fleet certificate authority's private key, the node registry with each node's heartbeat token, RBAC, sites and floor plans, fleet rules, and the audit trail — losing that database does not degrade the fleet, it orphans it, and every node has to be physically re-adopted with a fresh claim code.
 
-Eight selectable sections (access, users, fleetca, fleet, sites, rules, settings, audit) with row counts shown before export. Secrets and on-disk floor-plan images are unsealed on export and RE-SEALED with the destination host's own at-rest key on restore, so a bundle restores cleanly onto a fresh install with a completely different encryption key. Restoring the fleet CA reports that a restart is required — the running process caches the CA in memory and would otherwise keep serving mTLS from the old one and reject every node. The audit section is append-only and ignores replace mode, so restoring an empty backup cannot be used to erase the trail. Both export and restore are themselves audited (never with the passphrase).
+Nine selectable sections (access, users, fleetca, fleet, sites, rules, policies, settings, audit) with row counts shown before export. `rules` now also carries each rule's clauses (a gap found and fixed alongside the fleet-policy work below — a restored rule previously came back with none, and a rule with no clause can never fire); `policies` is the fleet configuration policy standard described above. Secrets and on-disk floor-plan images are unsealed on export and RE-SEALED with the destination host's own at-rest key on restore, so a bundle restores cleanly onto a fresh install with a completely different encryption key. Restoring the fleet CA reports that a restart is required — the running process caches the CA in memory and would otherwise keep serving mTLS from the old one and reject every node. The audit section is append-only and ignores replace mode, so restoring an empty backup cannot be used to erase the trail. Both export and restore are themselves audited (never with the passphrase).
 
 ## Settings
 
