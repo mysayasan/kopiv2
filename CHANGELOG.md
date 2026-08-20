@@ -94,6 +94,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-20 — myseliasan 1.66.0 (06d8c86)
+
+### Added
+
+- **myseliasan**: myseliasan gains fleet configuration policy + drift detection: a FleetPolicy (fleet/site/node scope, per-node-kind) declares what a whitelisted set of node settings (recording continuity, camera reachability, tamper detection, appliance health thresholds, alert retention) ought to be, and a leader-gated background reconciler compares each adopted node's live settings against the winning policy every 15 minutes, reporting compliant/drifted/unknown/unmanaged per node. Enforcement — writing a drifted value back to the node over the existing control tunnel — is opt-in per policy and defaults off (report-only), with every enforced write audited. New superadmin-gated /api/fleet-policies* endpoints and a Fleet Policy screen. While building this, an unrelated backup gap was found and fixed: FleetRuleClause rows were never exported by the .selbackup 'rules' section, so a restored fleet correlation rule always came back with zero clauses and could never fire; a new 'policies' backup section covers the new entities and the 'rules' section now carries clauses too.
 ## 2026-08-19 — mymatasan 1.126.1 (95c8b7e)
 
 ### Fixed
