@@ -201,6 +201,60 @@ backfills anything missed: node (re)connects → `ControlServer.SetOnConnect` �
 `GET /api/notifications?since=` over the tunnel → `RelayDedup`-gated `republishNodeNotification` →
 notification feed.
 
+## Fleet Configuration Policy Reconcile Flow (myseliasan → node)
+
+This is the comparison side of fleet configuration policy + drift detection (flagship
+hardening plan W2-1). Unlike the correlation flow above (event-driven, arms on a matching
+event), this flow is timer-driven: nothing a node does triggers it, only the passage of time.
+
+1. `leaderTicker` fires every 15 minutes (plus once ~90s after boot) and, only on the
+   deployment's leader instance, calls `FleetPolicyReconciler.ReconcileAll`
+   (`apps/myseliasan/services/fleet_policy_reconciler.go`).
+2. For every adopted node (`PolicyNodeLister.List`, a narrowed view of `INodeRegistry`),
+   `services.ResolveEffectivePolicy` merges every enabled `FleetPolicy` that matches the
+   node's kind and scope (fleet → site → node, most specific wins per field, higher id
+   breaks a same-scope tie) into one `EffectivePolicy` — a pure, database-free function
+   (`apps/myseliasan/services/fleet_policy.go`).
+3. If the node has no applicable policy at all, it is reported `unmanaged` and nothing is
+   read from it.
+4. Otherwise, for each governed catalog section (`apps/myseliasan/services/policy_catalog.go`
+   — continuity, health, tamper, machineHealth, notificationRetention), the reconciler reads
+   the section's current values from the node over the **same control-channel tunnel**
+   `apis/node_proxy.go` uses for an operator's own node screens (`ControlSender.SendRequest`,
+   `Role: "admin"`, `Actor: "fleet-policy"` — the node authorizes this exactly as it would an
+   operator-driven request, asserting no special capability).
+5. Each governed field is compared (`policyValuesEqual`, numeric-exact, no epsilon) against
+   the winning policy's desired value. A field the node's response does not contain at all is
+   `missing` (different remediation than drift: upgrade the node, not enforce a value its
+   decoder would reject); a section that could not be read at all (offline, wrong role, 404)
+   marks the whole node `unknown` — **never `compliant`**, since the node most likely to have
+   actually drifted is the one that could not be reached.
+6. If every read section's fields matched, the node is `compliant`. If any field disagreed,
+   the node is `drifted` — UNLESS the field's winning policy has `Enforce` on, in which case
+   step 7 runs before the final verdict.
+7. **Enforcement (opt-in per policy, default off):** the reconciler re-reads the section's
+   current object, overlays every enforcing drifted field onto it (`policySetPath`), and PUTs
+   the WHOLE merged object back — never just the governed fields, since the node's settings
+   endpoints reject unknown fields and a partial PUT would zero out every ungoverned field in
+   the section. It then reads the section back a second time to VERIFY the value actually
+   stuck (a `200` is not proof; every node settings service normalizes/clamps what it is
+   given) before marking the field `applied`. A successfully-verified field is folded back
+   into the `compliant` count for that node; an unverified or failed write leaves the node
+   `drifted` and records why.
+8. Every enforced write is recorded to the audit trail (`ActionPolicyEnforce`,
+   `apps/myseliasan/services/audit.go`) regardless of outcome — the one settings change on a
+   node with no operator behind it at the moment it happens.
+9. The whole pass's result is stored in memory (`FleetPolicyReconciler.Last()`) and served by
+   `GET /api/fleet-policies/compliance` without a fresh sweep; `POST
+   /api/fleet-policies/compliance/refresh` (superadmin-only) or `POST
+   /api/fleet-policies/compliance/{nodeId}` triggers one on demand instead of waiting for the
+   next tick.
+
+**Data path summary:** timer tick (leader-gated) → `ReconcileAll` → per node →
+`ResolveEffectivePolicy` (pure) → per governed section → `GET` over control tunnel → compare
+→ (compliant | drifted | unknown | unmanaged) → if drifted AND enforcing: merge + `PUT` +
+re-`GET` verify → audit (`policy.enforce`) → stored compliance report → served to the SPA.
+
 ## Two-Way Audio (Talk-Back) Flow (browser mic → mymatasan → camera)
 
 This flow lets an operator speak through a camera's own speaker from the live-view tile. Direction is the reverse of live view — audio flows browser → server → camera. Two transports are resolved server-side, in order: the standard ONVIF RTSP audio backchannel, then the TP-Link Tapo/VIGI proprietary port-8800 protocol for consumer cameras with no RTSP backchannel.

@@ -18,10 +18,10 @@ lands the work.
 | W1-2 | Shared audit package + mymatasan audit log | F-02, F-22 | `feat/shared-audit` | ✅ shipped (benched, no UI) |
 | W1-3 | Recording continuity monitor + coverage report | F-03 | `feat/mymatasan-continuity` | ◐ coverage benched; gap alert not yet |
 | W1-4 | Evidence export with integrity manifest | F-04 | `feat/mymatasan-evidence-export` | ✅ shipped (benched) |
-| W1-5 | Tamper / video-loss detection | F-05 | `feat/mymatasan-tamper` | ● built, not benched |
+| W1-5 | Tamper / video-loss detection | F-05 | `feat/mymatasan-tamper` | ◑ half-benched — **found a real defect; fixed in PR #176** |
 | W1-6 | Nightly `-race` CI job | F-21 | `ci/race-nightly` | ✅ shipped |
 | **Phase 2 — Operate at fleet scale** |
-| W2-1 | Fleet configuration policy + drift detection | F-06 | — | ☐ not started |
+| W2-1 | Fleet configuration policy + drift detection | F-06 | `feat/myseliasan-fleet-policy` | ✅ shipped |
 | W2-2 | Node state history + SLA reporting | F-08 | — | ☐ not started |
 | W2-3 | Critical-clip archive to control plane | F-09 | — | ☐ not started |
 | W2-4 | Federated cross-node search | F-10 | — | ☐ not started |
@@ -39,7 +39,8 @@ lands the work.
 | W3-8 | Tenant isolation (decision required first) | F-24 | — | ☐ not decided |
 | W3-9 | Mobile PWA + web push | F-20b | — | ☐ not started |
 
-Status vocabulary: `☐ not started` → `◐ in progress` → `● built, not benched` → `✅ shipped`.
+Status vocabulary: `☐ not started` → `◐ in progress` → `● built, not benched` →
+`◑ half-benched` → `✅ shipped`.
 **`● built, not benched` is never the end state.** Everything here is boot-and-exercise
 before it counts as done.
 
@@ -243,6 +244,26 @@ be forged.
 
 ## W1-3 · Recording continuity monitor + coverage report — F-03
 
+### BENCH 2026-08-19 — the coverage read model ✅, the ALERT still owed
+
+Benched against real recorded segments on a real node with two RTSP cameras. The coverage
+endpoint was exercised on genuine footage, including a genuine gap: one camera reported
+21.19% coverage over the window (763 covered seconds, 14 segments) while the camera whose
+source had died reported 2.81% (101 seconds, 2 segments). The maths, the segment
+accounting and the endpoint all work on real data.
+
+It also produced, by accident, the exact condition this feature exists for: a camera whose
+source stopped while the node went on reporting `state: streaming, ffmpegRunning: true` and
+wrote no video for fourteen minutes, leaving a `.ts` open that never rolled. Reachability
+said healthy. Only coverage knew. That is F-03 stated as a demonstration rather than a
+claim.
+
+**Still owed: the ALERT.** It cannot be compressed. The monitor scores whole CLOSED hours
+and needs `FailureThreshold` (default 2) consecutive bad ones, so the shortest honest run is
+just over two hours — an overnight or long-running fleet, not a bench script. The harness to
+do it is now built and written down; what it needs is time.
+
+
 **Why.** `CameraHealthMonitor` probes TCP reachability with an RTSP DESCRIBE deep-check.
 It is well built and answers the wrong question. A wedged ffmpeg, a full disk, a
 quarantine loop, or a silently changed stream URL all leave the camera "online" while
@@ -369,6 +390,66 @@ and the gap is listed with its reason. An audit row names the exporter and the r
 
 ## W1-5 · Tamper / video-loss detection — F-05
 
+### BENCH 2026-08-19 — covered ✅, frozen ✅, recovery ✅, **moved is BROKEN**
+
+> **Fixed in PR #176** (`fix/mymatasan-tamper-moved`): MOVED is now measured against a
+> rolling reference histogram instead of the previous sample, with the alerting-sample
+> exclusion covered already had. Live re-benched — a re-aimed camera alerts, holds for more
+> than two reference windows, and clears only when the camera is put back. The analysis
+> below is what that PR answers; it is kept because it is the reasoning, not just the bug.
+
+Benched against live frames: a real mymatasan node pulling a real RTSP stream, with the
+scene swapped underneath it. Tamper timings were compressed through the settings (2s
+samples, 3-sample streak, 10s frozen) — legitimate here because tamper is SAMPLE-driven,
+unlike continuity, which scores whole closed hours and cannot be sped up.
+
+What passed, on real video:
+
+- **COVERED** fired on a bright, edge-free scene (uniform mid-grey, mean luma ~0.69 — well
+  above the 0.12 low-light gate, so it was a genuine test and not one the low-light
+  suppression would have swallowed).
+- **RECOVERY** fired: "Camera view restored" when the scene came back. This is the crux the
+  design cares about — alerting samples are excluded from the baseline, so a covered lens
+  does not quietly become the camera's new normal and self-clear.
+- **FROZEN** fired independently on a SHARP still frame, and did NOT co-fire "blocked" —
+  so the two verdicts really are separable rather than one anomaly detector with two names.
+  (On a uniform grey scene both fire, which is correct: a bag over the lens is also a
+  picture that has stopped changing.)
+
+**MOVED never fired, and cannot.** It is not the bench: it is unreachable by construction.
+
+```go
+if prev != nil && vision.HistogramDistance(prev, fp) >= cfg.MovedDistance {
+        verdicts[TamperMoved] = true          // prev = the PREVIOUS SAMPLE
+}
+...
+if verdicts[kind] { st.streak[kind]++ } else { st.streak[kind] = 0 }   // needs 3 in a row
+```
+
+The signal is the distance between CONSECUTIVE samples — which is transient by nature —
+while `settle` demands `FailureThreshold` (default **3**) consecutive samples carrying the
+verdict. A camera that is physically turned changes its view ONCE: sample N differs wildly
+from N-1, then N+1 matches N because the new scene is stable. The streak resets to 0 on the
+very next sample and can never reach 3.
+
+Covered and frozen do not have this problem because both are measured against something
+PERSISTENT — covered against the camera's rolling baseline, frozen against elapsed seconds.
+Moved is the only one comparing two adjacent samples, and it is the only one that also
+demands persistence.
+
+Confirmed live: a scene swap that inverts the entire brightness distribution (`negate`,
+which preserves every edge so it cannot be mistaken for "covered") produced no moved alert
+after 100+ seconds. And **no test anywhere drives TamperMoved to an alert** — the only
+reference to `MovedDistance` in the whole test suite is the settings-normalisation test, so
+the defect was invisible to a green suite.
+
+**The fix** is to compare each sample against a rolling REFERENCE histogram (the same shape
+covered already uses for edge energy) rather than against the immediately previous sample:
+a moved camera then differs from its remembered normal for as long as it stays moved, which
+is what the debounce was written to require. That is a change to shipped detection logic and
+deserves its own work item, tests included — not a footnote on a bench.
+
+
 **Why.** A covered lens, a camera turned to a wall, a defocused ring, or a frozen stream
 all leave the camera online and the recorder writing files. The system reports green —
 including when someone disabled the camera immediately before an incident.
@@ -443,11 +524,84 @@ Target ~6–8 weeks. This is what turns myseliasan from a dashboard over nodes i
 reason someone buys the fleet instead of the appliance. Re-plan each item in detail when
 reached; seams noted now so the shape is not re-derived.
 
-**W2-1 · Fleet configuration policy + drift** (F-06). New policy entity + assignment
-model (fleet → site → node) + a reconciliation loop reporting divergence. The push
-plumbing exists — `apis/node_proxy.go` and the control channel. What is missing is the
-policy object and the reconciler. Covers retention, detection rules, notification
-routing, health thresholds.
+**W2-1 · Fleet configuration policy + drift** (F-06). **Shipped — benched twice.**
+`FleetPolicy`/`FleetPolicyItem` (fleet → site → node scope, per-node-kind, field-level
+precedence) plus a catalog-whitelisted set of governable settings (continuity, health,
+tamper, machine health, notification retention — deliberately excluding hardware/runtime
+settings and notification routing/credentials) and a reconciler that reads each node's
+settings over the existing control channel, compares only governed fields, and — only
+when the winning policy has `Enforce` on (default off, report-only) — merges the desired
+values onto the node's current section and PUTs, then re-reads to verify. Compliance
+states are compliant/drifted/unknown/unmanaged, with unknown explicitly not counted as
+compliant. Leader-gated 15-minute sweep plus one pass 90s after boot. `GET/POST
+/api/fleet-policies`, `DELETE /api/fleet-policies/{id}`, `GET
+/api/fleet-policies/catalog`, `GET/POST /api/fleet-policies/compliance[/refresh]`; reads
+follow the permission matrix, writes are superadmin-only. New audit actions
+`policy.enforce`/`policy.save`/`policy.delete`. See
+`docs/modules/apps/myseliasan/services/fleet_policy_reconciler.go.md`. Building this
+surfaced and fixed an unrelated backup gap: `FleetRuleClause` rows were never exported by
+`.selbackup`, so a restored correlation rule had zero clauses and could never fire (see
+`docs/modules/apps/myseliasan/services/backup.go.md`).
+
+**Benched against a real appliance (2026-08-19) — the half that could hide a real bug.**
+A real mymatasan node was booted and the reconciler run against its real settings
+handlers, driven by `fleet_policy_live_test.go` (gated on `RUN_NODE_IT=1`; it is a
+permanent, re-runnable bench, not a throwaway script). What passed:
+
+- every catalog section is readable from a real node, and **all 21 declared fields exist
+  and have the declared type** — a catalog naming a path or field the appliance does not
+  serve would have produced nodes that were permanently, unfixably "drifted"
+- **all 21 fields can actually be set**; none is normalized away by the node, which would
+  have meant a policy that could never go green
+- a report-only policy saw the difference and **issued no write at all**
+- an enforcing policy corrected the value and left every ungoverned field in the same
+  section byte-identical — the merge crux, and the most expensive thing this design could
+  get wrong, since the node decodes each section with `DisallowUnknownFields`
+- retention wrote on its own path with the node's webhook/Telegram credentials **absent
+  from the request body**
+- a second pass over an already-correct node wrote nothing
+- an unreachable node reported `unknown`, never `compliant`
+
+**What the bench found:** the node rate-limits the control plane like any other caller,
+and a tunneled request carries no JWT, so every tunneled call shares one bucket per path.
+A real sweep is ≤15 requests per node per 15 minutes and is nowhere near the limit — the
+429 came from the exhaustive field test firing ~150 requests in ten seconds — but "node
+returned 429" is not something an operator should have to decode, so it now has its own
+message. Two other gaps were fixed while benching: a failed unattended write was not being
+audited (the more interesting of the two records — a policy that has been failing to
+configure an appliance for a month is otherwise invisible), and the ticker and the "check
+now" button could start concurrent sweeps against the same fleet.
+
+**Benched again against a REAL TWO-NODE FLEET (2026-08-19)** — containerised control
+plane, two adopted mymatasan nodes holding certificates issued by the real fleet CA,
+both dialing the real mTLS control channel on :39533. This is the half the HTTP bench
+deliberately skipped, and everything it asserts is about the transport and the fleet
+rather than the logic:
+
+- a settings read reaches the node **over the control channel**, and an enforcing policy's
+  **PUT body survives the tunnel** — the asserted `admin` role resolves through
+  `normalizeControlRole` to the node's superadmin, and the node's OWN audit trail
+  attributes the change to **`cp:fleet-policy`**, not to a local admin who was never there
+- **precedence across a real fleet**: a fleet policy, a site policy on the site node-b sits
+  in, and a node policy on node-a. Each contested field is won by the most specific policy,
+  and the report NAMES the winner — node-a's coverage from "Lobby exception" (node scope),
+  node-b's from "Airport regulator" (site scope), and the field neither override mentions
+  falls back to "Estate standard" (fleet scope) on both
+- **enforce is per field, not per node**: node-a's enforcing node-scoped policy corrected
+  its coverage while the two report-only fields won by the fleet policy were left alone —
+  so node-a reads `drifted` with `driftCount` exactly 2 and `appliedCount` 0 on the
+  following pass. A node is drifted if ANY governed field disagrees, which is right
+- the enforced write left every ungoverned field in the section byte-identical
+- report-only wrote **nothing** to node-b
+- **idempotent**: a second pass over the corrected field produced no new `policy.enforce`
+  audit entry
+- `docker stop node-b` → the next sweep reported it **`unknown`** with `driftCount` 0 and
+  the reason "node is not connected", while node-a continued to be judged normally
+- unauthenticated read and write both refused; a policy naming a section its node kind does
+  not have, and a policy with no settings, are both refused **in a readable sentence**
+
+Only the SCREEN is unexercised — the API beneath it is. Worth a look in Arabic when
+somebody is next in the UI; the page uses logical CSS properties throughout.
 
 **W2-2 · Node state history + SLA reporting** (F-08). `reports.go:205` states the gap in
 its own footnote. Add a node-state history table fed by the existing liveness

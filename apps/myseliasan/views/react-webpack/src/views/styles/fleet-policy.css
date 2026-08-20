@@ -1,0 +1,271 @@
+/* Fleet configuration policy.
+ *
+ * The colour work here is doing one job: keeping UNKNOWN visually distinct from COMPLIANT.
+ * Both are "not currently drifted", and every instinct in a status UI is to paint them the
+ * same calm colour — which is exactly the lie this feature exists to stop telling. Unknown
+ * is amber and reads as an open question; compliant is green and reads as an answer.
+ *
+ * Everything else reuses the tokens and shapes already established by fleet-rules.css and
+ * the settings panels, so the page sits inside the app rather than beside it.
+ */
+
+.fp-pitch .fp-pitch-lead {
+  margin: 0 0 8px;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--ui-text, #1f2937);
+}
+
+.fp-pitch .fp-pitch-noise {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ui-text-muted, #6b7280);
+}
+
+/* Summary tiles ---------------------------------------------------------- */
+
+.fp-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+  margin: 4px 0 12px;
+}
+
+.fp-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--ui-border, #e5e7eb);
+  background: var(--ui-surface-2, #f9fafb);
+}
+
+.fp-tile-n { font-size: 24px; font-weight: 650; line-height: 1.1; }
+.fp-tile-label { font-size: 12px; color: var(--ui-text-muted, #6b7280); }
+
+.fp-tile--drifted { border-color: rgba(220, 38, 38, 0.35); background: rgba(220, 38, 38, 0.07); }
+.fp-tile--drifted .fp-tile-n { color: #b91c1c; }
+.fp-tile--unknown { border-color: rgba(217, 119, 6, 0.35); background: rgba(217, 119, 6, 0.08); }
+.fp-tile--unknown .fp-tile-n { color: #b45309; }
+.fp-tile--compliant { border-color: rgba(16, 185, 129, 0.32); background: rgba(16, 185, 129, 0.07); }
+.fp-tile--compliant .fp-tile-n { color: #047857; }
+.fp-tile--unmanaged .fp-tile-n { color: var(--ui-text-muted, #6b7280); }
+
+/* Per-node compliance ---------------------------------------------------- */
+
+.fp-node-list { display: flex; flex-direction: column; gap: 10px; }
+
+.fp-node {
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--ui-border, #e5e7eb);
+  background: var(--ui-surface, #fff);
+}
+
+.fp-node--drifted { border-inline-start: 3px solid #dc2626; }
+.fp-node--unknown { border-inline-start: 3px solid #d97706; }
+.fp-node--compliant { border-inline-start: 3px solid #10b981; }
+.fp-node--unmanaged { border-inline-start: 3px solid var(--ui-border-strong, #d1d5db); }
+
+.fp-node-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.fp-node-name { margin: 0; font-size: 14px; font-weight: 600; }
+.fp-node-count { font-size: 12px; color: #b91c1c; }
+.fp-node-toggle { margin-inline-start: auto; font-size: 12px; }
+
+.fp-node-reason {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  color: #b45309;
+}
+
+.fp-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.fp-badge--drifted { color: #b91c1c; background: rgba(220, 38, 38, 0.12); }
+.fp-badge--unknown { color: #b45309; background: rgba(217, 119, 6, 0.14); }
+.fp-badge--compliant { color: #047857; background: rgba(16, 185, 129, 0.13); }
+.fp-badge--unmanaged { color: var(--ui-text-muted, #6b7280); background: var(--ui-surface-2, #f3f4f6); }
+
+.fp-node-summary { margin: 8px 0 0; display: flex; flex-wrap: wrap; gap: 6px; }
+
+.fp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: var(--ui-surface-2, #f3f4f6);
+  border: 1px solid var(--ui-border, #e5e7eb);
+}
+
+.fp-chip--more { color: var(--ui-text-muted, #6b7280); }
+
+.fp-node-detail { margin-top: 10px; display: flex; flex-direction: column; gap: 12px; }
+.fp-detail-section h4 { margin: 0 0 6px; font-size: 12.5px; color: var(--ui-text-muted, #6b7280); }
+.fp-detail-error { margin: 0 0 6px; font-size: 12.5px; color: #b45309; }
+
+/* The table scrolls inside itself; the workspace must never scroll sideways. */
+.fp-detail-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  display: block;
+  overflow-x: auto;
+}
+
+.fp-detail-table th,
+.fp-detail-table td {
+  text-align: start;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--ui-border, #e5e7eb);
+  white-space: nowrap;
+}
+
+.fp-detail-table th { color: var(--ui-text-muted, #6b7280); font-weight: 600; }
+.fp-detail-table .fp-row--drift td { background: rgba(220, 38, 38, 0.05); }
+.fp-detail-table .fp-row--missing td { background: rgba(217, 119, 6, 0.06); }
+
+/* Policy list ------------------------------------------------------------ */
+
+.fp-list { display: flex; flex-direction: column; gap: 10px; }
+
+.fp-card {
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--ui-border, #e5e7eb);
+  background: var(--ui-surface, #fff);
+}
+
+.fp-card--off { opacity: 0.62; }
+.fp-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.fp-card-name { margin: 0; font-size: 14px; font-weight: 600; }
+.fp-card-desc { margin: 6px 0 0; font-size: 12.5px; color: var(--ui-text-muted, #6b7280); }
+.fp-card-items { margin: 8px 0 0; display: flex; flex-wrap: wrap; gap: 6px; }
+
+.fp-card-foot {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.fp-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--ui-text-muted, #6b7280);
+}
+
+.fp-card-actions { margin-inline-start: auto; display: flex; gap: 6px; }
+
+.fp-scope-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  margin-inline-start: 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: var(--ui-surface-2, #f3f4f6);
+  border: 1px solid var(--ui-border, #e5e7eb);
+  color: var(--ui-text-muted, #6b7280);
+}
+
+/* Enforcing is the one state on this page that means the control plane WRITES to
+ * appliances by itself. It is coloured as a live capability, not as an error. */
+.fp-scope-tag--enforce {
+  color: #6d28d9;
+  background: rgba(109, 40, 217, 0.10);
+  border-color: rgba(109, 40, 217, 0.28);
+}
+
+.fp-scope-tag--report { color: #047857; background: rgba(16, 185, 129, 0.10); border-color: rgba(16, 185, 129, 0.26); }
+
+/* Editor ----------------------------------------------------------------- */
+
+.fp-switches { display: flex; flex-wrap: wrap; gap: 20px; margin-top: 10px; }
+.fp-enforce { display: flex; flex-direction: column; gap: 4px; max-width: 46ch; }
+
+.fp-enforce-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ui-text-muted, #6b7280);
+}
+
+.fp-enforce-note--armed { color: #6d28d9; font-weight: 500; }
+
+.fp-section { margin-top: 12px; }
+.fp-section-name { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
+.fp-field-rows { display: flex; flex-direction: column; gap: 4px; }
+
+.fp-field-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 6px 10px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+}
+
+.fp-field-row--on {
+  border-color: var(--ui-border, #e5e7eb);
+  background: var(--ui-surface-2, #f9fafb);
+}
+
+.fp-field-pick { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.fp-field-pick input { margin: 0; }
+
+.fp-value-input { display: inline-flex; align-items: center; gap: 6px; margin-inline-start: auto; }
+.fp-value-input input { width: 110px; }
+.fp-unit { font-size: 12px; color: var(--ui-text-muted, #6b7280); }
+
+.fp-checked { margin-inline-end: 8px; }
+
+.fp-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #b91c1c;
+  background: rgba(220, 38, 38, 0.09);
+  border: 1px solid rgba(220, 38, 38, 0.24);
+}
+
+.fp-error svg { flex: 0 0 auto; margin-top: 2px; }
+
+/* Dark theme: the app flips --ui-* tokens, but these status colours are stated
+ * literally above, so they need their dark counterparts stated too. */
+[data-theme='dark'] .fp-tile--drifted { background: rgba(220, 38, 38, 0.14); }
+[data-theme='dark'] .fp-tile--drifted .fp-tile-n,
+[data-theme='dark'] .fp-node-count,
+[data-theme='dark'] .fp-badge--drifted,
+[data-theme='dark'] .fp-error { color: #fca5a5; }
+[data-theme='dark'] .fp-tile--unknown { background: rgba(217, 119, 6, 0.16); }
+[data-theme='dark'] .fp-tile--unknown .fp-tile-n,
+[data-theme='dark'] .fp-node-reason,
+[data-theme='dark'] .fp-detail-error,
+[data-theme='dark'] .fp-badge--unknown { color: #fcd34d; }
+[data-theme='dark'] .fp-tile--compliant { background: rgba(16, 185, 129, 0.14); }
+[data-theme='dark'] .fp-tile--compliant .fp-tile-n,
+[data-theme='dark'] .fp-badge--compliant,
+[data-theme='dark'] .fp-scope-tag--report { color: #6ee7b7; }
+[data-theme='dark'] .fp-scope-tag--enforce,
+[data-theme='dark'] .fp-enforce-note--armed { color: #c4b5fd; }

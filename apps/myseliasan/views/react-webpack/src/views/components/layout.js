@@ -343,6 +343,11 @@ export function SideNav({ activeTab, busy, onTab, onLogout, session, nodes, mana
         ...(sessionCanGet(session, '/api/fleet-rules')
           ? [navItem('fleetrules', t('nav.fleetRules'), 'grid4', 'violet')]
           : []),
+        // Fleet policy sits beside fleet rules for the same reason: it is about the fleet
+        // AS A WHOLE. A rule spans nodes; a policy says what every node should look like.
+        ...(sessionCanGet(session, '/api/fleet-policies')
+          ? [navItem('fleetpolicy', t('nav.fleetPolicy'), 'shield', 'blue')]
+          : []),
       ],
     },
     {

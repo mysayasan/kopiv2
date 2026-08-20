@@ -27,7 +27,11 @@ action.
 - Control-plane `Action*` constants, kept per-app rather than shared (the verbs are what THIS
   app does): `ActionNodeAdopt`, `ActionNodeRelease`, `ActionNodeBlock`, `ActionNodeForget`,
   `ActionNodeCommand`, `ActionRbacSetRole`, `ActionFleetKeyRotate`, `ActionBackupExport`,
-  `ActionBackupRestore`.
+  `ActionBackupRestore`, and — new for fleet configuration policy (W2-1) —
+  `ActionPolicyEnforce` (a policy writing a setting back to a node; recorded by
+  `services/fleet_policy_reconciler.go.md` since this is the only settings change on a node
+  with no operator behind it), `ActionPolicySave` / `ActionPolicyDelete` (edits to the
+  estate's configuration standard itself, recorded by `apis/fleet_policy_api.go.md`).
 
 ## Notes
 
