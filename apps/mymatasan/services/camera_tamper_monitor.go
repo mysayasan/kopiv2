@@ -78,6 +78,16 @@ type tamperState struct {
 	// edges is the rolling window of recent edge-energy readings; its median is the
 	// camera's "normal".
 	edges []float64
+	// hists is the rolling window of recent luma histograms; its per-bucket median is
+	// what this camera's picture normally looks like, and MOVED is measured against it.
+	//
+	// It exists for the same reason edges does. The alternative — and what this monitor
+	// originally did — was to compare each sample against the one before it, which cannot
+	// work: a camera that is re-aimed differs from its predecessor for exactly ONE sample
+	// and then matches it again, because the new view is as steady as the old one. The
+	// debounce below then resets the streak on the very next sample and the verdict can
+	// never be reached. See the moved block in sample().
+	hists [][]float64
 	// streak counts consecutive abnormal samples per kind; active records which kinds
 	// are currently alerting, so an alert is raised and cleared once rather than repeated.
 	streak map[string]int
@@ -175,6 +185,12 @@ func (m *CameraTamperMonitor) sampleCamera(ctx context.Context, cameraId int64, 
 	prev, prevAt := st.last, st.lastCapturedAt
 	baseline := vision.Median(st.edges)
 	haveBaseline := len(st.edges) >= tamperBaselineSize/2
+	// Both references describe what came BEFORE this sample, and are read before it is
+	// folded in — otherwise "is this frame different from this camera's normal" is answered
+	// partly with the frame itself, which drags the answer toward "no" exactly when it
+	// should be "yes".
+	reference := vision.MedianHistogram(st.hists)
+	haveReference := len(st.hists) >= tamperBaselineSize/2
 
 	// The baseline records what this camera normally looks like, so a reading taken
 	// while it is ALREADY alerting must not be folded into it — otherwise a lens left
@@ -185,6 +201,23 @@ func (m *CameraTamperMonitor) sampleCamera(ctx context.Context, cameraId int64, 
 			st.edges = st.edges[len(st.edges)-tamperBaselineSize:]
 		}
 	}
+	// The same exclusion, for the same reason: a camera left pointing at a wall must not
+	// have the wall folded into its idea of normal, or the alert clears itself after half
+	// a window and the camera is quietly accepted where it now points.
+	//
+	// Frames taken while the lens is COVERED are excluded too, which the edge-energy
+	// baseline does not need to do for itself but this one does. A lens covered for an hour
+	// would otherwise fill the reference with featureless grey, and the moment somebody
+	// uncovered it the real scene would be a long way from that reference — so clearing one
+	// alarm would immediately raise another, blaming an operator for moving a camera they
+	// had just fixed.
+	if !st.active[TamperMoved] && !st.active[TamperCovered] {
+		st.hists = append(st.hists, append([]float64(nil), fp.Histogram...))
+		if len(st.hists) > tamperBaselineSize {
+			st.hists = st.hists[len(st.hists)-tamperBaselineSize:]
+		}
+	}
+
 	st.last, st.lastCapturedAt = fp, capturedAt
 
 	verdicts := map[string]bool{}
@@ -220,12 +253,35 @@ func (m *CameraTamperMonitor) sampleCamera(ctx context.Context, cameraId int64, 
 		}
 	}
 
-	// MOVED. A large, sustained shift in the whole brightness distribution. Position-blind
-	// on purpose: a person crossing frame barely moves the histogram, a camera turned to
-	// face a wall changes all of it. The debounce is what separates "somebody stood in
-	// front of it" from "it is pointing somewhere else now".
-	if prev != nil && vision.HistogramDistance(prev, fp) >= cfg.MovedDistance {
-		verdicts[TamperMoved] = true
+	// MOVED. A large, sustained shift in the whole brightness distribution, measured
+	// against what this camera NORMALLY looks like. Position-blind on purpose: a person
+	// crossing frame barely moves the histogram, a camera turned to face a wall changes
+	// all of it, and the debounce below separates the two.
+	//
+	// Against the ROLLING REFERENCE, not against the previous sample. Comparing adjacent
+	// samples measures a transient — a re-aimed camera differs from its predecessor once
+	// and then never again — while settle() requires the verdict to hold for
+	// FailureThreshold samples running. The two are incompatible, and the result was a
+	// verdict that could not fire at all: benching it live produced covered and frozen
+	// alerts and never a single moved one, and no test in the suite drove it to an alert,
+	// so a green suite said nothing about it.
+	//
+	// Suppressed in low light, exactly as covered is. A camera whose scene goes dark has
+	// lost its histogram legitimately, and a fleet that reports every camera as MOVED at
+	// dusk is a fleet whose tamper alerts get muted — after which none of them protect
+	// anything.
+	//
+	// Not judged at all while the lens is covered. A bag over the lens changes the whole
+	// histogram too, so without this one physical event raises two alarms that ask for
+	// different actions — "someone blinded this camera" and "this camera is pointing
+	// somewhere else" — and the second one is not something the picture can support: you
+	// cannot tell where a camera is aimed when you cannot see out of it. Same shape as the
+	// low-light rule: when the evidence is absent, say nothing rather than guess.
+	coveredNow := verdicts[TamperCovered] || st.active[TamperCovered]
+	if haveReference && !coveredNow && !vision.LowLight(fp) {
+		if vision.HistogramDistanceFrom(reference, fp) >= cfg.MovedDistance {
+			verdicts[TamperMoved] = true
+		}
 	}
 
 	transitions := m.settle(st, verdicts, cfg)

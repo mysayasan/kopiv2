@@ -163,14 +163,86 @@ func FrameDifference(a, b *Fingerprint) float64 {
 // histogram, while a camera turned to face a wall changes the distribution of brightness
 // across the whole picture. That is exactly the difference between activity and tampering.
 func HistogramDistance(a, b *Fingerprint) float64 {
-	if a == nil || b == nil || len(a.Histogram) != len(b.Histogram) {
+	if a == nil || b == nil {
+		return 0
+	}
+	return histogramL1(a.Histogram, b.Histogram)
+}
+
+// HistogramDistanceFrom compares a frame against a bare REFERENCE histogram — the shape
+// this camera's picture usually has — rather than against another single frame.
+//
+// The distinction is the whole point. Comparing two adjacent frames answers "did the
+// picture just change", which is true for exactly one sample after a camera is re-aimed
+// and false forever after, because the new view is as stable as the old one was. Comparing
+// against a remembered normal answers "is the picture different from what this camera
+// shows", which stays true for as long as the camera is pointing somewhere else — and that
+// is the question a debounce can be applied to.
+func HistogramDistanceFrom(ref []float64, f *Fingerprint) float64 {
+	if f == nil {
+		return 0
+	}
+	return histogramL1(ref, f.Histogram)
+}
+
+// histogramL1 is half the L1 distance between two normalized histograms: 0 when identical,
+// 1 when they share no mass at all.
+func histogramL1(a, b []float64) float64 {
+	if len(a) == 0 || len(a) != len(b) {
 		return 0
 	}
 	var sum float64
-	for i := range a.Histogram {
-		sum += math.Abs(a.Histogram[i] - b.Histogram[i])
+	for i := range a {
+		sum += math.Abs(a[i] - b[i])
 	}
 	return sum / 2
+}
+
+// MedianHistogram reduces a window of recent histograms to the one that describes this
+// camera's normal picture: the per-bucket median, renormalized to sum to 1.
+//
+// Median per bucket rather than mean, for the same reason the edge-energy baseline is a
+// median: a mean is dragged around by exactly the abnormal readings this is meant to
+// measure against, so a few frames of something across the lens would move the reference
+// toward the thing being detected.
+//
+// The renormalization is not cosmetic. Per-bucket medians do not generally sum to 1, and
+// histogramL1 assumes both sides do — an un-normalized reference silently scales every
+// distance and would make the configured threshold mean something different on every
+// camera.
+func MedianHistogram(window [][]float64) []float64 {
+	if len(window) == 0 {
+		return nil
+	}
+	buckets := 0
+	for _, h := range window {
+		if len(h) > buckets {
+			buckets = len(h)
+		}
+	}
+	if buckets == 0 {
+		return nil
+	}
+	out := make([]float64, buckets)
+	column := make([]float64, 0, len(window))
+	var total float64
+	for i := 0; i < buckets; i++ {
+		column = column[:0]
+		for _, h := range window {
+			if i < len(h) {
+				column = append(column, h[i])
+			}
+		}
+		out[i] = Median(column)
+		total += out[i]
+	}
+	if total <= 0 {
+		return out
+	}
+	for i := range out {
+		out[i] /= total
+	}
+	return out
 }
 
 // LowLight reports whether a frame is dark enough that focus and contrast measures stop
