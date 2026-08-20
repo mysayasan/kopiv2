@@ -15,10 +15,10 @@ lands the work.
 |---|-----------|---------|--------|--------|
 | **Phase 1 — Trust the system** |
 | W1-1 | myseliasan backup & restore (`.selbackup`) | F-01 | `feat/myseliasan-backup` | ✅ shipped (benched) |
-| W1-2 | Shared audit package + mymatasan audit log | F-02, F-22 | `feat/shared-audit` | ● built, not benched |
-| W1-3 | Recording continuity monitor + coverage report | F-03 | `feat/mymatasan-continuity` | ◑ half-benched |
-| W1-4 | Evidence export with integrity manifest | F-04 | `feat/mymatasan-evidence-export` | ● built, not benched |
-| W1-5 | Tamper / video-loss detection | F-05 | `feat/mymatasan-tamper` | ◑ half-benched — **found a real defect, see below** |
+| W1-2 | Shared audit package + mymatasan audit log | F-02, F-22 | `feat/shared-audit` | ✅ shipped (benched, no UI) |
+| W1-3 | Recording continuity monitor + coverage report | F-03 | `feat/mymatasan-continuity` | ◐ coverage benched; gap alert not yet |
+| W1-4 | Evidence export with integrity manifest | F-04 | `feat/mymatasan-evidence-export` | ✅ shipped (benched) |
+| W1-5 | Tamper / video-loss detection | F-05 | `feat/mymatasan-tamper` | ◑ half-benched — **found a real defect; fixed in PR #176** |
 | W1-6 | Nightly `-race` CI job | F-21 | `ci/race-nightly` | ✅ shipped |
 | **Phase 2 — Operate at fleet scale** |
 | W2-1 | Fleet configuration policy + drift detection | F-06 | `feat/myseliasan-fleet-policy` | ✅ shipped |
@@ -391,6 +391,12 @@ and the gap is listed with its reason. An audit row names the exporter and the r
 ## W1-5 · Tamper / video-loss detection — F-05
 
 ### BENCH 2026-08-19 — covered ✅, frozen ✅, recovery ✅, **moved is BROKEN**
+
+> **Fixed in PR #176** (`fix/mymatasan-tamper-moved`): MOVED is now measured against a
+> rolling reference histogram instead of the previous sample, with the alerting-sample
+> exclusion covered already had. Live re-benched — a re-aimed camera alerts, holds for more
+> than two reference windows, and clears only when the camera is put back. The analysis
+> below is what that PR answers; it is kept because it is the reasoning, not just the bug.
 
 Benched against live frames: a real mymatasan node pulling a real RTSP stream, with the
 scene swapped underneath it. Tamper timings were compressed through the settings (2s

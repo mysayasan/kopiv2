@@ -93,6 +93,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-19 — mymatasan 1.126.1 (95c8b7e)
+
+### Fixed
+
+- **mymatasan**: Evidence export captured the ffmpeg path once at startup instead of resolving it per export. Every other consumer in the app reads that setting live, deliberately — the recorders were changed to do so precisely because a captured copy goes stale. The in-app ffmpeg installer writes this setting at runtime, so an operator who installed ffmpeg through the product and then tried to export footage got a failure that persisted until someone restarted the app: exactly the install where the product had been asked to set ffmpeg up. The export now resolves the path on each run and reports a clear message when none is configured. Found by benching the export against real video for the first time — that bench also confirmed the concat produces a valid, playable H.264 file whose SHA-256 matches the manifest, that the manifest and VERIFY.txt report a real recording gap, and that corrupting a stored segment digest makes the export refuse to run rather than shipping altered footage.
 ## 2026-08-19 — mymatasan 1.126.0, myseliasan 1.65.1, core 1.94.0 (e9739bb)
 
 ### Added
