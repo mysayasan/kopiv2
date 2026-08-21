@@ -290,3 +290,58 @@ func TestIsDiagnosticMetadata(t *testing.T) {
 		}
 	}
 }
+
+// The archive request is a WIRE CONTRACT with the control plane: the fleet decides
+// whether to keep a copy of this footage purely from this one field on this one copy of
+// the notification. If it stops being set, nothing on this appliance changes, nothing
+// fails, and the fleet simply stops archiving — silently, for as long as it takes
+// somebody to go looking for footage that was never fetched.
+func TestArchiveFlagRidesOnTheCanonicalAlertOnly(t *testing.T) {
+	pub := &capturingPublisher{}
+	alert := &entities.AlertEvent{Id: 7, RuleId: 3, CameraId: 42, DetectionType: "intrusion", Label: "person"}
+	dest := NotificationDestination{
+		Id: "d1", Name: "Hook", Type: DestinationTypeWebhook, Enabled: true,
+		Fields: &AlertNotificationSettings{IncludeLabel: true},
+	}
+
+	NotifyVisionAlert(context.Background(), pub, alert, "Gate", VisionAlertOptions{
+		RuleName:     "Perimeter",
+		ArchiveClip:  true,
+		Destinations: []NotificationDestination{dest},
+	})
+
+	if len(pub.published) != 1 {
+		t.Fatalf("expected 1 canonical notification, got %d", len(pub.published))
+	}
+	canonical := pub.published[0]
+	if canonical.Data[notification.DataArchiveClip] != true {
+		t.Fatalf("canonical data = %v, want %s=true", canonical.Data, notification.DataArchiveClip)
+	}
+	// The alert id is what lets the control plane find the clip; without it the archive
+	// refuses the job rather than guessing from timestamps.
+	if canonical.Data[notification.DataAlertId] != int64(7) {
+		t.Fatalf("canonical alertId = %v, want 7", canonical.Data[notification.DataAlertId])
+	}
+	// And it must NOT leak to outbound destinations: a customer's webhook has no use for
+	// an internal flag about where the control plane stores things.
+	if len(pub.delivered) != 1 {
+		t.Fatalf("expected 1 delivered copy, got %d", len(pub.delivered))
+	}
+	if _, present := pub.delivered[0].n.Data[notification.DataArchiveClip]; present {
+		t.Fatalf("the archive flag leaked to an outbound destination: %v", pub.delivered[0].n.Data)
+	}
+}
+
+// An unflagged rule must not ask the fleet to keep anything. This is the default, and it
+// is what stops the control plane filling with footage nobody will ever open.
+func TestAnUnflaggedRuleAsksForNoArchive(t *testing.T) {
+	pub := &capturingPublisher{}
+	alert := &entities.AlertEvent{Id: 8, RuleId: 3, CameraId: 42, DetectionType: "intrusion"}
+	NotifyVisionAlert(context.Background(), pub, alert, "Gate", VisionAlertOptions{RuleName: "Perimeter"})
+	if len(pub.published) != 1 {
+		t.Fatalf("expected 1 canonical notification, got %d", len(pub.published))
+	}
+	if _, present := pub.published[0].Data[notification.DataArchiveClip]; present {
+		t.Fatalf("an unflagged rule set the archive flag: %v", pub.published[0].Data)
+	}
+}

@@ -1162,6 +1162,8 @@ export default {
   "vi.startDatetime": "تاريخ ووقت البدء",
   "vi.endDatetime": "تاريخ ووقت الانتهاء",
   "vi.soundAlert": "تنبيه صوتي",
+  "vi.archiveClip": "الاحتفاظ بنسخة في الأسطول",
+  "vi.archiveClipHint": "يرسل مقطع الحدث الخاص بهذه القاعدة إلى مستوى التحكم، لتبقى اللقطات محفوظة إذا سُرق هذا الجهاز أو تلف.",
   "vi.saveRule": "حفظ القاعدة",
   "vi.addRule": "إضافة قاعدة",
   "vi.enableRule": "تفعيل القاعدة",

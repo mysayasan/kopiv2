@@ -80,6 +80,27 @@ type Attachment struct {
 // confidence, ...) so consumers get the full detail without the engine needing
 // to understand any of those fields. Persistence channels typically serialize
 // Data to a JSON metadata column.
+// Well-known keys in Notification.Data that carry meaning ACROSS the fleet link.
+//
+// A node's notification is JSON-encoded onto the control channel and decoded by the
+// control plane, so any key both ends must agree on is a wire contract. Naming them here
+// — beside the type they travel in, in a package both the appliance and the control plane
+// already import — is what stops that contract being two string literals in two
+// repositories' worth of code that quietly stop matching.
+const (
+	// DataArchiveClip (bool) asks the control plane to keep a copy of this alert's event
+	// clip and snapshot, off the appliance. Set from the detection rule's per-rule flag.
+	DataArchiveClip = "archiveClip"
+	// DataAlertId (number) is the node-local alert id. The control plane needs it to find
+	// the event clip, which is a recording segment carrying the same alert id — matching
+	// on timestamps instead would pick the wrong clip on a busy camera.
+	DataAlertId = "alertId"
+	// DataRuleId (number) and DataRuleName (string) identify the rule that fired, so an
+	// archived clip can say WHY it was kept without a second call to the node.
+	DataRuleId   = "ruleId"
+	DataRuleName = "ruleName"
+)
+
 type Notification struct {
 	// ID uniquely identifies the notification. If empty, the hub assigns one.
 	ID string `json:"id"`

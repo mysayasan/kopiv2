@@ -312,6 +312,7 @@ func detectionRuleEntity(rule vision.DetectionRule) entities.DetectionRule {
 		MinFrames:       rule.MinFrames,
 		CooldownSeconds: rule.CooldownSeconds,
 		SoundEnabled:    rule.SoundEnabled,
+		ArchiveClip:     rule.ArchiveClip,
 		IsEnabled:       rule.IsEnabled,
 		LastTriggeredAt: rule.LastTriggeredAt,
 	}

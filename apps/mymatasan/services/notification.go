@@ -158,6 +158,10 @@ type VisionAlertOptions struct {
 	// RuleDestinations restricts delivery to these destination ids (per-rule
 	// routing). Empty/nil means the rule routes to ALL destinations.
 	RuleDestinations []string
+	// ArchiveClip is the rule's "keep a copy of this off the appliance" flag. It is
+	// stamped onto the canonical notification only (see NotifyVisionAlert), which is the
+	// copy that travels up the fleet control channel.
+	ArchiveClip bool
 }
 
 // NotifyVisionAlert publishes a notification for a persisted AI detection alert.
@@ -180,6 +184,16 @@ func NotifyVisionAlert(ctx context.Context, publisher INotificationPublisher, al
 	// out of outbound delivery — each destination receives its own tailored copy.
 	canonical := renderVisionAlert(alert, cameraName, ruleName, defaultAlertNotificationSettings(), nil, nil, SnapshotModeInline)
 	canonical.Internal = true
+	// The archive request rides on the CANONICAL copy only. That copy is the one the
+	// fleet control channel forwards; the per-destination copies below go to webhooks and
+	// chat rooms, where an internal flag about control-plane storage means nothing and
+	// would just leak an implementation detail into a customer's integration.
+	if opts.ArchiveClip {
+		if canonical.Data == nil {
+			canonical.Data = map[string]any{}
+		}
+		canonical.Data[notification.DataArchiveClip] = true
+	}
 	publisher.Publish(ctx, canonical)
 
 	// Deliver a separately rendered payload to each enabled destination that
@@ -259,12 +273,14 @@ func renderVisionAlert(alert *entities.AlertEvent, cameraName, ruleName string, 
 		}
 	}
 
-	// Identifiers are always included so consumers can correlate and fetch detail.
+	// Identifiers are always included so consumers can correlate and fetch detail. The
+	// two the FLEET reads are named constants (notification.DataAlertId / DataRuleId):
+	// they are a wire contract with the control plane, not a local convenience.
 	data := map[string]any{
-		"alertId":       alert.Id,
-		"ruleId":        alert.RuleId,
-		"cameraName":    camera,
-		"detectionType": alert.DetectionType,
+		notification.DataAlertId: alert.Id,
+		notification.DataRuleId:  alert.RuleId,
+		"cameraName":             camera,
+		"detectionType":          alert.DetectionType,
 	}
 	if plate != "" {
 		data["plate"] = plate
@@ -277,7 +293,7 @@ func renderVisionAlert(alert *entities.AlertEvent, cameraName, ruleName string, 
 		}
 	}
 	if fields.IncludeRuleName && ruleName != "" {
-		data["ruleName"] = ruleName
+		data[notification.DataRuleName] = ruleName
 	}
 	if fields.IncludeLabel {
 		data["label"] = alert.Label

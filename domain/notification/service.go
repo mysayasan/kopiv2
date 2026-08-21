@@ -38,6 +38,16 @@ const (
 	CategorySystem      = infranotif.CategorySystem
 )
 
+// Well-known Notification.Data keys that mean something across the fleet link. Both the
+// appliance that writes them and the control plane that reads them go through this one
+// package, so the contract cannot drift into two string literals.
+const (
+	DataArchiveClip = infranotif.DataArchiveClip
+	DataAlertId     = infranotif.DataAlertId
+	DataRuleId      = infranotif.DataRuleId
+	DataRuleName    = infranotif.DataRuleName
+)
+
 // Options configures the always-on channel set built by NewService. Outbound
 // delivery channels (webhook, telegram) are applied separately via Configure so
 // they can be reconfigured at runtime.

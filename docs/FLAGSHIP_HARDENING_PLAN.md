@@ -23,7 +23,7 @@ lands the work.
 | **Phase 2 — Operate at fleet scale** |
 | W2-1 | Fleet configuration policy + drift detection | F-06 | `feat/myseliasan-fleet-policy` | ✅ shipped |
 | W2-2 | Node state history + SLA reporting | F-08 | — | ☐ not started |
-| W2-3 | Critical-clip archive to control plane | F-09 | — | ☐ not started |
+| W2-3 | Critical-clip archive to control plane | F-09 | `feat/fleet-clip-archive` | ✅ shipped, benched 2026-08-21 (22/22 — footage verified surviving a destroyed node) |
 | W2-4 | Federated cross-node search | F-10 | — | ☐ not started |
 | W2-5 | Staged version rollout | F-07 | — | ☐ not started |
 | W2-6 | Instrument dropped control-channel events | F-11 | — | ☐ not started |
@@ -666,10 +666,44 @@ transitions, then availability per node / per site / per month into the existing
 PDF report module. `apps/mymatasan/apis/notification.go:157` is the per-camera equivalent
 to model it on.
 
-**W2-3 · Critical-clip archive** (F-09). Per-rule flag that pushes the event clip and
-snapshot to the control plane over the existing mTLS control channel, with a retry queue
-for the offline case. Narrow deliberately — not "upload everything". Makes the fleet the
-system of record for the events that matter, and survives a stolen or burned appliance.
+**W2-3 · Critical-clip archive** (F-09). **Shipped — benched against a real fleet with
+real footage (2026-08-21), 22/22.** A per-rule `ArchiveClip` flag on the node
+(`entities.DetectionRule`, default OFF) rides upstream on each alert as the notification
+Data key `archiveClip`; the control plane queues an `ArchivedClip` job, pulls the event
+clip over the existing tunnel in bounded byte ranges, hashes it as it arrives, and stores
+it encrypted at rest with its snapshot. `GET /api/clips*` reads it back, Range-capable and
+audited. See `docs/modules/apps/myseliasan/services/clip_archive.go.md`.
+
+**PULL, NOT PUSH — a deliberate departure from the sketch above.** A push needs the node
+to hold a durable queue, retry against a control plane that may be down for a week, and
+manage the disk that queue consumes — on the appliance whose disk is already the scarce
+resource and already pauses RECORDING when it fills. A pull needs none of it: the control
+plane already learns of every alert live, and again through the 72h reconnect replay, so
+it always knows what it owes. The queue lives where the database and the operator are.
+**Retry is not a mechanism, it is a row that is still pending.** The transport already
+existed too — ranged segment fetch over the tunnel, built for playback.
+
+**The hook is on `republishNodeNotification`, not on the live event path**, because that
+one function is also what the reconnect replay funnels through. Hooking the live path
+alone would have archived the easy half and silently skipped every clip raised while the
+link was down — the exact case the feature exists for. The bench proves it: the control
+plane was stopped, an alert raised on the node, and the clip archived after reconnect.
+
+**What the bench found.** An alert raised without an image made the archive store the
+node's JSON refusal as the "snapshot" — a file that would show as a broken image months
+later and cast doubt on everything else in the archive. Snapshots are now signature-checked
+(`looksLikeImage`), and the API's "unavailable" message distinguishes a missing snapshot
+from missing footage, because "the clip is not available (state: stored)" reads like a
+contradiction and sends the reader hunting a bug that is not there.
+
+**The headline assertion is the product claim itself**: the bench destroys node-a, wipes
+its data directory, and then plays the clip back from the fleet — byte-identical to the
+digest taken as it arrived, with the node and camera still named on the record because
+those are snapshotted at archive time rather than resolved on read.
+
+**Deliberately not built:** a screen, and no place in `.selbackup`. The bundle is a
+CONFIGURATION backup; rows without their gigabytes of media would restore into a list of
+incidents whose footage is missing, which is worse than listing nothing.
 
 **W2-4 · Federated cross-node search** (F-10). `services/metadata_recorder.go` on the node
 already produces the observation index. Either federate the query over the control

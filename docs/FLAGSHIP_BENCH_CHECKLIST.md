@@ -300,6 +300,56 @@ fleet/site/node precedence with the winning policy named per field, enforce-per-
 idempotence, the audit trail (including `cp:fleet-policy` on the NODE's own trail),
 unauthenticated refusals, and `docker stop` → `unknown`. Only the screen is unexercised.
 
+
+## W2-3 · Critical-clip archive  ⟨ DONE (2026-08-21), 22/22
+
+`tools/fleetbench/bench_w23_clips.py`, on top of the shared harness. This is the first
+bench in the programme that needs REAL FOOTAGE, so it also stands up a camera: the
+`bench-rtsp` image (mediamtx + ffmpeg) publishing `testsrc2` on a network alias, the node
+recording it at `segmentMinutes: 1`.
+
+**The headline check is the product claim.** The bench raises a flagged alert, waits for
+the clip to be archived, then `docker rm -f`s node-a and deletes every file in its data
+directory — and plays the clip back from the control plane, byte-identical to the digest
+taken as it arrived. Also verified: an unflagged rule's alert is NOT archived; the served
+bytes really are an MP4 (`ftyp`); the digest is published on the response; unauthenticated
+reads are refused; and the record still names the node and camera that no longer exist.
+
+**The offline case is exercised for real**: the control plane is stopped, an alert raised
+on the node while it is down, the control plane restarted — and the clip is archived on
+reconnect. That is the half that would be easy to get wrong.
+
+**The defect it found:** an alert raised without an image (the API path) made the archive
+store the node's JSON refusal as the "snapshot". Fixed with a signature check, plus an
+error message that distinguishes a missing snapshot from missing footage.
+
+### Traps this bench added
+
+- **The node image needs ffmpeg.** `debian:bookworm-slim` has none, so the recorder cuts
+  nothing and a clip bench measures an empty disk. Use `debian-ffmpeg:bench` (that image
+  plus `apt-get install ffmpeg`); the harness takes `KOPIV2_NODE_IMAGE`.
+- **The ffmpeg PATH is captured into `runtime_setting` at FIRST boot** and never re-read
+  from config — a node whose repo was checked out on Windows keeps a `D:\...\ffmpeg.exe`
+  that does not exist inside the container, and records nothing, quietly. GET
+  `/api/settings/runtime`, patch `decoder.mjpeg.ffmpegPath`, PUT the whole object back
+  (it is a nested document, not dotted keys). **Assert the value came back**, or you have
+  changed nothing.
+- **`PUT /api/recording/config` does NOT reject unknown fields.** `isEnabled` is accepted,
+  ignored, and leaves recording off — a 200 that did nothing. The field is `enabled`, and
+  the rolls are `preRollSec`/`postRollSec`. **Always read the saved config back.** (The
+  camera save next door DOES use `DisallowUnknownFields`, so the two behave oppositely.)
+- **The disk guard will stop your bench**, and it reads the HOST volume through the bind
+  mount. A 99%-full drive pauses recording fleet-wide with a perfectly clear notification
+  that is easy to miss if you only look at the segment list. Put `KOPIV2_BENCH_DIR` on a
+  roomy drive — the guard working is a feature.
+- **Never assert on a COUNT against a cumulative archive.** "exactly one clip" holds on
+  the first run against a fresh control plane and fails for the wrong reason on the
+  second. Assert on identity — the unflagged alert's own id is not in there.
+- **The node's own vision monitor also fires the rules** you create, on the live stream,
+  so more alerts appear than the bench posted. Pin every assertion to a specific alert id.
+- `POST /api/cameras/discovered` embeds `onvif.Device`: `host`/`port`/`rtspUrl`, and it
+  returns the new camera's id as a BARE NUMBER, not an object.
+
 ---
 
 # The fleet harness — build it once, reuse it
@@ -390,7 +440,8 @@ rather than an hour.
 - **PowerShell 5.1 reads a BOM-less file as ANSI.** A bench script written as UTF-8 with an
   em-dash in a comment dies with "string is missing the terminator". Keep `.ps1` files ASCII,
   and never `Set-Content -Encoding ascii` a bash script — it writes CRLF and bash then fails
-  with `$'': command not found`.
+  with `$'
+': command not found`.
 - **The disk guard is real and it will stop your bench.** `/data` on a bind mount reports the
   HOST volume, so a nearly-full drive pauses recording fleet-wide with "Recording paused —
   low disk space … resumes automatically below 80%". Put the bench data dir on a roomy drive

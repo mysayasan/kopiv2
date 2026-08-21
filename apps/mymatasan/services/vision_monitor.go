@@ -455,6 +455,7 @@ func (m *VisionMonitor) sampleCamera(ctx context.Context, cameraID int64, camera
 			RawImage:         frame.Data,
 			Destinations:     notifyDestinations,
 			RuleDestinations: ruleDestinationsByID(cameraRules, detection.RuleId),
+			ArchiveClip:      ruleArchivesClip(cameraRules, detection.RuleId),
 		})
 	}
 
@@ -549,6 +550,18 @@ func ruleNameByID(rules []vision.DetectionRule, id int64) string {
 	return ""
 }
 
+// ruleArchivesClip reports whether this rule asks the fleet to keep a copy of its event
+// clip. A rule that has since been deleted archives nothing, which is the safe direction:
+// the alternative would have the control plane chase a clip for a rule nobody can name.
+func ruleArchivesClip(rules []vision.DetectionRule, id int64) bool {
+	for _, rule := range rules {
+		if rule.Id == id {
+			return rule.ArchiveClip
+		}
+	}
+	return false
+}
+
 // ruleDestinationsByID returns the destination ids a rule routes its alerts to,
 // read from its ruleConfig.destinations. Empty/absent means "all destinations".
 func ruleDestinationsByID(rules []vision.DetectionRule, id int64) []string {
@@ -638,6 +651,7 @@ func activeRulesByCamera(rules []*entities.DetectionRule, now time.Time) map[int
 			MinFrames:       rule.MinFrames,
 			CooldownSeconds: rule.CooldownSeconds,
 			SoundEnabled:    rule.SoundEnabled,
+			ArchiveClip:     rule.ArchiveClip,
 			IsEnabled:       rule.IsEnabled,
 			LastTriggeredAt: rule.LastTriggeredAt,
 		}
