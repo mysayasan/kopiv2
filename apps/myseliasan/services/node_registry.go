@@ -123,6 +123,12 @@ type INodeRegistry interface {
 	// live control connection is authoritatively online; the mTLS poll is only a
 	// fallback. Set once at startup, after the control server is built.
 	SetControlPresence(connected func(nodeID string) bool)
+	// SetStateHistory injects the node state history recorder. Every path that changes
+	// a node's status reports it there, so availability can be reported over a past
+	// window rather than only observed in the present. Optional; nil-safe (the registry
+	// works exactly as before without it, which is what keeps its own tests repo-only).
+	// Set once at startup.
+	SetStateHistory(history INodeStateHistory)
 	// SetFleetEventSink injects the callback the registry invokes when it detects a
 	// fleet-health transition during reconciliation (a node dropping to "lost",
 	// recovering, or a certificate nearing expiry). Optional; nil-safe. Set once at
@@ -217,6 +223,9 @@ type nodeRegistry struct {
 
 	eventMu   sync.RWMutex
 	eventSink FleetEventSink
+
+	historyMu sync.RWMutex
+	history   INodeStateHistory
 
 	// certMu guards certWarned, the per-node dedup of certificate-expiry warnings:
 	// nodeID → the CertExpiresAt value last warned about, so a renewal (which pushes
@@ -479,6 +488,10 @@ func (s *nodeRegistry) Adopt(ctx context.Context, in AdoptInput) (*entities.Mana
 		s.rollbackNodePairing(ctx, baseURL, res.Token)
 		return nil, fmt.Errorf("%w: %v", ErrAdoptPersist, err)
 	}
+	// The node's measurable life starts here. Recording at adoption rather than waiting
+	// for the first heartbeat means a node adopted at 09:00 and lost at 09:20 has that
+	// outage attributed to it, instead of arriving in the record already broken.
+	s.observeState(ctx, node.NodeId, node.Status, entities.NodeStateReasonAdopt, now)
 	saved, err := s.nodes.GetByUnique(ctx, "", "node_id", node.NodeId)
 	if err != nil || saved == nil {
 		// The write succeeded but the read-back glitched; return what we just persisted rather
@@ -536,6 +549,10 @@ func (s *nodeRegistry) Enroll(ctx context.Context, nodeID, token string, csrPEM 
 	node.LastSeenAt = time.Now().Unix()
 	node.UpdatedAt = time.Now().Unix()
 	_, _ = s.nodes.UpdateById(ctx, "", *node)
+	// An enrollment proves the node is alive right now, and it happens between sweeps.
+	// Left unrecorded, a node that recovers via renewal shows its outage running until
+	// the next heartbeat.
+	s.observeState(ctx, node.NodeId, node.Status, entities.NodeStateReasonEnroll, node.LastSeenAt)
 	return certPEM, caRootPEM, nil
 }
 
@@ -686,8 +703,18 @@ func (s *nodeRegistry) Release(ctx context.Context, nodeID string) error {
 			_ = err
 		}
 	}
-	_, err = s.nodes.DeleteById(ctx, "", uint64(node.Id))
-	return err
+	if _, err := s.nodes.DeleteById(ctx, "", uint64(node.Id)); err != nil {
+		return err
+	}
+	// The appliance is out of the fleet and its row is gone; its history has to go with
+	// it. NodeId is stable per box, so keeping it means a re-adoption of the same
+	// hardware inherits an old "lost" span that flows straight through the interval it
+	// was not ours at all, and reports an outage that never happened.
+	//
+	// Only after the row is actually gone: forgetting the history of a node whose delete
+	// FAILED would erase the record of an appliance that is still in the fleet.
+	s.forgetState(ctx, nodeID)
+	return nil
 }
 
 // SetControlPresence injects the control-channel liveness oracle. See INodeRegistry.
@@ -719,6 +746,42 @@ func (s *nodeRegistry) emitFleetEvent(e FleetEvent) {
 	if sink != nil {
 		sink(e)
 	}
+}
+
+// SetStateHistory injects the state-history recorder. See INodeRegistry.
+func (s *nodeRegistry) SetStateHistory(history INodeStateHistory) {
+	s.historyMu.Lock()
+	s.history = history
+	s.historyMu.Unlock()
+}
+
+// observeState reports a node's current status to the history recorder.
+//
+// Best-effort by design: liveness reconciliation and node adoption must not fail
+// because the fleet could not write down that they happened. The recorder decides for
+// itself whether this is a transition worth a row, so every call site here reports
+// unconditionally rather than trying to detect change locally — four call sites in
+// three files each guessing at that is how one of them ends up wrong.
+func (s *nodeRegistry) observeState(ctx context.Context, nodeID, state, reason string, at int64) {
+	s.historyMu.RLock()
+	h := s.history
+	s.historyMu.RUnlock()
+	if h == nil || nodeID == "" || state == "" {
+		return
+	}
+	_ = h.Observe(ctx, nodeID, state, reason, at)
+}
+
+// forgetState drops a released node's history. See INodeStateHistory.Forget for why
+// keeping it would be worse than losing it.
+func (s *nodeRegistry) forgetState(ctx context.Context, nodeID string) {
+	s.historyMu.RLock()
+	h := s.history
+	s.historyMu.RUnlock()
+	if h == nil || nodeID == "" {
+		return
+	}
+	_ = h.Forget(ctx, nodeID)
 }
 
 // certWarnSeconds is the certificate-expiry warning lead time in seconds.
@@ -805,6 +868,14 @@ func (s *nodeRegistry) Heartbeat(ctx context.Context) {
 	grace := s.lostGraceSeconds()
 	now := time.Now().Unix()
 
+	// Phase 0 — monitoring coverage. Stamp the watermark and, if the previous stamp is
+	// older than the grace window, record the span between them as time nothing was
+	// watching. This runs BEFORE any observation lands, so the gap closes at the moment
+	// monitoring resumed instead of swallowing this sweep's first fresh observations.
+	// It is what keeps an availability report from crediting the control plane's own
+	// downtime to the fleet as uptime.
+	s.noteSweep(ctx, now, grace)
+
 	// Phase 1 — liveness. Control-channel presence is an in-memory lookup (instant);
 	// the mTLS poll is a synchronous network call with a per-probe timeout, so a fleet
 	// with several unreachable nodes would blow the whole sweep past the heartbeat
@@ -830,34 +901,81 @@ func (s *nodeRegistry) Heartbeat(ctx context.Context) {
 	// Phase 2 — reconcile + persist. Writes stay serial (the on-prem store is a
 	// single-writer sqlite) but the slow part (the probes) already happened in parallel.
 	for _, node := range nodes {
-		if node.Status == "self-dropped" {
-			continue
-		}
-		prev := node.Status
-		alive := controlAlive[node.NodeId] || probeAlive[node.NodeId]
-		switch {
-		case alive:
-			node.Status = "online"
-			node.LastSeenAt = now
-			if prev == "lost" {
-				s.emitFleetEvent(FleetEvent{Kind: FleetEventNodeRecovered, Node: node})
+		// The body is a closure so that history is reported on the way out of EVERY
+		// path, including the three that deliberately skip the database write. The
+		// recorder only writes a row when the state actually changed, so reporting
+		// unconditionally is both cheap and the only way a node that has not moved in a
+		// year ever gets its first row — and it means none of the early exits below has
+		// to remember to do it.
+		func() {
+			// observeAt is when the state being reported actually BEGAN, which is not
+			// always when this sweep noticed it — see the lost branch below.
+			observeAt := now
+			defer func() {
+				s.observeState(ctx, node.NodeId, node.Status, entities.NodeStateReasonHeartbeat, observeAt)
+			}()
+			if node.Status == "self-dropped" {
+				return
 			}
-		case now-node.LastSeenAt >= grace:
-			if prev == "lost" {
-				// Already lost and still is: nothing changed, skip the write and the
-				// re-notification (the lost event is edge-triggered, fired once).
-				continue
+			prev := node.Status
+			alive := controlAlive[node.NodeId] || probeAlive[node.NodeId]
+			switch {
+			case alive:
+				node.Status = "online"
+				node.LastSeenAt = now
+				if prev == "lost" {
+					s.emitFleetEvent(FleetEvent{Kind: FleetEventNodeRecovered, Node: node})
+				}
+			case now-node.LastSeenAt >= grace:
+				if prev == "lost" {
+					// Already lost and still is: nothing changed, skip the write and the
+					// re-notification (the lost event is edge-triggered, fired once).
+					return
+				}
+				node.Status = "lost"
+				// DATE THE OUTAGE TO WHEN CONTACT WAS LOST, not to when we gave up
+				// waiting for it. The grace window means this sweep is up to three
+				// heartbeat intervals after the node actually went quiet, and stamping
+				// the transition with `now` silently discards that entire interval from
+				// every outage — an SLA report that under-states downtime by a fixed
+				// amount per incident, in the vendor's favour, which is the one
+				// direction a published availability figure must not be wrong in.
+				//
+				// LastSeenAt is safe to date from because it is stamped by THIS process's
+				// clock (here and in AcceptControlConn/Enroll), never by the node — so
+				// there is no skew on a remote appliance to import. Clamped both ways
+				// anyway: a node that has never been seen, or one whose stamp is somehow
+				// in the future, falls back to the sweep clock rather than producing an
+				// event that sorts before its own predecessor.
+				if node.LastSeenAt > 0 && node.LastSeenAt < now {
+					observeAt = node.LastSeenAt
+				}
+				s.emitFleetEvent(FleetEvent{Kind: FleetEventNodeLost, Node: node})
+			default:
+				// Within the grace window with no contact: hold the prior status (still
+				// online) rather than flap, and skip the needless write.
+				return
 			}
-			node.Status = "lost"
-			s.emitFleetEvent(FleetEvent{Kind: FleetEventNodeLost, Node: node})
-		default:
-			// Within the grace window with no contact: hold the prior status (still
-			// online) rather than flap, and skip the needless write.
-			continue
-		}
-		node.UpdatedAt = now
-		_, _ = s.nodes.UpdateById(ctx, "", *node)
+			node.UpdatedAt = now
+			_, _ = s.nodes.UpdateById(ctx, "", *node)
+		}()
 	}
+}
+
+// noteSweep records monitoring coverage for this sweep and prunes aged history.
+// Best-effort and nil-safe, exactly like observeState: an availability report is not
+// worth failing liveness reconciliation over.
+func (s *nodeRegistry) noteSweep(ctx context.Context, now, grace int64) {
+	s.historyMu.RLock()
+	h := s.history
+	s.historyMu.RUnlock()
+	if h == nil {
+		return
+	}
+	_ = h.NoteSweep(ctx, now, grace)
+	// Self-throttled to once a day inside the history; calling it every sweep is what
+	// keeps retention from depending on anybody remembering to schedule it.
+	_ = h.Prune(ctx, now)
 }
 
 // heartbeatProbeConcurrency bounds how many mTLS liveness probes run at once so a
@@ -940,6 +1058,10 @@ func (s *nodeRegistry) AcceptControlConn(ctx context.Context, nodeID string) (*e
 	node.LastSeenAt = now
 	node.UpdatedAt = now
 	_, _ = s.nodes.UpdateById(ctx, "", *node)
+	// A node dialing in is the strongest liveness signal there is, and it can arrive at
+	// any point between sweeps. Recording it here is what makes a recovery timestamp
+	// the moment the node came back rather than the moment we next looked.
+	s.observeState(ctx, node.NodeId, node.Status, entities.NodeStateReasonControlChannel, now)
 	return node, nil
 }
 
@@ -1023,6 +1145,10 @@ func (s *nodeRegistry) MarkSelfDropped(ctx context.Context, nodeID, nonce string
 	node.Status = "self-dropped"
 	node.UpdatedAt = time.Now().Unix()
 	_, err = s.nodes.UpdateById(ctx, "", *node)
+	// Leaving the fleet is not an outage — see availabilityTally.NotInFleetSeconds —
+	// but it does have to be recorded, or the node's last known state stays "online"
+	// for as long as the row survives and it reports perfect uptime after it left.
+	s.observeState(ctx, node.NodeId, node.Status, entities.NodeStateReasonSelfDrop, node.UpdatedAt)
 	return err
 }
 

@@ -155,7 +155,7 @@ func newTestReportService() *reportService {
 	perms := &fakePerms{byRole: map[int64][]*sharedentities.AccessRolePermission{
 		2: {{RoleId: 2, Path: "/api/nodes", CanGet: true}, {RoleId: 2, Path: "/api/sites", CanGet: true}},
 	}}
-	return NewReportService(reg, sites, nil, audit, users, roles, perms, nil).(*reportService).withNotif(notif)
+	return NewReportService(reg, sites, nil, audit, users, roles, perms, nil, nil).(*reportService).withNotif(notif)
 }
 
 type fakeBriefer struct{ b Briefing }

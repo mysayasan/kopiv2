@@ -199,6 +199,12 @@ type backupFile struct {
 	FleetCA     []backupSetting                       `json:"fleetCa,omitempty"`
 	Nodes       []backupNode                          `json:"nodes,omitempty"`
 	Grants      []entities.NodeAccessGrant            `json:"grants,omitempty"`
+	// StateEvents / MonitorGaps are the fleet's uptime record. They ride with the fleet
+	// section because they are meaningless without the nodes they describe — and a
+	// control plane restored after a disk failure that reported a perfect, empty SLA
+	// history for the month it just lost would be worse than one that reported nothing.
+	StateEvents []entities.NodeStateEvent  `json:"stateEvents,omitempty"`
+	MonitorGaps []entities.FleetMonitorGap `json:"monitorGaps,omitempty"`
 	Sites       []entities.Site                       `json:"sites,omitempty"`
 	Floors      []backupFloor                         `json:"floors,omitempty"`
 	Placements  []entities.NodePlacement              `json:"placements,omitempty"`
@@ -267,6 +273,8 @@ type backupService struct {
 	ruleClauses dbsql.IGenericRepo[entities.FleetRuleClause]
 	policies    dbsql.IGenericRepo[entities.FleetPolicy]
 	policyItems dbsql.IGenericRepo[entities.FleetPolicyItem]
+	stateEvents dbsql.IGenericRepo[entities.NodeStateEvent]
+	monitorGaps dbsql.IGenericRepo[entities.FleetMonitorGap]
 	audit       dbsql.IGenericRepo[entities.AuditLog]
 
 	// cipher seals/unseals the at-rest secrets — the CA private key, the fleet PSK, and
@@ -303,6 +311,8 @@ func NewBackupService(
 		ruleClauses: dbsql.NewGenericRepo[entities.FleetRuleClause](db),
 		policies:    dbsql.NewGenericRepo[entities.FleetPolicy](db),
 		policyItems: dbsql.NewGenericRepo[entities.FleetPolicyItem](db),
+		stateEvents: dbsql.NewGenericRepo[entities.NodeStateEvent](db),
+		monitorGaps: dbsql.NewGenericRepo[entities.FleetMonitorGap](db),
 		audit:       dbsql.NewGenericRepo[entities.AuditLog](db),
 		cipher:      cipher,
 		planDir:     planDir,
@@ -454,6 +464,20 @@ func (s *backupService) collect(ctx context.Context, file *backupFile, section s
 			return err
 		}
 		file.Grants = grants
+		// The uptime record. Same lesson as the correlation rules' clauses, which were
+		// missing from this bundle until somebody looked: a section that exports its
+		// headline rows and silently drops the rows hanging off them restores into
+		// something that looks complete and answers nothing.
+		events, err := allRows(ctx, s.stateEvents)
+		if err != nil {
+			return err
+		}
+		file.StateEvents = events
+		gaps, err := allRows(ctx, s.monitorGaps)
+		if err != nil {
+			return err
+		}
+		file.MonitorGaps = gaps
 		file.Manifest.Counts[section] = len(nodes)
 
 	case BackupSectionSites:
@@ -838,6 +862,12 @@ func (s *backupService) restoreFleet(ctx context.Context, file *backupFile, mode
 		if err := wipeAll(ctx, s.grants, func(g *entities.NodeAccessGrant) int64 { return g.Id }); err != nil {
 			return err
 		}
+		if err := wipeAll(ctx, s.stateEvents, func(e *entities.NodeStateEvent) int64 { return e.Id }); err != nil {
+			return err
+		}
+		if err := wipeAll(ctx, s.monitorGaps, func(g *entities.FleetMonitorGap) int64 { return g.Id }); err != nil {
+			return err
+		}
 		if err := wipeAll(ctx, s.nodes, func(n *entities.ManagedNode) int64 { return n.Id }); err != nil {
 			return err
 		}
@@ -865,6 +895,28 @@ func (s *backupService) restoreFleet(ctx context.Context, file *backupFile, mode
 		row.Id = 0
 		row.RoleId = newRoleID
 		if _, err := s.grants.Create(ctx, "", row); err != nil {
+			return err
+		}
+	}
+	// State history keys on NodeId (a string the appliance asserts), not on the numeric
+	// row id, so unlike grants there is nothing to remap — the events reattach to their
+	// nodes by name whatever ids the restore hands out. That is also why they are safe
+	// to insert unconditionally: availability is reported over the CURRENTLY adopted
+	// nodes, so history for a node the bundle no longer contains is inert rather than
+	// wrong, and it becomes meaningful again if that appliance is re-adopted... which is
+	// exactly why releasing a node deletes its history at the source (INodeStateHistory
+	// .Forget) rather than leaving that judgement to restore.
+	for _, ev := range file.StateEvents {
+		row := ev
+		row.Id = 0
+		if _, err := s.stateEvents.Create(ctx, "", row); err != nil {
+			return err
+		}
+	}
+	for _, gap := range file.MonitorGaps {
+		row := gap
+		row.Id = 0
+		if _, err := s.monitorGaps.Create(ctx, "", row); err != nil {
 			return err
 		}
 	}

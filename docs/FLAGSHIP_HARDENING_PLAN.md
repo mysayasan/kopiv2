@@ -22,7 +22,7 @@ lands the work.
 | W1-6 | Nightly `-race` CI job | F-21 | `ci/race-nightly` | ✅ shipped |
 | **Phase 2 — Operate at fleet scale** |
 | W2-1 | Fleet configuration policy + drift detection | F-06 | `feat/myseliasan-fleet-policy` | ✅ shipped |
-| W2-2 | Node state history + SLA reporting | F-08 | — | ☐ not started |
+| W2-2 | Node state history + SLA reporting | F-08 | `feat/myseliasan-node-sla` | ✅ shipped, benched 2026-08-21 (33/33 on a real two-node fleet) |
 | W2-3 | Critical-clip archive to control plane | F-09 | — | ☐ not started |
 | W2-4 | Federated cross-node search | F-10 | — | ☐ not started |
 | W2-5 | Staged version rollout | F-07 | — | ☐ not started |
@@ -660,11 +660,41 @@ rather than the logic:
 Only the SCREEN is unexercised — the API beneath it is. Worth a look in Arabic when
 somebody is next in the UI; the page uses logical CSS properties throughout.
 
-**W2-2 · Node state history + SLA reporting** (F-08). `reports.go:205` states the gap in
-its own footnote. Add a node-state history table fed by the existing liveness
-transitions, then availability per node / per site / per month into the existing pure-Go
-PDF report module. `apps/mymatasan/apis/notification.go:157` is the per-camera equivalent
-to model it on.
+**W2-2 · Node state history + SLA reporting** (F-08). **Shipped — benched against a real
+two-node fleet (2026-08-21), 33/33.** `NodeStateEvent` (append-only transitions of
+`ManagedNode.Status`, one row per CHANGE, keyed on `NodeId`) written by the four paths that
+change a node's status, plus `FleetMonitorGap` (spans when the control plane itself was not
+watching, DETECTED from a sweep watermark rather than declared, so a crash and a `kill -9`
+are covered identically). `services/node_availability.go` turns both into availability per
+node / per site / per calendar month, served by `GET /api/nodes/availability` and rendered
+into the fleet health PDF as a new Availability section — which replaces that report's
+"historical uptime is not yet tracked" footnote. Both tables ride in the `.selbackup` fleet
+section. See `docs/modules/apps/myseliasan/services/node_availability.go.md`.
+
+**Three decisions, each because the easy alternative flatters the vendor.** Time nothing was
+watching is subtracted from the denominator and reported separately, never counted as uptime.
+A node with no measured time is "no data", not 100%. Availability is FLOORED, never rounded:
+98.999% reads 98.99, because an SLA written at 99% is either met or it is not. Rollups
+aggregate node-seconds rather than averaging per-node percentages, so a node adopted yesterday
+cannot weigh as heavily on a site's month as one that ran all of it.
+
+**What the bench found — a real defect in the shipped-to-that-point behaviour.** A node was
+stopped for 94 seconds and the report recorded a **10-second** outage. The transition was
+dated to the sweep that DECLARED the node lost, which by construction runs a full grace window
+(≥90s) after contact was actually lost, so every outage was short by that window, always in
+the vendor's favour. Fixed by dating a `lost` transition to `ManagedNode.LastSeenAt` — safe
+because that field is stamped by the control plane's own clock on every path that sets it,
+never by the node, so there is no remote skew to import. The code comment justifying the
+original choice had asserted the opposite and was simply wrong on the facts. Re-benched: 99s
+recorded against 100s of real outage.
+
+**The mutation pass also earned its keep**: 11 mutations, and the one that initially SURVIVED
+showed that the test named "floors to two decimals" did not distinguish flooring from
+rounding — the "never a perfect score" clamp was covering for it. The test now uses 98.999%,
+where the clamp cannot help.
+
+**Deliberately not built:** a screen. The PDF report is the deliverable the finding named, and
+the JSON endpoint is there for one later. Same scope call as W1-2.
 
 **W2-3 · Critical-clip archive** (F-09). Per-rule flag that pushes the event clip and
 snapshot to the control plane over the existing mTLS control channel, with a retry queue

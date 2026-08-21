@@ -68,10 +68,14 @@ type reportService struct {
 	roles    sharedservices.IAccessRoleService
 	perms    sharedservices.IAccessPermissionService
 	briefer  reportBriefer
+	// avail answers what the fleet's uptime WAS. nil omits the availability section —
+	// the report renders exactly as it did before this existed, rather than printing an
+	// empty table that reads as a fleet with nothing to report.
+	avail INodeAvailabilityService
 }
 
 // NewReportService wires the report builders over the existing fleet services.
-// briefer may be nil (no executive summaries).
+// briefer and avail may be nil (no executive summaries / no availability section).
 func NewReportService(
 	registry INodeRegistry,
 	sites ISiteService,
@@ -81,6 +85,7 @@ func NewReportService(
 	roles sharedservices.IAccessRoleService,
 	perms sharedservices.IAccessPermissionService,
 	briefer reportBriefer,
+	avail INodeAvailabilityService,
 ) IReportService {
 	return &reportService{
 		registry: registry,
@@ -91,6 +96,7 @@ func NewReportService(
 		roles:    roles,
 		perms:    perms,
 		briefer:  briefer,
+		avail:    avail,
 	}
 }
 
@@ -114,6 +120,122 @@ func (r *reportService) executiveSummary(ctx context.Context, doc *report.Docume
 	doc.H2("Findings")
 	for _, line := range briefing.Lines {
 		doc.Para("•  " + line)
+	}
+}
+
+// availabilitySection renders the SLA half of the fleet health report: what the fleet's
+// uptime WAS over the reporting period, per node, per site and per calendar month.
+//
+// It replaces the footnote this file used to carry ("historical uptime is not yet
+// tracked"). Two things are deliberate about how it reads:
+//
+//   - Measured time and unmonitored time are always shown together. An availability
+//     figure with no coverage figure beside it invites the reader to assume the window
+//     was fully observed, and the one period we can be sure was not observed is the one
+//     where the control plane itself was down — precisely when the fleet is least likely
+//     to have been healthy.
+//   - "no data" is spelled out. A node nobody watched must not print 0.00% (it would
+//     read as permanently down) and must not print 100% (it would read as flawless).
+//
+// Best-effort: an availability failure costs the section, never the report.
+func (r *reportService) availabilitySection(ctx context.Context, doc *report.Document, now time.Time, rangeDays int) {
+	if r.avail == nil {
+		return
+	}
+	to := now.Unix()
+	from := to - int64(rangeDays)*86400
+	av, err := r.avail.Fleet(ctx, from, to)
+	if err != nil || av == nil {
+		return
+	}
+
+	doc.H1("Availability")
+	doc.StatTiles([]report.Tile{
+		{Label: "Fleet availability", Value: formatAvailability(av.Availability, av.HasData), Accent: true, Danger: av.HasData && av.Availability < 99},
+		{Label: "Total downtime", Value: formatDuration(av.DownSeconds), Danger: av.DownSeconds > 0},
+		{Label: "Outages", Value: itoa(av.Outages), Danger: av.Outages > 0},
+		{Label: "Monitoring coverage", Value: formatAvailability(av.Coverage, true), Danger: av.Coverage < 95},
+	})
+	doc.Note(fmt.Sprintf(
+		"Availability is measured time only: %s of node-time was observed, and %s was not (the control plane was not monitoring for %s across %d interruption(s), plus any period before a node joined the fleet). Time a node had unpaired itself is excluded from both. Figures are floored, never rounded up.",
+		formatDuration(av.MeasuredSeconds), formatDuration(av.UnmonitoredSeconds),
+		formatDuration(av.MonitorGapSeconds), av.MonitorGaps))
+
+	if len(av.Nodes) == 0 {
+		doc.Empty("No nodes have been adopted yet.")
+		return
+	}
+
+	doc.H2("By node")
+	nodeRows := make([][]string, 0, len(av.Nodes))
+	for _, n := range av.Nodes {
+		site := n.SiteName
+		if site == "" {
+			site = "—"
+		}
+		nodeRows = append(nodeRows, []string{
+			n.Name, site,
+			formatAvailability(n.Availability, n.HasData),
+			formatDuration(n.DownSeconds),
+			itoa(n.Outages),
+			formatDuration(n.LongestOutageSeconds),
+			formatAvailability(n.Coverage, true),
+		})
+	}
+	doc.Table([]report.Column{
+		{Header: "Node", Width: 0},
+		{Header: "Site", Width: 30},
+		{Header: "Availability", Width: 24, Align: "R"},
+		{Header: "Downtime", Width: 22, Align: "R"},
+		{Header: "Outages", Width: 18, Align: "C"},
+		{Header: "Longest", Width: 20, Align: "R"},
+		{Header: "Observed", Width: 20, Align: "R"},
+	}, nodeRows)
+
+	// One group is the whole fleet restated, which is noise; the breakdown earns its
+	// space only when there is more than one thing to compare.
+	if len(av.Sites) > 1 {
+		doc.H2("By site")
+		siteRows := make([][]string, 0, len(av.Sites))
+		for _, st := range av.Sites {
+			siteRows = append(siteRows, []string{
+				st.Name, itoa(st.Nodes),
+				formatAvailability(st.Availability, st.HasData),
+				formatDuration(st.DownSeconds),
+				itoa(st.Outages),
+				formatDuration(st.LongestOutageSeconds),
+			})
+		}
+		doc.Table([]report.Column{
+			{Header: "Site", Width: 0},
+			{Header: "Nodes", Width: 20, Align: "C"},
+			{Header: "Availability", Width: 26, Align: "R"},
+			{Header: "Downtime", Width: 24, Align: "R"},
+			{Header: "Outages", Width: 20, Align: "C"},
+			{Header: "Longest", Width: 22, Align: "R"},
+		}, siteRows)
+	}
+
+	if len(av.Months) > 0 {
+		doc.H2("By month")
+		monthRows := make([][]string, 0, len(av.Months))
+		for _, m := range av.Months {
+			monthRows = append(monthRows, []string{
+				m.Label,
+				formatAvailability(m.Availability, m.HasData),
+				formatDuration(m.DownSeconds),
+				itoa(m.Outages),
+				formatDuration(m.UnmonitoredSeconds),
+			})
+		}
+		doc.Table([]report.Column{
+			{Header: "Month", Width: 0},
+			{Header: "Availability", Width: 30, Align: "R"},
+			{Header: "Downtime", Width: 28, Align: "R"},
+			{Header: "Outages", Width: 24, Align: "C"},
+			{Header: "Unmonitored", Width: 28, Align: "R"},
+		}, monthRows)
+		doc.Note("Calendar months are UTC, so the same period reported from two places gives the same answer. The first and last rows are partial when the reporting period does not begin or end on the first of a month.")
 	}
 }
 
@@ -202,7 +324,9 @@ func (r *reportService) FleetHealth(ctx context.Context, now time.Time, rangeDay
 		{Label: "Certs expiring", Value: itoa(status.CertsExpiring), Danger: status.CertsExpiring > 0},
 		{Label: "Certs expired", Value: itoa(status.CertsExpired), Danger: status.CertsExpired > 0},
 	})
-	doc.Note(fmt.Sprintf("A certificate is flagged \"expiring\" within %d day(s) of expiry. Status reflects the fleet at report time; historical uptime is not yet tracked.", status.CertWarnDays))
+	doc.Note(fmt.Sprintf("A certificate is flagged \"expiring\" within %d day(s) of expiry. The counts above reflect the fleet at report time; the Availability section below covers the reporting period.", status.CertWarnDays))
+
+	r.availabilitySection(ctx, doc, now, rangeDays)
 
 	doc.H1("Nodes")
 	if len(nodes) == 0 {
