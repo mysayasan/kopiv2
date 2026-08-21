@@ -236,3 +236,76 @@ func TestFrameDifferenceIsSafeOnMismatchedInput(t *testing.T) {
 		t.Fatalf("nil comparison must be 0, got %v", d)
 	}
 }
+
+// --- reference histogram -------------------------------------------------------
+
+// MedianHistogram is what a camera's "normal picture" is reduced to, and every MOVED
+// verdict is a distance from it. If it does not sum to 1 the distance is silently scaled,
+// and the configured threshold means something different on every camera — a
+// mis-calibration whose only symptom is alerts that are wrong everywhere by an amount
+// nobody can see.
+func TestMedianHistogramStaysNormalizedOnAMixedWindow(t *testing.T) {
+	// Three genuinely different scenes, so each bucket's median comes from a different
+	// one. The raw per-bucket medians here sum to 0.5, not 1 — which is the case a window
+	// of near-identical frames would never expose, and exactly the case a camera watching
+	// a changeable scene produces.
+	a := []float64{1, 0, 0, 0}
+	b := []float64{0, 1, 0, 0}
+	c := []float64{0, 0, 1, 0}
+	window := [][]float64{a, a, b, c}
+
+	got := MedianHistogram(window)
+	var sum float64
+	for _, v := range got {
+		sum += v
+	}
+	if math.Abs(sum-1) > 1e-9 {
+		t.Fatalf("the reference must sum to 1, got %v (sum %v)", got, sum)
+	}
+	// And the scaling must be visible in the distance, which is what the threshold is
+	// compared against: un-normalized, this reference is half the mass it should be and
+	// every camera's distance is inflated toward the alert.
+	if d := HistogramDistanceFrom(got, &Fingerprint{Histogram: a}); d > 1e-9 {
+		t.Fatalf("the reference sits on the majority scene, so distance to it is 0; got %v", d)
+	}
+}
+
+// The median has to describe the TYPICAL picture rather than the average of everything
+// seen — otherwise a few frames of something across the lens drag the reference toward the
+// very thing it exists to be measured against.
+func TestMedianHistogramTracksTheMajorityScene(t *testing.T) {
+	normal := []float64{0.8, 0.2, 0, 0}
+	odd := []float64{0, 0, 0.1, 0.9}
+	window := [][]float64{normal, normal, normal, normal, odd}
+
+	ref := MedianHistogram(window)
+	near := &Fingerprint{Histogram: normal}
+	far := &Fingerprint{Histogram: odd}
+	if d := HistogramDistanceFrom(ref, near); d > 0.05 {
+		t.Fatalf("the reference should sit on the majority scene; distance to it was %v", d)
+	}
+	if d := HistogramDistanceFrom(ref, far); d < 0.8 {
+		t.Fatalf("the odd scene should be far from the reference; got %v", d)
+	}
+}
+
+// A distance against a reference must behave exactly like a distance against a frame, or
+// one configured threshold means two different things.
+func TestHistogramDistanceFromMatchesFrameToFrame(t *testing.T) {
+	a := &Fingerprint{Histogram: []float64{0.5, 0.5, 0, 0}}
+	b := &Fingerprint{Histogram: []float64{0, 0, 0.5, 0.5}}
+	if got, want := HistogramDistanceFrom(a.Histogram, b), HistogramDistance(a, b); math.Abs(got-want) > 1e-9 {
+		t.Fatalf("HistogramDistanceFrom = %v, HistogramDistance = %v", got, want)
+	}
+	if got := HistogramDistanceFrom(a.Histogram, a); got != 0 {
+		t.Fatalf("a frame is not distant from itself: %v", got)
+	}
+	// Degenerate input must be quiet rather than panic: a camera with no history yet is a
+	// normal camera, and the monitor asks about it on its very first sweep.
+	if got := HistogramDistanceFrom(nil, b); got != 0 {
+		t.Fatalf("no reference means no distance, got %v", got)
+	}
+	if got := MedianHistogram(nil); got != nil {
+		t.Fatalf("no window means no reference, got %v", got)
+	}
+}

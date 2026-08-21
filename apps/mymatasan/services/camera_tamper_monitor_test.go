@@ -373,3 +373,231 @@ func TestTamperSettingsRejectNonsenseValues(t *testing.T) {
 		t.Errorf("FrozenSeconds = %v", got.FrozenSeconds)
 	}
 }
+
+// --- moved ---------------------------------------------------------------------
+//
+// None of these existed. TamperMoved was never driven to an alert by any test in the
+// repo — the only reference to MovedDistance was the settings-normalisation check — which
+// is why a verdict that could not fire at all sat in shipped code behind a green suite.
+
+// wallScene is what a re-aimed camera sees: a different place, still sharp, still lit.
+//
+// The numbers matter and were measured, not guessed. Against busyScene this keeps 65% of
+// the baseline edge energy — far above the 0.15 covered ratio, so it cannot pass by
+// tripping the wrong verdict — while its luma sits entirely elsewhere, giving a histogram
+// distance of 1.0 against the 0.55 threshold.
+//
+// The block size is load-bearing. An earlier version of this scene used 3px banding, which
+// is averaged out of existence by the 32x32 downsample: it arrived at the monitor as a flat
+// grey and was correctly reported as a COVERED lens, so the test proved nothing about
+// movement. Structure has to survive the grid to count as structure.
+func wallScene(seed int64) image.Image {
+	rng := rand.New(rand.NewSource(seed))
+	img := image.NewRGBA(image.Rect(0, 0, 192, 192))
+	for y := 0; y < 192; y++ {
+		for x := 0; x < 192; x++ {
+			v := 110
+			if (x/12+y/12)%2 == 0 {
+				v = 240
+			}
+			v += rng.Intn(10) - 5
+			if v < 0 {
+				v = 0
+			}
+			if v > 255 {
+				v = 255
+			}
+			img.Set(x, y, color.Gray{Y: uint8(v)})
+		}
+	}
+	return img
+}
+
+// personScene is the busy scene with a figure crossing it: a real, local change that must
+// NOT read as tampering. This is the false positive that decides whether the feature is
+// usable on a site with people in it.
+func personScene(seed int64) image.Image {
+	img := busyScene(seed).(*image.RGBA)
+	for y := 60; y < 150; y++ {
+		for x := 80; x < 110; x++ {
+			img.Set(x, y, color.Gray{Y: 20})
+		}
+	}
+	return img
+}
+
+func feed(t *testing.T, m *CameraTamperMonitor, src *scriptedFrames, frame []byte, n int, from int64) {
+	t.Helper()
+	ctx := context.Background()
+	for i := 0; i < n; i++ {
+		src.frames = [][]byte{frame}
+		src.i = 0
+		m.Sweep(ctx, testTamperCfg(), from+int64(i))
+	}
+}
+
+// THE regression test. A camera is turned to face somewhere else and LEFT there: it
+// differs from its predecessor for exactly one sample and matches it ever after, because
+// the new view is as steady as the old one was.
+//
+// The original implementation compared each sample against the previous one and then
+// required FailureThreshold consecutive samples carrying the verdict. Those two are
+// incompatible — the streak resets on the sample after the move — so the alert could never
+// be raised. It is now measured against the camera's rolling reference, which stays
+// different for as long as the camera stays moved.
+func TestTamperDetectsACameraTurnedToFaceSomewhereElse(t *testing.T) {
+	cfg := testTamperCfg()
+	normal := jpegOf(busyScene(11), t)
+	wall := jpegOf(wallScene(12), t)
+
+	m, src, notif := newTamperRig(nil, cfg)
+	feed(t, m, src, normal, tamperBaselineSize, 100)
+	if got := alertsTitled(notif.sent, "Camera view changed"); got != 0 {
+		t.Fatalf("a steady view must not alert, got %d", got)
+	}
+
+	// Moved once, then STEADY at the new view — which is the whole point. Far more
+	// samples than FailureThreshold, so a verdict that only survives the transition
+	// cannot pass by accident.
+	feed(t, m, src, wall, 10, 300)
+	if got := alertsTitled(notif.sent, "Camera view changed"); got != 1 {
+		t.Fatalf("a camera left pointing somewhere else must raise exactly one moved alert, got %d (all sent: %d)", got, len(notif.sent))
+	}
+}
+
+// The other half of the same defect: a moved camera must not fold its new view into its
+// own idea of normal and quietly accept it. Without excluding alerting samples from the
+// reference, the alert clears itself after half a window and the camera is left pointing
+// at a wall with nothing outstanding.
+func TestTamperDoesNotAcceptAMovedCameraAsTheNewNormal(t *testing.T) {
+	cfg := testTamperCfg()
+	normal := jpegOf(busyScene(21), t)
+	wall := jpegOf(wallScene(22), t)
+
+	m, src, notif := newTamperRig(nil, cfg)
+	feed(t, m, src, normal, tamperBaselineSize, 100)
+	feed(t, m, src, wall, 4, 300)
+	if got := alertsTitled(notif.sent, "Camera view changed"); got != 1 {
+		t.Fatalf("want the moved alert raised, got %d", got)
+	}
+	// Long enough to refill the reference twice over if alerting samples were being kept.
+	feed(t, m, src, wall, tamperBaselineSize*2, 400)
+	if got := alertsTitled(notif.sent, "Camera view restored"); got != 0 {
+		t.Fatalf("a camera still pointing at the wall must not be reported as restored; got %d recoveries", got)
+	}
+}
+
+// And it must clear when somebody puts the camera back, or the alert is unclearable and
+// the operator learns to ignore it.
+func TestTamperClearsWhenAMovedCameraIsPutBack(t *testing.T) {
+	cfg := testTamperCfg()
+	normal := jpegOf(busyScene(31), t)
+	wall := jpegOf(wallScene(32), t)
+
+	m, src, notif := newTamperRig(nil, cfg)
+	feed(t, m, src, normal, tamperBaselineSize, 100)
+	feed(t, m, src, wall, 4, 300)
+	if got := alertsTitled(notif.sent, "Camera view changed"); got != 1 {
+		t.Fatalf("want the moved alert raised first, got %d", got)
+	}
+	feed(t, m, src, normal, 4, 500)
+	if got := alertsTitled(notif.sent, "Camera view restored"); got != 1 {
+		t.Fatalf("putting the camera back must clear the alert exactly once, got %d", got)
+	}
+}
+
+// The false positive that would make this unusable on any site with people on it. A figure
+// crossing frame is a real change to the picture and must stay well under the threshold —
+// which is why the comparison is a coarse 16-bucket histogram over a 32x32 grid rather
+// than anything that could notice a person.
+func TestTamperIgnoresSomebodyWalkingThroughFrame(t *testing.T) {
+	cfg := testTamperCfg()
+	normal := jpegOf(busyScene(41), t)
+	person := jpegOf(personScene(41), t)
+
+	m, src, notif := newTamperRig(nil, cfg)
+	feed(t, m, src, normal, tamperBaselineSize, 100)
+	// Someone walks through and stays a while — longer than the debounce, so only the
+	// SIZE of the change can be what keeps this quiet.
+	feed(t, m, src, person, 6, 300)
+	if got := alertsTitled(notif.sent, "Camera view changed"); got != 0 {
+		t.Fatalf("a person crossing frame is not a moved camera; got %d alerts", got)
+	}
+}
+
+// Dusk. A camera whose scene goes dark has lost its histogram legitimately, and a fleet
+// that reports every camera as moved at nightfall is a fleet whose tamper alerts are muted
+// by morning. Same guard, same reason, as the covered rule.
+func TestTamperStaysQuietWhenTheSceneGoesDark(t *testing.T) {
+	cfg := testTamperCfg()
+	normal := jpegOf(busyScene(51), t)
+	dark := jpegOf(darkScene(), t)
+
+	m, src, notif := newTamperRig(nil, cfg)
+	feed(t, m, src, normal, tamperBaselineSize, 100)
+	feed(t, m, src, dark, 20, 300)
+	if got := alertsTitled(notif.sent, "Camera view changed"); got != 0 {
+		t.Fatalf("nightfall is not a moved camera; got %d alerts", got)
+	}
+}
+
+// A covered lens changes the whole histogram too. Reporting both verdicts would raise two
+// alarms for one physical event, and the second one is not something the picture can
+// support: you cannot tell where a camera is aimed when you cannot see out of it.
+func TestTamperReportsACoveredLensAsCoveredOnly(t *testing.T) {
+	cfg := testTamperCfg()
+	normal := jpegOf(busyScene(61), t)
+	covered := jpegOf(coveredScene(), t)
+
+	m, src, notif := newTamperRig(nil, cfg)
+	feed(t, m, src, normal, tamperBaselineSize, 100)
+	feed(t, m, src, covered, 6, 300)
+	if got := alertsTitled(notif.sent, "Camera view blocked"); got != 1 {
+		t.Fatalf("want exactly one covered alert, got %d", got)
+	}
+	if got := alertsTitled(notif.sent, "Camera view changed"); got != 0 {
+		t.Fatalf("a covered lens must not also be reported as moved; got %d", got)
+	}
+}
+
+// Nothing may be judged before the camera has a normal to be judged against. A verdict on
+// the first frame would mean every camera alerts the moment it is added.
+func TestTamperWithNoReferenceYetSaysNothingAboutMovement(t *testing.T) {
+	cfg := testTamperCfg()
+	normal := jpegOf(busyScene(71), t)
+	wall := jpegOf(wallScene(72), t)
+
+	m, src, notif := newTamperRig(nil, cfg)
+	feed(t, m, src, normal, 2, 100)
+	feed(t, m, src, wall, 6, 200)
+	if got := alertsTitled(notif.sent, "Camera view changed"); got != 0 {
+		t.Fatalf("with almost no history there is no normal to differ from; got %d alerts", got)
+	}
+}
+
+// Uncovering a lens must not immediately be reported as moving the camera.
+//
+// A lens covered for any length of time fills the window with featureless grey. If those
+// frames were folded into the reference, the real scene would be a long way from it the
+// moment somebody uncovered the lens — so clearing one alarm would instantly raise
+// another, blaming the operator for moving a camera they had just fixed. This is the case
+// the edge-energy baseline never had to think about and this one does.
+func TestTamperDoesNotCallAnUncoveredLensAMovedCamera(t *testing.T) {
+	cfg := testTamperCfg()
+	normal := jpegOf(busyScene(81), t)
+	covered := jpegOf(coveredScene(), t)
+
+	m, src, notif := newTamperRig(nil, cfg)
+	feed(t, m, src, normal, tamperBaselineSize, 100)
+	// Covered for well over a full window, so a reference that accepted these frames
+	// would be entirely grey by the end of it.
+	feed(t, m, src, covered, tamperBaselineSize*2, 300)
+	if got := alertsTitled(notif.sent, "Camera view blocked"); got != 1 {
+		t.Fatalf("want the covered alert, got %d", got)
+	}
+	// The lens is cleaned. The camera has not moved.
+	feed(t, m, src, normal, 6, 900)
+	if got := alertsTitled(notif.sent, "Camera view changed"); got != 0 {
+		t.Fatalf("uncovering a lens is not moving the camera; got %d moved alerts", got)
+	}
+}

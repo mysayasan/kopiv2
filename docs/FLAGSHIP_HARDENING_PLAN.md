@@ -18,7 +18,7 @@ lands the work.
 | W1-2 | Shared audit package + mymatasan audit log | F-02, F-22 | `feat/shared-audit` | ✅ shipped (benched, no UI) |
 | W1-3 | Recording continuity monitor + coverage report | F-03 | `feat/mymatasan-continuity` | ◐ coverage benched; gap alert not yet |
 | W1-4 | Evidence export with integrity manifest | F-04 | `feat/mymatasan-evidence-export` | ✅ shipped (benched) |
-| W1-5 | Tamper / video-loss detection | F-05 | `feat/mymatasan-tamper` | ◑ half-benched — **found a real defect; fixed in PR #176** |
+| W1-5 | Tamper / video-loss detection | F-05 | `feat/mymatasan-tamper` + `fix/mymatasan-tamper-moved` | ✅ shipped (benched; the moved verdict was found broken by that bench and fixed in #176) |
 | W1-6 | Nightly `-race` CI job | F-21 | `ci/race-nightly` | ✅ shipped |
 | **Phase 2 — Operate at fleet scale** |
 | W2-1 | Fleet configuration policy + drift detection | F-06 | `feat/myseliasan-fleet-policy` | ✅ shipped |
@@ -390,13 +390,7 @@ and the gap is listed with its reason. An audit row names the exporter and the r
 
 ## W1-5 · Tamper / video-loss detection — F-05
 
-### BENCH 2026-08-19 — covered ✅, frozen ✅, recovery ✅, **moved is BROKEN**
-
-> **Fixed in PR #176** (`fix/mymatasan-tamper-moved`): MOVED is now measured against a
-> rolling reference histogram instead of the previous sample, with the alerting-sample
-> exclusion covered already had. Live re-benched — a re-aimed camera alerts, holds for more
-> than two reference windows, and clears only when the camera is put back. The analysis
-> below is what that PR answers; it is kept because it is the reasoning, not just the bug.
+### BENCH 2026-08-19 — covered ✅, frozen ✅, recovery ✅, **moved was BROKEN**
 
 Benched against live frames: a real mymatasan node pulling a real RTSP stream, with the
 scene swapped underneath it. Tamper timings were compressed through the settings (2s
@@ -443,12 +437,38 @@ after 100+ seconds. And **no test anywhere drives TamperMoved to an alert** — 
 reference to `MovedDistance` in the whole test suite is the settings-normalisation test, so
 the defect was invisible to a green suite.
 
-**The fix** is to compare each sample against a rolling REFERENCE histogram (the same shape
-covered already uses for edge energy) rather than against the immediately previous sample:
-a moved camera then differs from its remembered normal for as long as it stays moved, which
-is what the debounce was written to require. That is a change to shipped detection logic and
-deserves its own work item, tests included — not a footnote on a bench.
+### FIXED 2026-08-20 — all three verdicts now fire (#176)
 
+**The fix** (`fix/mymatasan-tamper-moved`) measures MOVED against a rolling REFERENCE
+histogram — the per-bucket median of the last 30 samples, renormalized — so a re-aimed
+camera stays different from its remembered normal for as long as it stays moved. Alerting
+samples are excluded from that reference, exactly as they already were for covered, so a
+camera left facing a wall cannot adopt the wall as its normal and self-clear. Two guards
+came with it, both mirroring rules covered already had: suppressed in low light, and
+suppressed while the lens is covered (one physical event must not raise two alarms, and you
+cannot tell where a camera points when you cannot see out of it).
+
+**Live proof after the fix** — real node, real camera, scene swapped underneath:
+
+```
+08:13:03  critical  Camera view changed      <- the re-aimed camera; impossible before
+08:15:30  info      Camera view restored     <- and only when it was actually put back
+```
+
+It stayed outstanding for 2m27s while the camera kept pointing elsewhere — more than two
+full reference windows — which is the exclusion working on live video rather than in a fake.
+The bench scene was measured before it was trusted: 7.7x the baseline edge energy (so it
+could not pass by tripping COVERED) at histogram distance 0.93 against the 0.55 threshold.
+
+**Eleven new tests, none of which existed. Seven mutations were tried and all seven failed
+loudly**, including restoring the original consecutive-sample logic, which fails all three
+moved tests with "got 0" — so the suite would now catch the shipped defect.
+
+One case came from reasoning rather than a failing test, and is the reason to read the fix
+rather than just trust it: frames taken while the lens is COVERED are kept out of the
+reference too. A lens covered for an hour would otherwise fill the window with featureless
+grey, and uncovering it would look like movement — clearing one alarm would instantly raise
+another, blaming an operator for moving a camera they had just fixed.
 
 **Why.** A covered lens, a camera turned to a wall, a defocused ring, or a frozen stream
 all leave the camera online and the recorder writing files. The system reports green —
