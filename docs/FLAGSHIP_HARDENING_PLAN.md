@@ -16,7 +16,7 @@ lands the work.
 | **Phase 1 — Trust the system** |
 | W1-1 | myseliasan backup & restore (`.selbackup`) | F-01 | `feat/myseliasan-backup` | ✅ shipped (benched) |
 | W1-2 | Shared audit package + mymatasan audit log | F-02, F-22 | `feat/shared-audit` | ✅ shipped (benched, no UI) |
-| W1-3 | Recording continuity monitor + coverage report | F-03 | `feat/mymatasan-continuity` | ◐ coverage benched; gap alert not yet |
+| W1-3 | Recording continuity monitor + coverage report | F-03 | `feat/mymatasan-continuity` | ✅ shipped, benched 2026-08-21 (15/15 on shipped defaults) |
 | W1-4 | Evidence export with integrity manifest | F-04 | `feat/mymatasan-evidence-export` | ✅ shipped (benched) |
 | W1-5 | Tamper / video-loss detection | F-05 | `feat/mymatasan-tamper` + `fix/mymatasan-tamper-moved` | ✅ shipped (benched; the moved verdict was found broken by that bench and fixed in #176) |
 | W1-6 | Nightly `-race` CI job | F-21 | `ci/race-nightly` | ✅ shipped |
@@ -36,7 +36,7 @@ lands the work.
 | W3-5 | PTZ presets + ONVIF events & relay I/O | F-13, F-14 | — | ☐ not started |
 | W3-6 | Privacy masking + export redaction | F-19 | — | ☐ not started |
 | W3-7 | N+1 node failover | F-23 | — | ☐ not started |
-| W3-8 | Tenant isolation (decision required first) | F-24 | — | ☐ not decided |
+| W3-8 | Tenant isolation | F-24 | — | ✅ CLOSED 2026-08-21 — single-org per install, will not build |
 | W3-9 | Mobile PWA + web push | F-20b | — | ☐ not started |
 
 Status vocabulary: `☐ not started` → `◐ in progress` → `● built, not benched` →
@@ -262,6 +262,43 @@ claim.
 and needs `FailureThreshold` (default 2) consecutive bad ones, so the shortest honest run is
 just over two hours — an overnight or long-running fleet, not a bench script. The harness to
 do it is now built and written down; what it needs is time.
+
+### BENCH 2026-08-21 — the ALERT ✅ (15/15, on shipped defaults)
+
+The "cannot be compressed" reading above was wrong, and the reason is worth keeping: the
+monitor scores **the previous closed hour on every sweep**, so both hours it is about to
+score are already in the past and can be seeded *now*. That turns "wait two hours" into
+"wait for one hour boundary", without touching `MinCoveragePercent` (95) or
+`FailureThreshold` (2) — compressing those would have benched different software from the
+one that ships.
+
+Docker, one container, four cameras: subject at ~33% coverage for two consecutive hours, a
+healthy control at 100%, a recording-disabled control, and an offline camera at 33%.
+
+- **The alert fired 31 seconds after the hour boundary**, on the sweep that scored the
+  second bad hour — and was **silent after the first**. That silence is the half that is
+  easy to get wrong and impossible to distinguish afterwards: a monitor that alerted on the
+  first bad hour would look identical at the end of the run.
+- Correct camera, `critical`, window `1787277600`, `coveragePercent: 33.33`, fired **once**
+  rather than once per sweep, no spurious recovery notice.
+- The healthy control never alerted (this is what decides whether the feature survives a
+  real site rather than being muted), and the recording-disabled control was never scored —
+  which is also what keeps detect-only AI streams out.
+- Both gauges exported: `mymatasan_recording_gap_cameras`,
+  `mymatasan_recording_coverage_percent{camera="3"} 33.33`.
+- **Offline attribution holds.** On identical 33% coverage, the offline camera reported
+  `reason: "camera-offline"` with a body ending "— the camera was offline", while the
+  reachable one reported `unexplained`. One incident reads as one story.
+
+**Not benched, mutation-tested instead:** the disk-guard pause suppression needs the guard
+to actually trip. Deleting the `transition == "gap" && paused` check makes
+`TestContinuityDoesNotAlertWhileTheDiskGuardHasPausedRecording` fail with a useful message,
+which is the evidence available without filling a disk.
+
+**Known limitation, accepted:** `alerting`/`lastScoredHour` live in memory, so a restart
+re-raises an alert for a gap that is still ongoing. On shipped defaults that costs one
+duplicate notification an hour after a restart. Restating an ongoing gap after a restart is
+defensible; persisting the state is not worth a table.
 
 
 **Why.** `CameraHealthMonitor` probes TCP reachability with an RTSP DESCRIBE deep-check.
@@ -693,10 +730,17 @@ export, redaction workflow. **Promote into Phase 2 if any EU deployment comes in
 which nodes are alive and which cameras they own. `apis/deployment.go` is right that
 mymatasan cannot cluster; failover is a myseliasan feature.
 
-**W3-8 · Tenant isolation** (F-24). **Decide before building anything else in Phase 3:**
-is integrator/MSP resale a target? If yes, retrofitting a tenant dimension after the
-schema is in the field is expensive, and it should move much earlier. If no, close this
-item.
+**W3-8 · Tenant isolation** (F-24). **CLOSED 2026-08-21 — decided: NO.** Each install
+serves a single organisation; integrator/MSP resale off one shared control plane is not a
+target. This was the one Phase 3 item that had to be decided before the others, because
+retrofitting a tenant dimension onto a schema already in the field is expensive — deciding
+against it is what makes the rest of Phase 3 safe to build in any order.
+
+The standing consequence, which outlives this plan: **do not add a tenant/org column to
+any new table.** An unused dimension is not free — it has to be filtered on in every query
+forever, and the one place it gets forgotten is a cross-tenant leak in a product that never
+had tenants. An integrator running several customers runs several installs; myseliasan
+already federates across sites, which covers the multi-site case that motivated F-24.
 
 **W3-9 · Mobile PWA + web push** (F-20b). The higher-effort half of the notification gap.
 
