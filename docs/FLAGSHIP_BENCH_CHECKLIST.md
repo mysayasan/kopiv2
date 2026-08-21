@@ -88,9 +88,13 @@ the repo layer, because an in-memory fake round-trips the struct and never marsh
 
 ---
 
-## W1-3 · Recording continuity
+## W1-3 · Recording continuity  ⟵ DONE (coverage 2026-08-19, alert 2026-08-21)
 
 Cheapest to run, so do it before the export bench — it also produces the gap that W1-4 needs.
+
+The live-fire version below is the highest-fidelity form and is what a pre-release run
+should do. For a fast re-check, the seed-the-past recipe in the W1-3 section further down
+exercises the same scoring path in minutes.
 
 1. Camera recording normally for at least two full clock hours.
 2. Kill the camera's **ffmpeg child** without stopping the recorder (so the app still thinks
@@ -168,12 +172,12 @@ python prepends a BOM to the first line — it ended up inside a stored `file_pa
 produced a puzzling "no such file". The ffmpeg path lives in the `runtime_setting` table
 seeded from config at first boot, so editing config.json afterwards changes nothing.
 
-### W1-3 — still owed
+### W1-3 — coverage benched here, alert benched 2026-08-21
 
 Coverage is benched: `GET /api/recording/coverage` reported exactly 75% for the seeded hour
-with its 15-minute hole. **The gap ALERT is not benched** — that needs a camera recording
-across two closed hours with its ffmpeg child killed mid-way, and the overnight
-false-positive run. Same for W1-5, which needs live siphon frames.
+with its 15-minute hole. The gap ALERT was still owed at this point; it was benched on
+2026-08-21 by seeding the two past hours the monitor was about to score — see the W1-3
+section further down for the run and its traps. W1-5 still needs live siphon frames.
 
 ---
 
@@ -405,13 +409,58 @@ rather than pulling in a media server. Use `testsrc2`/`mandelbrot`, never a flat
 frame — flat synthetic frames hash near-identically, so the perceptual-hash dedup collapses
 them in capture and they are useless as tamper test data.
 
-### W1-3 · recording continuity — the coverage model is proven, the alert is not
+### W1-3 · recording continuity — DONE, coverage 2026-08-19 + alert 2026-08-21 (15/15)
 
 Done: the coverage endpoint measured a real gap on real segments (21.19% on a recording
-camera vs 2.81% on one whose source had died). Still owed: the ALERT, which needs
-`FailureThreshold` consecutive CLOSED HOURS and therefore just over two hours of wall clock.
-Nothing about it can be compressed — `intervalMs` changes how often the sweep runs, not the
-hour granularity it scores. Leave a fleet running and come back.
+camera vs 2.81% on one whose source had died). The alert is now benched too.
+
+**"Nothing about it can be compressed" was wrong** — worth reading before assuming any
+other monitor needs wall clock. The claim was that `FailureThreshold` consecutive closed
+hours means two hours of waiting. But the monitor scores **the previous closed hour on
+every sweep**, so the two hours it is about to score are already in the PAST and can be
+seeded now. Seed both, wait for the next hour boundary, done — no change to
+`MinCoveragePercent` (95) or `FailureThreshold` (2), which is the point: compressing the
+thresholds would bench software that does not ship. Only `intervalMs` was lowered (to 60s),
+which changes sweep frequency and nothing about the scoring.
+
+The general form: **a monitor that scores a closed past window can be benched by seeding
+the past, not by waiting for the future.** Ask this of every remaining timed bench.
+
+Recipe (`scratchpad/p1bench/`: `seed_w13.py`, `verify_w13.py`, `w13.json`) — one container,
+four cameras: subject ~33% for two consecutive hours, healthy control at 100%, a
+recording-disabled control, and an offline camera at 33% for the attribution path.
+
+Result: alert fired 31s after the boundary on the sweep scoring the SECOND bad hour, silent
+after the first (the half that is easy to get wrong and indistinguishable afterwards);
+correct camera, critical, `coveragePercent: 33.33`, fired once not per sweep; healthy
+control never alerted; disabled control never scored; both Prometheus gauges exported; and
+the offline camera reported `reason: "camera-offline"` while the reachable one on identical
+coverage reported `unexplained`.
+
+Pause suppression is NOT benched (it needs the disk guard to trip) — mutation-tested
+instead: delete the `transition == "gap" && paused` check and
+`TestContinuityDoesNotAlertWhileTheDiskGuardHasPausedRecording` fails usefully.
+
+#### Harness traps this run cost time to
+
+- **Never write to the app's sqlite while the app is running.** The checklist already said
+  never to READ it live; the write side is worse. A seed written to the bind-mounted DB
+  under a running app was silently discarded on restart. `docker stop` → write → `docker
+  start`. A rolled-back seed also looks exactly like a monitor that ignored the camera:
+  the first cam6 attempt hit `NOT NULL constraint failed: camera.host` before `commit()`,
+  so the config and segment inserts vanished with it and the camera simply was not scored.
+- **Do not grep the log for the alert.** A health-monitor line containing the camera name
+  matched first and read as success. Assert against `/api/notifications` and `/metrics` —
+  the interfaces an operator actually has.
+- **Check the notification's `metadata` field, not `data`.** The structured context is
+  persisted as a JSON *string* in `metadata`; `Notification.Data` is marshalled on the way
+  into the store. Reading the wrong field made three passing checks look like product
+  failures on the first run.
+- **Give a check a full sweep interval before believing a negative.** The cam6 attribution
+  check ran between the sweep that scored it and the one that published, and reported a
+  missing alert that arrived seconds later.
+- **`docker --format "{{.Status}}"` needs PowerShell here** — bash mangles the Go template
+  and prints the literal `.Status`.
 
 ### W1-5 · camera tamper — covered/frozen/recovery proven, MOVED is broken
 
