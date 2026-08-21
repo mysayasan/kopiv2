@@ -95,6 +95,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-21 — mymatasan 1.126.2, core 1.94.1 (69c4680)
+
+### Fixed
+
+- **core,mymatasan**: Fixed the camera tamper monitor's MOVED verdict (W1-5, shipped in PR #173), which could never actually fire: it compared each sample's luma histogram against the previous sample instead of against a rolling per-camera reference, so a physically re-aimed camera differed from its predecessor for exactly one sample and then matched it forever, resetting the required consecutive-sample streak before an alert could be raised. infra/vision/tamper.go gains MedianHistogram (per-bucket median of a window of histograms, renormalized to sum to 1) and HistogramDistanceFrom (distance against that reference rather than against another frame); the monitor now keeps a rolling window of recent histograms (tamperState.hists, excluding samples taken while MOVED is already active) the same way it already keeps a rolling edge-energy baseline, and measures MOVED distance against that reference computed before the current sample is folded in. MOVED is suppressed in low light and while COVERED is active or verdict-true, since a covered lens changes the whole histogram too and the picture cannot support judging where the camera is aimed while it cannot see out. 7 new tests cover the regression, the new-normal and recovery cases, the person-crossing and dusk false-positive guards, and the covered-suppresses-moved interaction; 3 new pure-function tests cover MedianHistogram/HistogramDistanceFrom directly.
 ## 2026-08-20 — myseliasan 1.66.0 (06d8c86)
 
 ### Added
