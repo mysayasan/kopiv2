@@ -20,7 +20,13 @@ python tools/fleetbench/bench_w22_sla.py      # W2-2: node state history + SLA r
 ```
 
 Container data dirs and bench output go to `.artifacts/fleetbench/` (gitignored); override
-with `KOPIV2_BENCH_DIR`. Rerunning the harness wipes those dirs, so each run starts from a
+with `KOPIV2_BENCH_DIR`. **Point it at a roomy drive**: the node's disk guard reads the
+HOST volume through the bind mount, so a nearly-full disk pauses recording fleet-wide and
+any bench that needs footage measures nothing. The guard working is a feature.
+
+A bench that needs the nodes to RECORD must also run them on an image that has ffmpeg —
+`KOPIV2_NODE_IMAGE=debian-ffmpeg:bench python tools/fleetbench/fleet_harness.py`. Without
+it the recorder cuts nothing, silently. Rerunning the harness wipes those dirs, so each run starts from a
 fresh install rather than inheriting a rotated password and an already-paired node.
 
 Docker is the only prerequisite; sqlite is pure Go, so no CGO and no database container.

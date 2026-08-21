@@ -80,6 +80,15 @@ def teardown(wipe=False):
                         pass
 
 
+# NODE_IMAGE is what the mymatasan node containers run. The stock debian:bookworm-slim
+# has no ffmpeg, so a node on it records NOTHING and does so quietly — any bench that
+# needs real footage then measures an empty disk while every assertion fails for a reason
+# that has nothing to do with what it is testing. Set KOPIV2_NODE_IMAGE to an image with
+# ffmpeg (debian-ffmpeg:bench is that image plus `apt-get install ffmpeg`, committed once)
+# when the bench needs recording.
+NODE_IMAGE = os.environ.get("KOPIV2_NODE_IMAGE", "debian:bookworm-slim")
+
+
 def start_container(name, app, tls_port, host_port):
     data = os.path.join(ROOT, name)
     args = ["docker", "run", "-d", "--name", name, "--network", "benchnet",
@@ -89,7 +98,8 @@ def start_container(name, app, tls_port, host_port):
             "-v", data + ":/data",
             "-e", "%s_HOME=/home/app" % app.upper(),
             "-e", "%s_DATA=/data" % app.upper(),
-            "-w", "/data", "debian:bookworm-slim", "/bin/app/" + app]
+            "-w", "/data", NODE_IMAGE if app == "mymatasan" else "debian:bookworm-slim",
+            "/bin/app/" + app]
     sh(*args)
 
 
