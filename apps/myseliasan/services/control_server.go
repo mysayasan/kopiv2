@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -349,6 +350,20 @@ func (cs *ControlServer) dispatch(nodeID string, frame *control.Frame) {
 	switch frame.Type {
 	case control.FrameHello:
 		cs.logf("control: node %s hello (version %s)", nodeID, frame.Version)
+		// Keep what the node said it is running. This used to be logged and thrown away,
+		// which left the control plane unable to answer the first question any fleet
+		// upgrade asks — what is each appliance on right now. Best-effort and off the
+		// read loop: a database hiccup must not cost us the connection.
+		if cs.registry != nil && strings.TrimSpace(frame.Version) != "" {
+			version := frame.Version
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				if err := cs.registry.RecordVersion(ctx, nodeID, version); err != nil {
+					cs.logf("control: record version for node %s: %v", nodeID, err)
+				}
+			}()
+		}
 	case control.FrameEvent:
 		cs.logf("control: node %s event %q", nodeID, frame.Kind)
 		if cs.onEvent != nil {

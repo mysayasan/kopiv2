@@ -6,6 +6,11 @@ by the real fleet CA and both nodes dialing the real mTLS control channel. No ca
 recording — those benches add their own sources (see
 `docs/FLAGSHIP_BENCH_CHECKLIST.md`).
 
+`bench_w25_rollout.py` (W2-5, staged version rollout) needs one thing none of the other
+benches do: a node whose application directory it can actually WRITE INTO, because a
+self-update bench that cannot replace the binary measures the refusal, not the feature. Run
+the harness with `KOPIV2_NODE_HOME_RW=1` first — see "Self-update benching" below.
+
 `docs/FLAGSHIP_BENCH_CHECKLIST.md` has said "build it once, reuse it" since W1-1. This is
 that, written down: the wiring took about ten minutes the first time and every awkward part
 is a trap rather than a difficulty.
@@ -18,6 +23,8 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o .artifacts/fleetbench/bin/myma
 python tools/fleetbench/fleet_harness.py      # stand up cp + node-a + node-b, adopt both
 python tools/fleetbench/bench_w22_sla.py      # W2-2: node state history + SLA reporting
 python tools/fleetbench/bench_w24_search.py   # W2-4: federated cross-node search
+KOPIV2_NODE_HOME_RW=1 python tools/fleetbench/fleet_harness.py  # rerun with writable node homes
+python tools/fleetbench/bench_w25_rollout.py  # W2-5: staged version rollout
 node   tools/fleetbench/uicheck.js .artifacts/fleetbench objects   # drive a SCREEN
 ```
 
@@ -41,6 +48,24 @@ it the recorder cuts nothing, silently. Rerunning the harness wipes those dirs, 
 fresh install rather than inheriting a rotated password and an already-paired node.
 
 Docker is the only prerequisite; sqlite is pure Go, so no CGO and no database container.
+
+## Self-update benching (W2-5, `KOPIV2_NODE_HOME_RW`)
+
+By default the harness bind-mounts `apps/<app>` **read-only** into `/home/app` — safe, but a
+node whose home is read-only fails `canSelfUpdate`'s writable-probe (a throwaway file it tries
+to create) exactly the same way a real package/container install does. That is the correct
+default for every bench that doesn't touch self-update; it is a trap for one that does, since
+the failure looks identical to "the feature doesn't work" until you notice it's the mount, not
+the code.
+
+Set `KOPIV2_NODE_HOME_RW=1` before running `fleet_harness.py` for any bench that exercises a
+node's own updater (directly, or driven by a `myseliasan` fleet rollout). This makes
+`node_home()` copy `apps/<app>` (minus `views`/`node_modules`/`data`/`logs` — the React source
+tree is large and unused at runtime) into a private, writable directory per node under
+`KOPIV2_BENCH_DIR`, and bind-mounts *that* instead. It costs a one-time copy per node at
+startup and nothing else; every other bench is unaffected since the flag defaults off. Never
+make the repo checkout itself writable from a container — a bug in a self-update bench would
+then be a bug that can write into your working tree.
 
 ## The traps, all of which cost real time
 

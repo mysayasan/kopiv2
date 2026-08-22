@@ -3,7 +3,9 @@ package apis
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -103,12 +105,35 @@ func (a *systemApi) updateCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 // updateApply starts the background download + verify + swap + restart. Admin-gated.
+//
+// An optional {"version": "1.128.0"} body pins the release to install instead of taking
+// whatever is newest. That is how a fleet rollout drives this node: a canary ring is only
+// meaningful if the node installs the version the ring is testing, not whatever was
+// published since. An empty body keeps the operator's own "update now" behaviour.
 func (a *systemApi) updateApply(w http.ResponseWriter, r *http.Request) {
 	if a.update == nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, "updater unavailable")
 		return
 	}
-	if err := a.update.StartUpdate(r.Context()); err != nil {
+	var body struct {
+		Version string `json:"version"`
+	}
+	// A missing or empty body is the un-pinned form, not a bad request.
+	if r.Body != nil {
+		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+			controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+			return
+		}
+	}
+	var err error
+	if strings.TrimSpace(body.Version) != "" {
+		err = a.update.StartUpdateTo(r.Context(), body.Version)
+	} else {
+		err = a.update.StartUpdate(r.Context())
+	}
+	if err != nil {
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return
 	}

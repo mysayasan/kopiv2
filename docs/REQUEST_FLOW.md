@@ -306,6 +306,67 @@ coverage-annotated `FleetSearchResult` → audit (`fleet.search`, outcome `succe
 → browser coverage banner. See `docs/modules/apps/myseliasan/services/fleet_search.go.md`,
 `docs/modules/apps/mymatasan/services/sighting_search.go.md`.
 
+## Staged Version Rollout Flow (myseliasan → node)
+
+This is how a fleet is moved to a specific `mymatasan` version a RING at a time (flagship
+hardening plan W2-5, F-07), instead of every appliance at once — which is how an estate
+discovers a bad build all at the same time. Unlike the correlation flow (event-driven) and like
+the fleet configuration policy flow above, this one is timer-driven: nothing a node does
+triggers a step, only the passage of time and the operator's plan/start/cancel calls.
+
+1. `POST /api/fleet-rollouts` (superadmin-only) calls `FleetRolloutService.Plan`
+   (`apps/myseliasan/services/fleet_rollout.go`). Candidate nodes (camera-kind, optionally one
+   site) are sorted deterministically by node id and split into rings of `RingSize`.
+2. **Before** a node is placed in a ring, `canSelfUpdate` asks it — over the same control-channel
+   tunnel the node proxy uses — `GET /api/system/update` and reads `canSelfUpdate`/`managed`. A
+   node that cannot replace its own binary (a container image, a package-managed install) is
+   routed to an `unsupported` `RolloutNode` row (ring `0`, excluded from every real ring, its
+   `Detail` naming the real remedy) instead of being discovered later when a ring halts on it. An
+   unreachable node is treated as capable — it is judged for real on its own ring's turn.
+3. `POST /api/fleet-rollouts/{id}/start` moves the rollout to `running` (`CurrentRing = 1`) and
+   calls `Advance` once immediately.
+4. From then on, `leaderTicker` fires `FleetRolloutService.Advance` every 30 seconds, only on the
+   deployment's leader instance (the same multi-instance-safety guard as the fleet policy
+   reconciler above) — a second driver would ask the same appliance to replace its binary twice.
+5. Each `Advance` works the CURRENT ring's `pending` nodes: `askNode` sends
+   `POST /api/system/update/apply` with `{"version": TargetVersion}` over the control-channel
+   tunnel (`Role: "admin"`, `Actor: "fleet-rollout"`) — this is the node's own `StartUpdateTo`,
+   which refuses a downgrade and looks the release up by tag, never `/releases/latest`. A node
+   already on the target version is marked `skipped`, not `succeeded` — this rollout did not
+   move it.
+6. `updating` nodes are judged (`judgeNode`) against `ManagedNode.Version` — what the node
+   REPORTED on its own control-channel `FrameHello`, recorded by
+   `INodeRegistry.RecordVersion` (`apps/myseliasan/services/control_server.go`), never assumed
+   from the apply command's own `200`. Reporting the target version AND holding a live control
+   connection → `succeeded`. Past the node's own timeout with no match → `failed`, with a detail
+   that distinguishes "never reported" from "came back running the OLD version" (a swap that did
+   not take, not a node that died).
+7. **Any `failed` node in the ring halts the whole rollout** (`RolloutStateHalted`, a
+   human-readable `HaltReason`) rather than rolling anything back — migrations in this suite are
+   forward-only, so an automatic rollback would hand a node that already migrated its schema a
+   binary that has never seen it. The rest of the fleet stays on the version it was already
+   running; recovery is rolling FORWARD to a fixed build through this same machinery.
+8. Once every node in the ring is `succeeded`/`skipped`, the settle window starts
+   (`RingReadyAt`, persisted so a control-plane restart mid-settle does not restart or skip it).
+   **During** the settle window, a node that drops off the control channel or is found reporting
+   a version other than the target is failed LATE and halts the rollout — an upgrade that boots,
+   looks healthy, and dies a minute later is caught here, not reported a success.
+9. Past the settle window, `CurrentRing` advances (or the rollout completes on the last ring),
+   and the driver moves straight on to the new ring within the SAME `Advance` call
+   (bounded at 64 ring-boundaries per call) rather than waiting for the next tick.
+10. Every plan/start/cancel/halt/complete is audited (`fleet.rollout.*`). `GET
+    /api/fleet-rollouts`(`/{id}`) reads (any fleet role) never trigger a step — they read the
+    persisted rows the driver above already wrote.
+
+**Data path summary:** `POST /api/fleet-rollouts` → `Plan` (self-update probe, deterministic
+rings) → `POST .../start` → leader-gated 30s tick → `Advance` → per current-ring node: `POST
+/api/system/update/apply {version}` over control tunnel → node's `StartUpdateTo` (tag lookup,
+downgrade-refused) → node's `FrameHello` reports its new version → `RecordVersion` →
+`ManagedNode.Version` → `judgeNode` compares → ring settles or halts → audit
+(`fleet.rollout.*`) → served to the SPA/API caller. See
+`docs/modules/apps/myseliasan/services/fleet_rollout.go.md`,
+`docs/modules/apps/mymatasan/services/update.go.md`.
+
 ## Two-Way Audio (Talk-Back) Flow (browser mic → mymatasan → camera)
 
 This flow lets an operator speak through a camera's own speaker from the live-view tile. Direction is the reverse of live view — audio flows browser → server → camera. Two transports are resolved server-side, in order: the standard ONVIF RTSP audio backchannel, then the TP-Link Tapo/VIGI proprietary port-8800 protocol for consumer cameras with no RTSP backchannel.

@@ -759,6 +759,12 @@ func (m *module) Entities() []any {
 		// Critical-clip archive: the fleet's own copy of the footage that matters, so an
 		// appliance that is stolen or burned does not take the evidence with it.
 		appentities.ArchivedClip{},
+		// Staged version rollout: which appliances are being moved to which build, ring by
+		// ring, and what became of each. Persisted rather than held in memory so a control
+		// plane restarted mid-upgrade resumes the rollout instead of abandoning the fleet
+		// half-updated.
+		appentities.FleetRollout{},
+		appentities.RolloutNode{},
 	}
 }
 
@@ -1633,6 +1639,24 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	apis.NewFleetSearchApi(api, *deps.Auth, controlSession, fleetSearchService, auditService)
 
 	apis.NewNodeProxyApi(api, *deps.Auth, nodeSender, accessService, controlSession, auditService)
+
+	// Staged version rollout. Drives the node's own self-update primitive over the same
+	// tunnel everything else uses, and reads liveness from the control server so a ring's
+	// health gate is judged on the same signal the fleet screens show.
+	rolloutService := services.NewFleetRolloutService(deps.Db, registry, nodeSender, controlServer.IsConnected, auditService,
+		func(f string, a ...any) { deps.Logger.Warnf("myseliasan.rollout", f, a...) })
+	apis.NewFleetRolloutApi(api, *deps.Auth, controlSession, rolloutService, auditService)
+	// Leader-gated for the same reason the policy sweep is: two instances driving one
+	// rollout would ask the same appliance to replace its binary twice.
+	//
+	// Thirty seconds because a rollout is the one fleet-wide job where latency is the
+	// product — every tick is a node either being asked to update or being judged, and the
+	// settle window between rings is already the deliberate slowness.
+	leaderTicker(bgCtx, deps.Leader, 30*time.Second, func(ctx context.Context) {
+		if err := rolloutService.Advance(ctx); err != nil {
+			deps.Logger.Warnf("myseliasan.rollout", "advance: %v", err)
+		}
+	})
 
 	// Fleet configuration policy. Wired HERE, after nodeSender exists, because the
 	// reconciler reads and writes node settings through the same tunnel the operator's own
