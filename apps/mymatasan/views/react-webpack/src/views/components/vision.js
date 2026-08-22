@@ -744,6 +744,14 @@ export function CameraAiPanel({
                       />
                       {t('vi.soundAlert')}
                     </label>
+                    <label className="check-row" title={t('vi.archiveClipHint')}>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(ruleDraft.archiveClip)}
+                        onChange={(event) => onRuleDraft({ ...ruleDraft, archiveClip: event.target.checked })}
+                      />
+                      {t('vi.archiveClip')}
+                    </label>
                     <label className="check-row">
                       <input
                         type="checkbox"

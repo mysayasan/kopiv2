@@ -14,6 +14,23 @@ Maps MyMataSan domain events (AI detection alerts, camera health transitions) in
 - `BuildAlertSnapshot(image, boundingBox, metadata, detectionType, fields)` — returns the snapshot bytes to attach: nil when the snapshot field is off; the raw image when the bounding-box field is off; otherwise the image with the detection box + object-label tag drawn on via `vision.AnnotateJPEG`, so the notification picture matches the AI Log detail overlay (which draws the box as a frontend overlay on the raw image).
 - `NotifyCameraOffline` / `NotifyCameraRecovered` — publish camera health-check notifications with downtime context.
 
+## The fleet archive request (W2-3)
+
+`VisionAlertOptions.ArchiveClip` carries the firing rule's `ArchiveClip` flag.
+`NotifyVisionAlert` stamps `Data["archiveClip"] = true` onto the **canonical** copy only —
+the one that is persisted and forwarded up the fleet control channel. The per-destination
+copies do not get it: a customer's webhook or chat room has no use for an internal flag
+about where the control plane stores things, and leaking it would put an implementation
+detail into somebody's integration contract.
+
+The key is `infra/notification.DataArchiveClip`, a named constant rather than a string
+literal, because it is a WIRE CONTRACT: the control plane decides whether to keep this
+footage purely from that one field. If it silently stopped being set, nothing on this
+appliance would change, nothing would fail, and the fleet would simply stop archiving
+until somebody went looking for footage that was never fetched. The alert id
+(`DataAlertId`) travels the same way and for the same reason — it is what lets the control
+plane find the clip instead of guessing from timestamps.
+
 ## LPR fields in rendered alerts
 
 `renderVisionAlert` calls `plateInfoFromMetadata` to extract `plate`, `vehicleType`, `color`, and `watchlisted` from the alert's top-level metadata (promoted there by `infra/vision/object.go`). When `plate` is non-empty:

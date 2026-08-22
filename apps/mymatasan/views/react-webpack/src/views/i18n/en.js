@@ -1178,6 +1178,8 @@ export default {
   'vi.startDatetime': 'Start datetime',
   'vi.endDatetime': 'End datetime',
   'vi.soundAlert': 'Sound alert',
+  'vi.archiveClip': 'Keep a fleet copy',
+  'vi.archiveClipHint': "Sends this rule's event clip to the control plane, so the footage survives if this appliance is stolen or destroyed.",
   'vi.saveRule': 'Save Rule',
   'vi.addRule': 'Add Rule',
   'vi.enableRule': 'Enable rule',

@@ -863,6 +863,10 @@ export function defaultVisionRuleDraft(cameraId = '') {
     minFrames: defaultVisionMinFrames,
     cooldownSeconds: 30,
     soundEnabled: true,
+    // Off by default. Archiving is a deliberate choice per rule: a fleet that keeps
+    // every clip from every camera fills up with footage nobody will ever open, and
+    // buries the events that mattered inside it.
+    archiveClip: false,
     isEnabled: true,
   };
 }

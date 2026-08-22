@@ -51,6 +51,7 @@ type DetectionRuleRequest struct {
 	MinFrames       int     `json:"minFrames"`
 	CooldownSeconds int     `json:"cooldownSeconds"`
 	SoundEnabled    bool    `json:"soundEnabled"`
+	ArchiveClip     bool    `json:"archiveClip"`
 	IsEnabled       bool    `json:"isEnabled"`
 }
 
@@ -67,8 +68,11 @@ type DetectionRule struct {
 	MinFrames       int     `json:"minFrames"`
 	CooldownSeconds int     `json:"cooldownSeconds"`
 	SoundEnabled    bool    `json:"soundEnabled"`
-	IsEnabled       bool    `json:"isEnabled"`
-	LastTriggeredAt int64   `json:"lastTriggeredAt"`
+	// ArchiveClip asks the fleet to keep a copy of this rule's event clip OFF the
+	// appliance. See entities.DetectionRule.ArchiveClip for why it is per rule.
+	ArchiveClip     bool  `json:"archiveClip"`
+	IsEnabled       bool  `json:"isEnabled"`
+	LastTriggeredAt int64 `json:"lastTriggeredAt"`
 }
 
 // AlertEventRequest is the reusable request shape for detector-generated events.
@@ -187,6 +191,7 @@ func NormalizeDetectionRule(req DetectionRuleRequest) DetectionRule {
 		MinFrames:       minFrames,
 		CooldownSeconds: cooldown,
 		SoundEnabled:    req.SoundEnabled,
+		ArchiveClip:     req.ArchiveClip,
 		IsEnabled:       req.IsEnabled,
 	}
 }

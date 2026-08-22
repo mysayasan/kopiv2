@@ -9,6 +9,17 @@ Defines the persisted AI detection rule record for standalone `mymatasan`.
 - Rule identity: `Id`, `Name`.
 - Camera binding: `CameraId`.
 - Detection behavior: `DetectionType`, `ZonePolygon`, `RuleConfig`, `SchedulePolicy`, `Threshold`, `MinFrames`, `CooldownSeconds`, `SoundEnabled`, `IsEnabled`.
+- `ArchiveClip` (W2-3) — asks the control plane to keep a copy of this rule's event clip
+  and snapshot, OFF this appliance, so the footage survives the box being stolen, burned
+  or wiped by whoever triggered the alert. **Default false.** Per RULE, not per camera and
+  not fleet-wide, because that is the granularity at which "this matters" is known: a
+  line-crossing rule on the perimeter gate at night is evidence, and the same camera's
+  daytime person-detection is noise. The flag lives on the node because the fleet has no
+  way to know what a rule means — the person who wrote the rule does — and it rides
+  upstream on each alert as the notification Data key `archiveClip`
+  (`infra/notification.DataArchiveClip`), which is how the control plane learns to fetch
+  the clip without reading the node's rule table. See
+  `docs/modules/apps/myseliasan/services/clip_archive.go.md`.
 - Runtime state: `LastTriggeredAt`.
 - Audit fields: created/updated user and timestamps.
 
