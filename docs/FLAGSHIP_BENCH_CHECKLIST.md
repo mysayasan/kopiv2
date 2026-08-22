@@ -384,6 +384,14 @@ true forever when there is none. Fixed by reading the recording configs to LABEL
 filter. **Drive the screen, not only the endpoint: a green API and a screen that lies look
 identical from the API side.**
 
+**That pass is now code too: `tools/fleetbench/uicheck.js`.** Headless Chrome over CDP with
+no puppeteer and no npm install — sign in, skip the first-run wizard (a fresh install lands
+there, and every selector finds nothing until you do), click the nav entry by its label,
+submit the page's form, print a JSON summary of the rendered DOM, write a screenshot.
+**Assert on the JSON, never on the screenshot.** It took one argument to point it at W2-1's
+Fleet Policy screen, which had shipped without ever being loaded in a browser; it renders
+correctly.
+
 ### Traps this bench added
 
 - **`SendPagingResult` is DOUBLE-wrapped** — `{message, durationMs, data:{result, paging}}` —

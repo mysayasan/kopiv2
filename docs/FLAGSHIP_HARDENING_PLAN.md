@@ -657,7 +657,10 @@ rather than the logic:
 - unauthenticated read and write both refused; a policy naming a section its node kind does
   not have, and a policy with no settings, are both refused **in a readable sentence**
 
-Only the SCREEN is unexercised — the API beneath it is. Worth a look in Arabic when
+Only the SCREEN was unexercised — the API beneath it was. **Loaded in a real browser
+2026-08-22** while benching W2-4 (`tools/fleetbench/uicheck.js`, same fleet): it renders, the
+compliance tiles and the "unknown is not compliant" note read correctly against a two-node
+fleet with no policies, and the console is clean. Still not exercised in Arabic. Worth a look in Arabic when
 somebody is next in the UI; the page uses logical CSS properties throughout.
 
 **W2-2 · Node state history + SLA reporting** (F-08). **Shipped — benched against a real
