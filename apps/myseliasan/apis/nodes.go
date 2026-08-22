@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -20,6 +21,11 @@ type nodesApi struct {
 	audit    services.IAuditService
 	rejects  rejectTracker        // set post-startup via SetRejectTracker; may be nil
 	logf     func(string, ...any) // server-log sink; may be nil
+	// availability answers what the fleet's uptime WAS. Set post-startup via
+	// SetAvailability (it needs the site service, built after this API); may be nil,
+	// in which case the endpoint reports that history is unavailable rather than
+	// returning an empty report that reads as a fleet with no downtime.
+	availability services.INodeAvailabilityService
 }
 
 // NewNodesApi registers control-plane node-management endpoints.
@@ -28,6 +34,7 @@ type nodesApi struct {
 //
 //	GET  /nodes               — list adopted nodes
 //	GET  /nodes/fleet-status  — fleet liveness + cert-health rollup (counts)
+//	GET  /nodes/availability  — SLA availability over a past window (per node/site/month)
 //	POST /nodes/scan          — discover unpaired nodes on the LAN
 //	POST /nodes/adopt         — adopt a node (by ip+port+claim code)
 //	POST /nodes/{id}/release  — release an adopted node
@@ -60,6 +67,9 @@ func NewNodesApi(router *mux.Router, auth middlewares.AuthMidware, session *midd
 	g.Use(session.Middleware)
 	g.HandleFunc("", h.list).Methods("GET")
 	g.HandleFunc("/fleet-status", h.fleetStatus).Methods("GET")
+	// Availability history. A read of the same fleet data the list returns, so it sits
+	// under the same page grant; registered before "/{id}" as a distinct literal.
+	g.HandleFunc("/availability", h.availabilityReport).Methods("GET")
 	// Stranded/refused nodes dialing the control channel with a valid cert but no record.
 	// Registered before the "/{id}" routes; distinct literal segment, so no conflict.
 	g.HandleFunc("/unrecognized", h.listUnrecognized).Methods("GET")
@@ -85,6 +95,10 @@ func NewNodesApi(router *mux.Router, auth middlewares.AuthMidware, session *midd
 // SetRejectTracker wires the control server's rejected-connection view in after it is built
 // (the control server is constructed later than this API in app startup).
 func (a *nodesApi) SetRejectTracker(rt rejectTracker) { a.rejects = rt }
+
+// SetAvailability wires the SLA availability reporter in after it is built (it depends
+// on the site service, which is constructed after this API).
+func (a *nodesApi) SetAvailability(s services.INodeAvailabilityService) { a.availability = s }
 
 // recordNodeAction writes an audit entry for a node-targeted operator action,
 // attributing it to the caller's session identity. Best-effort (never blocks the
@@ -126,6 +140,47 @@ func (a *nodesApi) fleetStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	controllers.SendResult(w, status, "succeed")
+}
+
+// availabilityReport answers what the fleet's uptime WAS over [from,to] (unix seconds;
+// default the trailing 30 days), per node, per site and per calendar month.
+//
+// Every figure distinguishes measured time from time nothing was watching — see
+// services/node_availability.go. A caller rendering this must read hasData before
+// availability: 0 with hasData false means "unknown", and printing it as 0% would
+// report a healthy node nobody happened to observe as one that was never up.
+func (a *nodesApi) availabilityReport(w http.ResponseWriter, r *http.Request) {
+	if a.availability == nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, "availability history is not available on this control plane")
+		return
+	}
+	to := parseUnixQuery(r, "to")
+	if to <= 0 {
+		to = time.Now().Unix()
+	}
+	from := parseUnixQuery(r, "from")
+	if from <= 0 {
+		days := int64(30)
+		if d := parseUnixQuery(r, "days"); d > 0 && d <= 800 {
+			days = d
+		}
+		from = to - days*86400
+	}
+	result, err := a.availability.Fleet(r.Context(), from, to)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, result, "succeed")
+}
+
+// parseUnixQuery reads a non-negative integer query parameter, 0 when absent or junk.
+func parseUnixQuery(r *http.Request, key string) int64 {
+	v, err := strconv.ParseInt(r.URL.Query().Get(key), 10, 64)
+	if err != nil || v < 0 {
+		return 0
+	}
+	return v
 }
 
 func (a *nodesApi) scan(w http.ResponseWriter, r *http.Request) {

@@ -752,6 +752,10 @@ func (m *module) Entities() []any {
 		appentities.RelayedNotif{},
 		// Fleet AI agent: stored digests (structured findings + optional LLM narrative).
 		appentities.AgentDigest{},
+		// Node state history + monitoring coverage: what the fleet's uptime WAS, so an
+		// SLA can be reported over a past window rather than only observed in the present.
+		appentities.NodeStateEvent{},
+		appentities.FleetMonitorGap{},
 		// Critical-clip archive: the fleet's own copy of the footage that matters, so an
 		// appliance that is stolen or burned does not take the evidence with it.
 		appentities.ArchivedClip{},
@@ -915,6 +919,13 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	if err := registry.BackfillAutoRenew(context.Background()); err != nil {
 		deps.Logger.Warnf("myseliasan.nodes", "auto-renew backfill failed: %v", err)
 	}
+	// Node state history: the heartbeat's liveness transitions, written down. The
+	// registry reports every observation here (nil-safe, best-effort) and the
+	// availability service reads it back. Injected rather than constructed inside the
+	// registry so the registry's own tests stay repo-only.
+	stateHistory := services.NewNodeStateHistory(deps.Db)
+	registry.SetStateHistory(stateHistory)
+
 	nodesApi := apis.NewNodesApi(api, *deps.Auth, controlSession, registry, auditService,
 		func(f string, a ...any) { deps.Logger.Warnf("myseliasan.nodes", f, a...) })
 
@@ -923,6 +934,12 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	planDir := apphost.ResolveWritablePath(deps.DataDir, "floorplans")
 	siteService := services.NewSiteService(deps.Db, secretCipher, planDir)
 	apis.NewSitesApi(api, *deps.Auth, controlSession, siteService)
+
+	// Availability (SLA) reporting over the recorded history. Mounted on the nodes API
+	// so it inherits the same page grant as the fleet list it is about, rather than
+	// inventing a second permission for the same data in a different shape.
+	availabilityService := services.NewNodeAvailabilityService(registry, siteService, stateHistory)
+	nodesApi.SetAvailability(availabilityService)
 
 	bgCtx, stopBackground := context.WithCancel(context.Background())
 
@@ -1009,7 +1026,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		deps.Metrics, func(f string, a ...any) { deps.Logger.Infof("myseliasan.agent", f, a...) })
 
 	reportService := services.NewReportService(registry, siteService, notificationService,
-		auditService, userService, roleService, deps.AccessPerms, digestService)
+		auditService, userService, roleService, deps.AccessPerms, digestService, availabilityService)
 	apis.NewReportsApi(api, *deps.Auth, controlSession, reportService, auditService)
 
 	// In-app editor for the safe subset of config.json (localAuth, SSO, pairing, security,

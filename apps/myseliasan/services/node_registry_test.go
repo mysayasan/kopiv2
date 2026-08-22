@@ -98,6 +98,15 @@ func (f *fakeNodesRepo) UpdateById(_ context.Context, _ string, m entities.Manag
 	}
 	return 0, nil
 }
+func (f *fakeNodesRepo) DeleteById(_ context.Context, _ string, id uint64) (uint64, error) {
+	for i, r := range f.rows {
+		if r.Id == int64(id) {
+			f.rows = append(f.rows[:i], f.rows[i+1:]...)
+			return 1, nil
+		}
+	}
+	return 0, errors.New("no result found")
+}
 
 func newTestRegistry() (*nodeRegistry, *fakeNodesRepo) {
 	nodes := &fakeNodesRepo{}

@@ -352,11 +352,69 @@ error message that distinguishes a missing snapshot from missing footage.
 
 ---
 
+## W2-2 · Node state history + SLA reporting  ⟨ DONE (2026-08-21), 33/33
+
+**The harness is checked in and re-runnable**: `tools/fleetbench/fleet_harness.py` stands up a
+control plane and two genuinely adopted mymatasan nodes (real fleet CA, real mTLS control
+channel, no cameras — this bench only needs liveness), and
+`tools/fleetbench/bench_w22_sla.py` drives it. Only the heartbeat SWEEP interval is
+compressed (10s); the lost-grace floor of 90s is a shipped value and was left alone.
+
+What passed: a fleet adopted minutes ago reports near-zero coverage over 30 days rather than a
+perfect month; a window entirely before adoption is "no data", not 100%; a real `docker stop`
+produces exactly one outage with the healthy neighbour untouched; stopping the CONTROL PLANE
+for ~110s is recorded as its own blind spot and subtracted (over a pinned window, the
+unmonitored time IS the gap, and the healthy node still reads 100% — a gap is not downtime);
+the monthly buckets tile the window exactly and pre-fleet months read "no data"; the PDF
+carries the Availability section, names both nodes, states the gap in words, and no longer
+carries "historical uptime is not yet tracked"; an unauthenticated caller is refused; and
+releasing a node removes its history rows from the table (verified by reading the sqlite with
+the app STOPPED).
+
+**The defect it found:** a 94-second outage recorded as **10 seconds** — the transition was
+dated to the sweep that declared the node lost, one full grace window after contact was
+actually lost. See the plan's W2-2 entry. Re-benched at 99s against 100s.
+
+### Traps this bench added to the pile
+
+- **`pairing.parentBaseUrl` is the one that bites.** The parent STAMPS this URL onto every
+  node it adopts, and the node enrolls and dials the control channel with it. Left at the
+  default the node records `localhost:3002` — its OWN localhost — so enrollment fails
+  forever, no cert is ever issued, the control channel never comes up, and the node drifts to
+  "lost" 90 seconds after adoption entirely on its own. The first bench run then "measured" an
+  outage that was already happening. **Gate every liveness bench on the fleet being genuinely
+  WATCHED** — this one now requires both nodes to hold `online` across three consecutive
+  sweeps before anything is stopped, which a node that is merely online because adoption said
+  so cannot pass. Check `certExpiresAt != 0` on the adopt reply for a fast signal.
+- **`requests`' `session.verify = False` is overridden by `REQUESTS_CA_BUNDLE`** in the
+  environment. Against a self-signed bench cert this fails with a certificate error that
+  reads like the app's fault. Set `session.trust_env = False`.
+- The adopt body wants `nodeId` + `httpsPort` + `claimCode`; the node's claim-code REPLY
+  calls it `code`. Three names for two values, as the W2-1 notes said, plus a fourth.
+- **fpdf compresses its content streams**, so grepping a PDF for a heading finds nothing.
+  Inflate each `stream…endstream` with zlib and pull the `(...) Tj` operands —
+  `extract_pdf_text` in `bench.py` does it in a dozen lines. Asserting only on HTTP 200 and
+  `%PDF` would have passed with the section missing entirely.
+- **A trailing "last 24h" window is a useless assertion target** on a fleet minutes old: it is
+  dominated by time before the fleet existed, so almost anything you assert about it passes
+  for the wrong reason. Pin `from`/`to` around the event you are actually testing.
+- Data dirs survive `docker rm`, so a re-run inherits a rotated password and an already-paired
+  node. Wipe them, or try every known password.
+
+---
+
 # The fleet harness — build it once, reuse it
 
+**It is now built: `tools/fleetbench/` (see its README).** `fleet_harness.py` does everything
+described below — cross-compiled binaries into `debian:bookworm-slim`, one docker network,
+BOM-free config in the data dirs, both admins rotated, fleet key generated and pushed, claim
+codes taken and both nodes adopted — and wipes the data dirs first so a re-run starts from a
+fresh install. What follows is the manual recipe it encodes, kept because the traps are worth
+reading before debugging one.
+
 Standing up a real control plane with two genuinely adopted nodes is the setup several
-benches share (W2-1 done, W1-3 and W1-5 still owe it). It takes about ten minutes and the
-awkward parts are all in the wiring, not the apps.
+benches share (W2-1 and W2-2 done, W1-3 and W1-5 still owe it). It takes about ten minutes and
+the awkward parts are all in the wiring, not the apps.
 
 ```
 # 1. cross-compile (sqlite is modernc/pure Go, so CGO is not needed)

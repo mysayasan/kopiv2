@@ -170,6 +170,8 @@ type testBackupHarness struct {
 	ruleClauses *memRepo[entities.FleetRuleClause]
 	policies    *memRepo[entities.FleetPolicy]
 	policyItems *memRepo[entities.FleetPolicyItem]
+	stateEvents *memRepo[entities.NodeStateEvent]
+	monitorGaps *memRepo[entities.FleetMonitorGap]
 	audit       *memRepo[entities.AuditLog]
 	planDir     string
 }
@@ -190,6 +192,8 @@ func newTestBackupHarness(t *testing.T, cipher *atrest.Cipher) *testBackupHarnes
 	h.ruleClauses = newMemRepo[entities.FleetRuleClause](nil)
 	h.policies = newMemRepo[entities.FleetPolicy](nil)
 	h.policyItems = newMemRepo[entities.FleetPolicyItem](nil)
+	h.stateEvents = newMemRepo[entities.NodeStateEvent](nil)
+	h.monitorGaps = newMemRepo[entities.FleetMonitorGap](nil)
 	h.svc = &backupService{
 		roles:       h.roles,
 		permissions: newMemRepo[sharedentities.AccessRolePermission](nil),
@@ -204,6 +208,8 @@ func newTestBackupHarness(t *testing.T, cipher *atrest.Cipher) *testBackupHarnes
 		ruleClauses: h.ruleClauses,
 		policies:    h.policies,
 		policyItems: h.policyItems,
+		stateEvents: h.stateEvents,
+		monitorGaps: h.monitorGaps,
 		audit:       h.audit,
 		cipher:      cipher,
 		planDir:     h.planDir,
@@ -834,5 +840,69 @@ func TestRestoreBringsBackFleetPoliciesAndTheirItems(t *testing.T) {
 	eff := ResolveEffectivePolicy(node, []*FleetPolicyDetail{{Policy: policies[0], Items: items}})
 	if eff.Empty() {
 		t.Fatal("the restored policy governs nothing, so restoring it achieved nothing")
+	}
+}
+
+// The uptime record must survive a restore. Same lesson the rule clauses taught above:
+// a section that brings back its headline rows and drops what hangs off them restores
+// into something that looks complete and answers nothing — here, a control plane rebuilt
+// after a disk failure that reports a flawless, empty SLA history for the month it just
+// lost.
+func TestRestoreBringsBackTheNodeUptimeRecord(t *testing.T) {
+	ctx := context.Background()
+	src := newTestBackupHarness(t, testCipherWithSeed(t, 40))
+
+	if _, err := src.nodes.Create(ctx, "", entities.ManagedNode{NodeId: "node-a", Name: "Lobby", Status: "online", Token: "tok"}); err != nil {
+		t.Fatalf("seed node: %v", err)
+	}
+	for _, ev := range []entities.NodeStateEvent{
+		{NodeId: "node-a", State: entities.NodeStateOnline, At: 1000, Reason: entities.NodeStateReasonAdopt},
+		{NodeId: "node-a", State: entities.NodeStateLost, PrevState: entities.NodeStateOnline, At: 2000, Reason: entities.NodeStateReasonHeartbeat},
+		{NodeId: "node-a", State: entities.NodeStateOnline, PrevState: entities.NodeStateLost, At: 3000, Reason: entities.NodeStateReasonHeartbeat},
+	} {
+		if _, err := src.stateEvents.Create(ctx, "", ev); err != nil {
+			t.Fatalf("seed event: %v", err)
+		}
+	}
+	if _, err := src.monitorGaps.Create(ctx, "", entities.FleetMonitorGap{StartedAt: 4000, EndedAt: 5000, Reason: "restart"}); err != nil {
+		t.Fatalf("seed gap: %v", err)
+	}
+
+	blob, err := src.svc.Export(ctx, BackupRequest{Sections: []string{BackupSectionFleet}, Passphrase: "pp-history"})
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+
+	dst := newTestBackupHarness(t, testCipherWithSeed(t, 41))
+	if _, err := dst.svc.Restore(ctx, blob, RestoreRequest{Sections: []string{BackupSectionFleet}, Passphrase: "pp-history", Mode: RestoreModeReplace}); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	events, _, err := dst.stateEvents.Get(ctx, "", 100, 0, nil, nil)
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("events restored = %d, want 3", len(events))
+	}
+	// The outage has to come back intact — the transition, not just the row count.
+	var sawOutage bool
+	for _, e := range events {
+		if e.NodeId != "node-a" {
+			t.Fatalf("event came back attached to %q", e.NodeId)
+		}
+		if e.State == entities.NodeStateLost && e.PrevState == entities.NodeStateOnline && e.At == 2000 {
+			sawOutage = true
+		}
+	}
+	if !sawOutage {
+		t.Fatalf("the recorded outage did not survive the round trip: %+v", events)
+	}
+	gaps, _, err := dst.monitorGaps.Get(ctx, "", 100, 0, nil, nil)
+	if err != nil {
+		t.Fatalf("read gaps: %v", err)
+	}
+	if len(gaps) != 1 || gaps[0].StartedAt != 4000 || gaps[0].EndedAt != 5000 {
+		t.Fatalf("monitoring gaps = %+v, want the seeded [4000,5000]", gaps)
 	}
 }

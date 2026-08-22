@@ -96,6 +96,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-21 — myseliasan 1.67.0 (3f34d2e)
+
+### Added
+
+- **myseliasan**: myseliasan can now answer what the fleet's uptime WAS, not only what it is. A new append-only node state history records every transition of a node's liveness (online / lost / self-dropped), written by the four paths that legitimately change it — the heartbeat reconciler, adoption, a node dialing in on the control channel, and the authenticated self-drop notice — one row per change, so a node up for a year costs one row. A companion table records the spans during which the control plane ITSELF was not watching (a crash, a reboot, a long upgrade, or a leadership handover), detected from a sweep watermark rather than declared, so an unclean shutdown is covered like any other. From those, availability is reported per node, per site and per calendar month over any past window, via a new GET /api/nodes/availability endpoint and a new Availability section in the fleet health PDF — which replaces that report's own footnote admitting historical uptime was not tracked. Three rules keep the figures honest rather than flattering: time nothing was watching is subtracted from the denominator and reported separately instead of counted as uptime; a node with no measured time reads 'no data', never 100%; and availability is floored, never rounded, so 98.999% reads 98.99 and only zero downtime prints 100.00%. Site and month rollups aggregate node-seconds rather than averaging per-node percentages, so a node adopted yesterday cannot weigh as heavily on a site's month as one that ran all of it. Outages are dated to the last moment there was contact rather than to the sweep that gave up waiting, so an outage is not silently short by the grace window. Both new tables are included in .selbackup's fleet section, and releasing a node deletes its history so re-adopting the same appliance does not inherit an outage that never happened.
 ## 2026-08-21 — mymatasan 1.126.2, core 1.94.1 (69c4680)
 
 ### Fixed
