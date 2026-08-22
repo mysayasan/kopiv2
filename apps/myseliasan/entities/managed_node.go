@@ -28,6 +28,20 @@ type ManagedNode struct {
 	// it must keep behaving exactly as it always did rather than appearing as some unknown thing
 	// the UI cannot render.
 	Kind        string `json:"kind" form:"kind" query:"kind"`
+	// Version is the app version the node last reported on its control-channel hello.
+	//
+	// It is REPORTED, never assigned: the node says what it is running, and the control
+	// plane records it. That distinction matters for a staged rollout, whose entire job is
+	// to compare what a node was asked to install against what it actually came back
+	// running. A field the control plane wrote from its own intent could only ever agree
+	// with itself.
+	//
+	// Empty for a node that has not dialed in since this field existed, and for one that has
+	// never connected at all. Empty is not "old" — it is unknown, and a rollout treats it as
+	// a node it cannot judge rather than one it may skip.
+	Version string `json:"version" form:"version" query:"version"`
+	// VersionSeenAt is when Version was last reported, so a stale reading is visible as one.
+	VersionSeenAt int64 `json:"versionSeenAt" form:"versionSeenAt" query:"versionSeenAt"`
 	IP          string `json:"ip" form:"ip" query:"ip"`
 	HTTPSPort   int    `json:"httpsPort" form:"httpsPort" query:"httpsPort"`
 	Token       string `json:"-" form:"token" query:"token"`

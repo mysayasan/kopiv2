@@ -25,7 +25,7 @@ lands the work.
 | W2-2 | Node state history + SLA reporting | F-08 | `feat/myseliasan-node-sla` | ✅ shipped, benched 2026-08-21 (33/33 on a real two-node fleet) |
 | W2-3 | Critical-clip archive to control plane | F-09 | `feat/fleet-clip-archive` | ✅ shipped, benched 2026-08-21 (22/22 — footage verified surviving a destroyed node) |
 | W2-4 | Federated cross-node search | F-10 | `feat/fleet-federated-search` | ✅ shipped, benched 2026-08-22 (36/36 on a real two-node fleet) |
-| W2-5 | Staged version rollout | F-07 | — | ☐ not started |
+| W2-5 | Staged version rollout | F-07 | `feat/fleet-staged-rollout` | ✅ shipped, benched 2026-08-22 (22/22 on a real two-node fleet) |
 | W2-6 | Instrument dropped control-channel events | F-11 | — | ☐ not started |
 | W2-7 | Email notification channel | F-20a | — | ☐ not started |
 | **Phase 3 — Win the bake-off** |
@@ -787,9 +787,51 @@ cannot be honoured across independent sources — each node pages its own result
 usual workaround (over-fetch then slice) drops real rows the moment any node caps. A wide
 search is narrowed by its time window, and the coverage block says when it is too wide.
 
-**W2-5 · Staged rollout** (F-07). Canary rings, health gate between rings, halt on
-failure, rollback. `apps/mymatasan/services/update.go` is the node-side primitive it
-drives. Remember the fleet-bricking trap: own tag namespace, never GitHub "latest".
+**W2-5 · Staged rollout** (F-07). **Shipped — benched against a real two-node fleet (2026-08-22), 22/22.** `FleetRolloutService` plans a fleet upgrade
+into RINGS (a canary first), drives them over the existing control channel on a leader-gated
+tick, and requires each ring to pass a health gate before the next one starts. Served by
+`GET/POST /api/fleet-rollouts*`; audited at every transition.
+
+**THE NODE NOW KNOWS WHAT IT IS RUNNING, AND SO DOES THE FLEET.** `ManagedNode.Version` is
+captured from the control-channel hello — which already carried it and which
+`control_server.go` previously logged and threw away. It costs nothing on the wire and it is
+the only durable answer to the first question any upgrade asks. It is REPORTED, never
+assigned: a field the control plane wrote from its own intent could only ever agree with
+itself.
+
+**"PROVE ITSELF" IS THREE CONDITIONS, NOT ONE.** A ring passes only when every node has come
+back on the control channel, has REPORTED the target version, and has held that for a settle
+window. Each catches a different failure: a node that never returns, a node that returns on
+the OLD version because the swap silently failed, and a node that boots, looks healthy and
+dies a minute later. Trusting the update command's 200 — which only means the node agreed to
+try — is the version of this feature that reports success while the fleet burns.
+
+**HALT, NOT ROLLBACK — a deliberate departure from the sketch above.** Rolling a binary back
+is easy; rolling a DATABASE back is not, because migrations here are forward-only
+(`infra/db/bootstrap.Migration` has no down step). An automatic rollback would hand a node
+that has already migrated its schema a binary that has never seen it — turning a bad release
+into a corrupted appliance, unattended, across a whole ring. So a failed ring stops the
+rollout with a reason, leaves the rest of the fleet on the version it was already running,
+and waits for a human. The node refuses downgrades for the same reason, before anything is
+overwritten. **A fleet is recovered by rolling FORWARD to a fixed build**, which this same
+machinery does.
+
+**The version is PINNED, which also closes the fleet-bricking trap properly.**
+`selectAssets` used to ignore its `tag` argument (`_ = tag`) and always read
+`releases/latest`; it now looks up `releases/tags/v<version>`. That is required — a canary is
+meaningless if the node resolves "latest" for itself — and it means the updater no longer
+depends on the three sibling apps continuing to publish with `--latest=false`. The
+`mymatasan_` asset-prefix guard stays.
+
+**What the bench found.** The first run halted on its canary with "self-update is not
+available for this install type": the rollout was planning across nodes that can NEVER
+replace their own binary (a container image, a package-managed install), and only found out
+by failing on one. Capability is now probed at PLAN time — such nodes are recorded
+`unsupported` with the reason and the actual remedy, excluded from the rings but still
+listed, so a plan that covers nine of twelve appliances says so instead of reporting complete
+success over a fleet it never touched. A plan where nothing is updatable is refused. An
+UNREACHABLE node is deliberately treated as capable: excluding it would quietly shrink the
+rollout to whichever appliances were awake when an operator happened to press plan.
 
 **W2-6 · Instrument dropped events** (F-11).
 `domain/shared/fleetnode/control_channel.go:51-59` returns silently when the channel is

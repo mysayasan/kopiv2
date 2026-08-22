@@ -39,6 +39,10 @@ type UpdateInfo struct {
 	PublishedAt     string `json:"publishedAt,omitempty"`
 	CheckedAt       int64  `json:"checkedAt,omitempty"`
 	Error           string `json:"error,omitempty"`
+	// Target is the version an in-flight (or just-finished) apply is installing. Reported
+	// so a control plane driving a staged rollout can tell "installing what I asked for"
+	// from "installing something else".
+	Target string `json:"target,omitempty"`
 	// Apply job state (empty until an update is applied).
 	Applying    bool   `json:"applying"`
 	ApplyStatus string `json:"applyStatus,omitempty"` // running, done, failed
@@ -63,6 +67,12 @@ type UpdateService struct {
 	applying    bool
 	applyStatus string
 	applyLog    string
+	// target is the version THIS apply is installing. It is not always u.latest: a fleet
+	// rollout pins a specific version per ring, and "whatever GitHub calls latest right
+	// now" is the one thing a staged rollout must never install — the whole point of a
+	// canary ring is that the rest of the estate is still on the old version while it is
+	// judged, and a node that resolved "latest" independently would leap the queue.
+	target string
 }
 
 // NewUpdateService builds the updater. currentVersion is the running app version;
@@ -181,24 +191,58 @@ func (u *UpdateService) fetchLatest(ctx context.Context) (tag, htmlURL, publishe
 	return rel.TagName, rel.HTMLURL, rel.PublishedAt, nil
 }
 
-// StartUpdate begins the download + verify + swap + restart in the background. It
-// errors immediately when self-update isn't allowed here or one is already running.
+// StartUpdate begins the download + verify + swap + restart in the background, moving to
+// whatever the latest release is. It errors immediately when self-update is not allowed here
+// or one is already running. This is the operator's own "update now" button.
 func (u *UpdateService) StartUpdate(ctx context.Context) error {
+	u.mu.Lock()
+	latest := u.latest
+	u.mu.Unlock()
+	if latest == "" || !versionGreater(latest, u.current) {
+		if !u.canSelfUpdate() {
+			return errors.New("self-update is not available for this install type")
+		}
+		return errors.New("no newer version is available")
+	}
+	return u.StartUpdateTo(ctx, latest)
+}
+
+// StartUpdateTo installs one SPECIFIC version, rather than whatever is newest right now.
+//
+// This is what a fleet rollout drives. A canary ring exists so a version can be judged on a
+// few machines while the rest of the estate stays put, and a node that resolved "latest" for
+// itself would defeat that: it would jump to whatever was published five minutes ago, which
+// may not even be the version the ring is testing. So the version is passed in and pinned all
+// the way through to the asset lookup.
+//
+// DOWNGRADES ARE REFUSED. Swapping the binary back is easy; the database it then opens is not
+// reversible — migrations here are forward-only, with no down step (see
+// infra/db/bootstrap.Migration) — so an older build can meet a schema it has never seen.
+// Refusing is the honest failure: it is visible, and it happens before anything is
+// overwritten. A fleet that has gone wrong is recovered by rolling FORWARD to a fixed build.
+func (u *UpdateService) StartUpdateTo(ctx context.Context, version string) error {
+	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
+	if version == "" {
+		return errors.New("a target version is required")
+	}
 	if !u.canSelfUpdate() {
 		return errors.New("self-update is not available for this install type")
+	}
+	if version == u.current {
+		return fmt.Errorf("already running %s", version)
+	}
+	if !versionGreater(version, u.current) {
+		return fmt.Errorf("refusing to downgrade from %s to %s: migrations here are forward-only, so an older build can meet a schema it does not understand", u.current, version)
 	}
 	u.mu.Lock()
 	if u.applying {
 		u.mu.Unlock()
 		return errors.New("an update is already in progress")
 	}
-	if u.latest == "" || !versionGreater(u.latest, u.current) {
-		u.mu.Unlock()
-		return errors.New("no newer version is available")
-	}
 	u.applying = true
+	u.target = version
 	u.applyStatus = "running"
-	u.applyLog = "Starting update to " + u.latest + "…\n"
+	u.applyLog = "Starting update to " + version + "…\n"
 	u.mu.Unlock()
 
 	go u.run()
@@ -213,12 +257,15 @@ func (u *UpdateService) run() {
 	}()
 
 	ctx := context.Background()
-	tag, _, _, err := u.fetchLatest(ctx)
-	if err != nil {
-		u.fail("re-check release: " + err.Error())
-		return
-	}
-	assetURL, checksumsURL, assetName, err := u.selectAssets(ctx, tag)
+	u.mu.Lock()
+	target := u.target
+	u.mu.Unlock()
+	// The apply installs the version it was STARTED for. It used to re-resolve "latest"
+	// here, which meant a release published between pressing the button and this line
+	// silently changed what got installed — invisible on one appliance, and fatal to a
+	// staged rollout, where the ring under test and the ring behind it would end up on
+	// different builds while the report said otherwise.
+	assetURL, checksumsURL, assetName, err := u.selectAssets(ctx, target)
 	if err != nil {
 		u.fail(err.Error())
 		return
@@ -260,7 +307,7 @@ func (u *UpdateService) run() {
 
 	u.mu.Lock()
 	u.applyStatus = "done"
-	u.applyLog += "Updated to " + u.latest + ". Restarting…\n"
+	u.applyLog += "Updated to " + target + ". Restarting…\n"
 	u.mu.Unlock()
 
 	// Restart into the freshly-swapped binary.
@@ -273,9 +320,20 @@ func (u *UpdateService) run() {
 }
 
 // selectAssets picks the archive matching this OS/arch plus the checksums file.
-func (u *UpdateService) selectAssets(ctx context.Context, tag string) (assetURL, checksumsURL, assetName string, err error) {
-	_ = tag
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/repos/"+updateRepo+"/releases/latest", nil)
+// version is the exact release to install ("1.128.0"). It is looked up by TAG, not through
+// "latest".
+//
+// That is a hardening as well as a requirement. This repository publishes four products, and
+// only mymatasan's tags are marked as the repo's latest release — the other three are
+// published with `--latest=false` precisely so this call keeps returning ours. Asking for
+// `releases/tags/v<version>` does not depend on that flag holding: one release published
+// without it would otherwise point every node in the field at another product's assets.
+func (u *UpdateService) selectAssets(ctx context.Context, version string) (assetURL, checksumsURL, assetName string, err error) {
+	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
+	if version == "" {
+		return "", "", "", errors.New("no target version to install")
+	}
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/repos/"+updateRepo+"/releases/tags/v"+version, nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "mymatasan-updater")
 	if tok := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); tok != "" {
@@ -286,6 +344,16 @@ func (u *UpdateService) selectAssets(ctx context.Context, tag string) (assetURL,
 		return "", "", "", err
 	}
 	defer resp.Body.Close()
+	// Say WHICH thing went wrong. Without this, a version that was never published decodes
+	// into an empty asset list and reports "no release archive for linux/amd64" — which
+	// sends the reader looking for a packaging problem instead of a typo, and reads the
+	// same way on every node a rollout just tried to move.
+	if resp.StatusCode == http.StatusNotFound {
+		return "", "", "", fmt.Errorf("no release published for version %s", version)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", "", "", fmt.Errorf("GitHub API returned %s looking up version %s", resp.Status, version)
+	}
 	var rel struct {
 		Assets []struct {
 			Name string `json:"name"`

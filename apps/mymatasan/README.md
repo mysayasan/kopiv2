@@ -472,10 +472,22 @@ Settings → Version & Health → **Updates** checks GitHub Releases for a newer
 ```bash
 curl -u admin:"$ADMIN_PW" "http://localhost:3000/api/system/update"          # cached status
 curl -u admin:"$ADMIN_PW" -X POST "http://localhost:3000/api/system/update/check"  # force a check
-curl -u admin:"$ADMIN_PW" -X POST "http://localhost:3000/api/system/update/apply"  # download + verify + swap + restart
+curl -u admin:"$ADMIN_PW" -X POST "http://localhost:3000/api/system/update/apply"  # download + verify + swap + restart, whatever is newest
+curl -u admin:"$ADMIN_PW" -X POST -H "Content-Type: application/json" \
+  -d '{"version":"1.128.0"}' "http://localhost:3000/api/system/update/apply"  # pin an exact release
 ```
 
 Self-update is intentionally unavailable — with in-panel guidance shown instead — on `.deb`/`.rpm` installs (`MYMATASAN_MANAGED=package`, set by `deploy/nfpm/mymatasan.service`: upgrade via `apt`/`dnf`) and Docker (`MYMATASAN_MANAGED=docker`, set by `deploy/Dockerfile.release`: pull the new image and recreate the container), and whenever the app's home directory isn't writable.
+
+An optional `{"version": "..."}` body on `/api/system/update/apply` pins the exact release to
+install — looked up by release **tag**, never "whatever GitHub calls latest" — instead of
+whatever `Check now` most recently cached. This is what a `myseliasan` fleet lets an operator
+drive: a **staged rollout** that upgrades an estate of nodes a ring at a time, canary first, and
+only advances a ring once every node in it has come back reporting the version it was asked for
+(see `apps/myseliasan/README.md` → "Staged version rollout"). Two guarantees hold regardless of
+who calls this endpoint: the node **refuses to downgrade** (this suite's DB migrations are
+forward-only, so an older build can meet a schema it has never seen) and it never installs
+anything other than the exact version it was asked for.
 
 ## ONVIF API
 

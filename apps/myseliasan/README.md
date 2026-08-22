@@ -350,6 +350,39 @@ comparison/enforcement engine and `docs/modules/apps/myseliasan/services/policy_
 for exactly what can be governed. **Built, not yet live-benched against a real fleet** — see
 `docs/FLAGSHIP_HARDENING_PLAN.md` (W2-1).
 
+## Staged version rollout
+
+The fleet's `mymatasan` nodes can be moved to a specific version a few appliances at a time
+(`GET`/`POST /api/fleet-rollouts`) instead of every appliance at once, which is how an estate
+finds out about a bad build all at the same time. Planning a rollout picks a **target version**
+and splits the matching nodes into **rings** (a canary first, deterministic order — the same
+plan produces the same canary every time), and probes each node up front for whether it can even
+replace its own binary: a container image or a package-managed install cannot, and is listed
+separately with the real way to upgrade it (redeploy the image / use the package manager)
+instead of being left in a ring where it would fail and halt the whole rollout on its own turn.
+
+Starting a rollout drives one ring at a time. A ring only passes once every node in it has come
+back on the control channel, **reported the target version itself** (never assumed off a
+successful command), and held that state through a settle window — long enough that an upgrade
+which boots, looks healthy, and dies a minute later is caught before the next ring starts. **Any
+node failure halts the whole rollout** rather than rolling anything back: this suite's database
+migrations are forward-only, so an automatic rollback would hand a node that already migrated
+its schema a binary that has never seen it. A halted rollout leaves the rest of the fleet on the
+version it was already running and explains why it stopped; recovery is rolling FORWARD to a
+fixed build, through this same mechanism.
+
+The node side refuses two things regardless of who is driving it: a **downgrade** (migrations
+are one-way) and installing anything other than the exact version it was asked for — its
+updater looks a pinned version up by release tag, never "whatever GitHub calls latest right
+now", which is what makes a canary ring meaningful in the first place.
+
+Reading rollouts is open to any authenticated session; planning, starting, and cancelling one is
+superadmin-only, the same reasoning as a fleet policy above — replacing the software on every
+recorder in the estate, with no undo. See
+`docs/modules/apps/myseliasan/services/fleet_rollout.go.md` for the ring/health-gate engine and
+`docs/FLAGSHIP_HARDENING_PLAN.md` (W2-5, F-07) — **built and live-verified** against a real
+two-node fleet (`tools/fleetbench/bench_w25_rollout.py`).
+
 ## Notifications
 
 A consolidated **Notifications** page (its own badged nav item under a **System** group) lists the control plane's unified feed — `myseliasan`'s own events (node going-offline, login/security, and now proactive fleet-health alerts — see below), and every event a managed node pushes up its control channel, tagged `source: node:<id>` by `ingestNodeEvent` in `app.go` (any event kind the node reports, not just recognized ones, now surfaces here rather than being dropped). It reads `GET /api/notifications`, with **Unread**/**All** toggle, a per-node source filter, and infinite scroll. The side-nav badge and an SSE-driven live update both come from `GET /api/notifications/stream`: the App shell keeps one `EventSource` open and bumps a refresh signal + re-polls the unread count on every arrival. Clicking **Acknowledge** marks the notification read (`POST /api/notifications/{id}/read`) and — for a node AI detection (`refType: "alert_event"`) — also propagates the acknowledgement to the source alert on the node over the proxy (`POST /api/nodes/{id}/proxy/api/vision/alerts/{id}/ack`), so the node's own review state stays in sync. AI-detection rows show the annotated event snapshot, streamed through the node proxy so the browser never contacts the node directly.
@@ -432,6 +465,7 @@ Actions recorded:
 - **Mutating tunneled node commands** (`node.command`) — every `POST`/`PUT`/`PATCH`/`DELETE` sent through the reverse command tunnel (`/api/nodes/{id}/proxy/...`) is audited, since that single choke point is how remote wipe, factory-reset, and settings writes reach a node. Read-only tunneled traffic (`GET`/`HEAD`) is intentionally not audited, to keep the trail free of routine page-load noise.
 - **AI agent actions** (`agent.digest.generate`, `agent.chat` — question text only, truncated, never the model's answer; `agent.llm.test`, `agent.llm.install.binary`/`.model`, `agent.llm.import`, `agent.llm.sidecar.restart`) — see "AI Agent" above.
 - **Fleet policy changes** (`policy.save`, `policy.delete`) — edits to the configuration standard itself; and **fleet policy enforcement** (`policy.enforce`) — a policy writing a drifted setting back to a node on the reconcile sweep, the one settings change on a node with no operator behind it at the moment it happens. See "Fleet configuration policy" above.
+- **Staged version rollout** (`fleet.rollout.plan`, `.start`, `.cancel`, plus the driver's own terminal `.halted`/`.completed`) — every plan, start, operator cancel, and the driver's own halt/completion of a fleet upgrade. See "Staged version rollout" above.
 
 Recording is best-effort: a failure to write an audit entry is logged but never blocks or fails the action being audited. Each entry captures the actor (user id, email/name, role), the target (type + id), an outcome (`success`/`denied`/`error`), a short detail string, optional structured `Metadata`, and the client IP.
 

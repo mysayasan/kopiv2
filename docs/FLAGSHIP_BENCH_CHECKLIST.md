@@ -457,6 +457,55 @@ correctly.
   rows in a time window that genuinely contains three — a bench bug that looked exactly like
   a filter being off by one boundary.
 
+## W2-5 · Staged version rollout  ⟨ DONE (2026-08-22), 22/22
+
+`tools/fleetbench/bench_w25_rollout.py`, on the two-node harness with
+`KOPIV2_NODE_HOME_RW=1`.
+
+**What is real and what is stood in for.** The download half of a self-update needs a real
+published release, which a bench cannot conjure — so the HALT path is exercised completely
+(the rollout asks for a version that was never published, the node's own updater fails on it,
+and the node's own words come back in the halt reason), while the SUCCESS path performs the
+half a real update performs at the end: the canary's binary is replaced with one built at the
+target version and the container restarted. That is the whole of what the control plane can
+observe, because the gate judges what a node REPORTS.
+
+What passed: the control plane's record of each node's version agrees with what that node says
+about itself over the tunnel; a draft plan is never driven; a second concurrent rollout is
+refused; ring composition is deterministic across two separate plans; the canary is asked and
+the second ring is not; a version that was never published halts the rollout, names what the
+node came back running, and leaves the rest of the fleet on the version it started on; the
+canary passes only once it reports the target; the next ring waits out the settle window and
+then starts; a ring whose node can never reach the target halts one ring in while the node
+that DID upgrade keeps its success; and plan / start / halt are all audited, with a halt
+recorded as an error rather than a success.
+
+**The defect it found — on the very first run.** The canary halted with "self-update is not
+available for this install type". The rollout had been planning across nodes that can never
+replace their own binary, and only discovered it by failing on one. Capability is now probed
+while PLANNING: such nodes are recorded `unsupported` with the real remedy and left out of the
+rings, still listed. **Ask what a plan CANNOT do before it starts, not by watching it fail.**
+
+### Traps this bench added, three of which cost a whole run each
+
+- **A node refuses to self-update when its application directory is read-only** — which the
+  standard harness mount is. Any self-update bench needs `KOPIV2_NODE_HOME_RW=1` (a writable
+  private copy), or it measures the refusal rather than the feature.
+- **Take ground truth from the SUT, not from the repo.** Deriving the "current" version from
+  `infra/versioning/version.json` made the run depend on which binary a previous run had left
+  in the shared bin dir; eight assertions failed confidently against a fleet that was never on
+  the version the bench assumed. It now asks the node.
+- **Never `copyfile` over a binary something is executing.** It truncates and rewrites the
+  very inode the process is running from, so the "upgraded" node comes back on the old
+  version — a swap that looks like it happened and did not. `os.replace` is the fix on Linux,
+  and is REFUSED on Windows while another container holds the file. The harness now gives
+  every node its own binary (`bin/mymatasan-<name>`), which is what makes "upgrade exactly one
+  appliance" testable at all.
+- **Restore a file you borrowed byte-for-byte.** The bench edits `version.json` to build a
+  differently-versioned binary; restoring it through a text write re-encoded the line endings
+  and left the file permanently modified in git with an empty diff.
+- Python buffers stdout when it is not a tty, so a long bench looks hung. Run it with `-u`.
+
 ---
 
 # The fleet harness — build it once, reuse it

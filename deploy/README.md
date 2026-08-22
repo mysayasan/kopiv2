@@ -297,6 +297,18 @@ installer installs. It is disabled — with in-UI guidance instead — for `.deb
 installs (`MYMATASAN_MANAGED=package`: upgrade via `apt`/`dnf`) and Docker
 (`MYMATASAN_MANAGED=docker`: pull the new image and recreate the container).
 
+`POST /api/system/update/apply` also accepts an optional `{"version": "..."}` body that
+pins the exact release to install — resolved by GitHub release **tag**
+(`GET .../releases/tags/v<version>`), never `/releases/latest`, and refuses a downgrade
+outright (this suite's DB migrations are forward-only). A plain unpinned apply still
+takes whatever `Check now` last cached as latest. This is what lets a `myseliasan`
+control plane drive a **staged, ring-by-ring fleet rollout** across adopted nodes rather
+than an operator updating each appliance by hand — see `apps/myseliasan/README.md` →
+"Staged version rollout" and `apps/myseliasan/services/fleet_rollout.go.md`. Nothing
+about how a single node restarts changes: it still relaunches through the same
+`apphost.Restarter`/`KOPIV2_SUPERVISED` mechanism described above, whichever caller
+started the apply.
+
 ## How the restart works
 
 - `KOPIV2_SUPERVISED=1` (recommended for any service/Docker deployment): on restart the

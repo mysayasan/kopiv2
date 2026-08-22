@@ -134,6 +134,12 @@ type INodeRegistry interface {
 	// recovering, or a certificate nearing expiry). Optional; nil-safe. Set once at
 	// startup, before the heartbeat loop begins.
 	SetFleetEventSink(sink FleetEventSink)
+	// RecordVersion stores the app version a node REPORTED on its control-channel hello.
+	// It is the fleet's only durable answer to "what is each appliance running", and it
+	// costs nothing extra on the wire: the version already rides on every hello and was
+	// previously logged and discarded. A no-op when the version is unchanged, so a node
+	// that reconnects every few minutes does not rewrite its row each time.
+	RecordVersion(ctx context.Context, nodeID, version string) error
 	// FleetStatus returns a rollup of the fleet's liveness and certificate health
 	// (counts of online/lost/self-dropped nodes and certs expiring/expired).
 	FleetStatus(ctx context.Context) (FleetStatus, error)
@@ -646,6 +652,41 @@ func (s *nodeRegistry) SetAutoRenew(ctx context.Context, nodeID string, enabled 
 	}
 	return node, nil
 }
+
+// RecordVersion stores the version a node reported on its control-channel hello.
+// See INodeRegistry.
+func (s *nodeRegistry) RecordVersion(ctx context.Context, nodeID, version string) error {
+	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
+	if nodeID == "" || version == "" {
+		return nil
+	}
+	node, err := s.nodes.GetByUnique(ctx, "", "node_id", nodeID)
+	if err != nil {
+		return err
+	}
+	if node == nil {
+		return ErrNodeUnknown
+	}
+	now := time.Now().Unix()
+	if node.Version == version {
+		// Same version as last time. Nodes reconnect often — a restart, a flapping link,
+		// a control-plane failover — and rewriting the row on every hello would put a
+		// steady write load on the database for no new information. The freshness stamp
+		// is only moved when it would otherwise look stale.
+		if now-node.VersionSeenAt < versionSeenRefreshSeconds {
+			return nil
+		}
+	}
+	node.Version = version
+	node.VersionSeenAt = now
+	_, err = s.nodes.UpdateById(ctx, "", *node)
+	return err
+}
+
+// versionSeenRefreshSeconds bounds how stale a node's version timestamp may get while the
+// version itself is unchanged. An hour is short enough that "last seen running X" is
+// meaningful and long enough that reconnect storms cost nothing.
+const versionSeenRefreshSeconds = 3600
 
 // autoRenewBackfilledKey guards the one-time backfill so it runs at most once per
 // control plane, no matter how many times the process restarts.

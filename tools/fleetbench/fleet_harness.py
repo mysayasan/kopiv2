@@ -1,7 +1,7 @@
 # W2-2 bench harness: a real control plane + two really adopted mymatasan nodes.
 # Follows docs/FLAGSHIP_BENCH_CHECKLIST.md; only the liveness half is needed here
 # (no cameras, no recording), so this is the cheap version of that harness.
-import io, json, os, subprocess, sys, time
+import io, json, os, shutil, subprocess, sys, time
 import urllib3, requests
 
 urllib3.disable_warnings()
@@ -89,17 +89,68 @@ def teardown(wipe=False):
 NODE_IMAGE = os.environ.get("KOPIV2_NODE_IMAGE", "debian:bookworm-slim")
 
 
+# NODE_HOME_RW makes each node's application directory a WRITABLE PRIVATE COPY instead of a
+# read-only bind mount of the repo. Set KOPIV2_NODE_HOME_RW=1 for any bench that exercises
+# self-update: the node refuses to replace its own binary when its home is not writable
+# (services.UpdateService.canSelfUpdate probes exactly that), so without this a rollout bench
+# measures the refusal rather than the feature. It is off by default because a writable mount
+# of apps/<app> would let a node write into the repository.
+NODE_HOME_RW = os.environ.get("KOPIV2_NODE_HOME_RW") == "1"
+
+
+def node_home(name, app):
+    """The path to mount at /home/app for one node, and whether it is writable."""
+    if not NODE_HOME_RW:
+        return os.path.join(REPO, "apps", app), "ro"
+    dest = os.path.join(ROOT, name, "home")
+    if os.path.isdir(dest):
+        shutil.rmtree(dest, ignore_errors=True)
+    # Copy only what the app reads at runtime; the React source tree is large and unused.
+    os.makedirs(dest, exist_ok=True)
+    src = os.path.join(REPO, "apps", app)
+    for entry in os.listdir(src):
+        if entry in ("views", "node_modules", "data", "logs"):
+            continue
+        s_path, d_path = os.path.join(src, entry), os.path.join(dest, entry)
+        if os.path.isdir(s_path):
+            shutil.copytree(s_path, d_path, dirs_exist_ok=True)
+        else:
+            shutil.copy2(s_path, d_path)
+    return dest, "rw"
+
+
+def node_binary(name, app):
+    """Give each node its OWN copy of the binary, and return the name to run.
+
+    Every container used to execute the same file out of the shared bin dir, which makes it
+    impossible to upgrade one node without touching the file the others are running — the
+    rename fails outright on Windows, where the running containers hold a lock. A private
+    copy per node is a few tens of megabytes in .artifacts and it makes "upgrade exactly one
+    appliance" a thing a bench can actually do.
+    """
+    if app != "mymatasan":
+        return app
+    private = "%s-%s" % (app, name)
+    src = os.path.join(ROOT, "bin", app)
+    dst = os.path.join(ROOT, "bin", private)
+    shutil.copyfile(src, dst)
+    os.chmod(dst, 0o755)
+    return private
+
+
 def start_container(name, app, tls_port, host_port):
     data = os.path.join(ROOT, name)
+    home, mode = node_home(name, app)
+    binary = node_binary(name, app)
     args = ["docker", "run", "-d", "--name", name, "--network", "benchnet",
             "-p", "%d:%d" % (host_port, tls_port),
             "-v", os.path.join(ROOT, "bin") + ":/bin/app:ro",
-            "-v", os.path.join(REPO, "apps", app) + ":/home/app:ro",
+            "-v", home + ":/home/app:" + mode,
             "-v", data + ":/data",
             "-e", "%s_HOME=/home/app" % app.upper(),
             "-e", "%s_DATA=/data" % app.upper(),
             "-w", "/data", NODE_IMAGE if app == "mymatasan" else "debian:bookworm-slim",
-            "/bin/app/" + app]
+            "/bin/app/" + binary]
     sh(*args)
 
 
