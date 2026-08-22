@@ -99,6 +99,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-22 — mymatasan 1.129.0, myseliasan 1.70.0 (237a88f)
+
+### Added
+
+- **mymatasan,myseliasan**: A fleet can now be upgraded a few appliances at a time instead of all at once. Plan a rollout to a specific version and the control plane divides the estate into RINGS — a canary first — asks each ring to install that exact version over the existing control channel, and refuses to start the next ring until the current one has proved itself. Proving itself means three things, not one: every node in the ring came back on the control channel, REPORTED the target version itself, and held that state for a settle window. Those catch three different ways an upgrade goes wrong — a node that never returns, a node that returns still running the old build because the swap silently failed, and a node that boots, looks perfectly healthy, and falls over a minute later. The control plane can judge any of this because it now records what each appliance says it is running, captured from the control-channel greeting that already carried it. Nodes that cannot replace their own binary at all — a container image, a package-managed install — are identified while the rollout is being PLANNED, listed with the way they are actually upgraded instead, and left out of the rings rather than discovered by a canary that fails on one. The rollout screen for all of this is the API and the audit trail; every plan, start, halt and completion is recorded.
 ## 2026-08-22 — mymatasan 1.128.0, myseliasan 1.69.0 (75faf23)
 
 ### Added
