@@ -19,7 +19,9 @@ thirty free variables pulled out of an 800-line scope.
     see `wire_vision.go.md`), `objectBackend`, `httpsPort`.
   - Domain services: `camera`, `vision`, `detectionClass`, `training`, `teach`,
     `faceGallery` (`*services.FaceGalleryService` — the global enrolled-face gallery, see
-    `services/face_gallery.go.md`), `recording`, `observation`, `metadata`, `localUser`,
+    `services/face_gallery.go.md`), `recording`, `observation`, `sightingSearch`
+    (`*services.SightingSearch` — answers the control plane's federated fleet search over
+    this node, W2-4/F-10; see `services/sighting_search.go.md`), `metadata`, `localUser`,
     `setupState`, `pairing`.
   - Settings services: `settings`, `notificationSettings`, `healthSettings`,
     `machineHealthSettings`, `anomalySettings`.
@@ -47,6 +49,7 @@ thirty free variables pulled out of an 800-line scope.
     closure at request time, so `w.systemReset = systemResetService` is what arms the gate.
 - `(*wiring) validate() error` — fails fast, naming every missing field, if a pointer/struct
   field on `wiring` was left unset (nil) when the composition root finished populating it.
+  `sightingSearch` is checked like any other domain service.
   Checks every field except `systemReset` (legitimately nil at the point `validate` runs;
   set later) and `deps`/`httpsPort` (not pointers) — `accessRoles`/`accessPerms`, `audit`,
   `continuitySettings`, `evidence`, and `tamperSettings` are all included. Called from

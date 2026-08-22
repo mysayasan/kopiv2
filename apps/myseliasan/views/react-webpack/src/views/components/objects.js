@@ -33,9 +33,8 @@ export function ObjectsPage({ nodes = [], onToast }) {
 
 // ---------------------------------------------------------------------------- search ---
 
-const PER_NODE_LIMIT = 100;
-const MAX_RESULTS = 300;
 const DEFAULT_MIN_CONF = 60;
+const RESULT_LIMIT = 300;
 
 function objectCategory(label) {
   const l = String(label || '').toLowerCase();
@@ -50,101 +49,146 @@ const localDateStr = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2
 const dayStartEpoch = (s) => Math.floor(new Date(`${s}T00:00:00`).getTime() / 1000);
 const dayEndEpoch = (s) => Math.floor(new Date(`${s}T23:59:59`).getTime() / 1000);
 
+// adaptHit maps one federated sighting onto the row shape the footage cell and the two
+// modals already read (they are shared with mymatasan's own Object Search and are left
+// untouched), while keeping the fleet-only fields the results table shows.
+function adaptHit(hit) {
+  return {
+    ...hit,
+    id: `${hit.nodeId}:${hit.kind}:${hit.id}`,
+    _nodeId: hit.nodeId,
+    _nodeName: hit.nodeName || hit.nodeId,
+    _cameraLabel: hit.cameraName || '',
+    maxConfidence: hit.confidence,
+    maxCount: hit.count,
+  };
+}
+
+// FleetObjectSearch searches every node the signed-in role can reach, THROUGH the control
+// plane rather than from the browser.
+//
+// The fan-out used to live here: one proxied request per node, per search, plus one more
+// per node for its camera names, with failures swallowed by a .catch that returned an empty
+// list. That shape could not tell an operator that three of nine recorders never answered —
+// the page simply showed fewer rows. Federation now happens server-side and returns a
+// COVERAGE block, which this renders above the results: an incomplete search says so.
 function FleetObjectSearch({ nodes }) {
   const t = useT();
   const nodeList = useMemo(() => (Array.isArray(nodes) ? nodes : []), [nodes]);
 
   const [scope, setScope] = useState('all'); // 'all' | nodeId
+  const [siteId, setSiteId] = useState(0);
+  const [sites, setSites] = useState([]);
   const [labels, setLabels] = useState([]);
   const [objs, setObjs] = useState([]);
+  const [text, setText] = useState('');
   const [from, setFrom] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 6); return localDateStr(d); });
   const [to, setTo] = useState(() => localDateStr(new Date()));
   const [minConf, setMinConf] = useState(DEFAULT_MIN_CONF);
   const [rows, setRows] = useState([]);
-  const [camNames, setCamNames] = useState(new Map());
+  const [coverage, setCoverage] = useState(null);
+  const [truncated, setTruncated] = useState(false);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
-  const [truncated, setTruncated] = useState(false);
   const [playing, setPlaying] = useState(null);
   const [maximizing, setMaximizing] = useState(null);
 
-  const targets = useMemo(
-    () => (scope === 'all' ? nodeList : nodeList.filter((n) => String(n.nodeId) === String(scope))),
-    [scope, nodeList],
-  );
-
-  // Aggregate the object-label list across the current scope so the picker offers what the
-  // nodes actually recorded.
+  // Sites populate the site scope — the query term F-10 asked for and the browser fan-out
+  // never had. A failure here hides the selector rather than blocking the search.
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      const per = await Promise.all(targets.slice(0, 25).map(async (n) => {
-        const r = await api(`/api/nodes/${encodeURIComponent(n.nodeId)}/proxy/api/observations/labels`, { noRedirect: true }).catch(() => ({ ok: false }));
-        return r.ok ? (Array.isArray(r.body) ? r.body : (r.body?.items || [])) : [];
-      }));
-      if (cancelled) return;
-      const set = new Set();
-      per.flat().forEach((l) => { if (l) set.add(String(l)); });
-      setLabels([...set].sort());
-    })();
+    api('/api/sites', { noRedirect: true })
+      .then((r) => { if (!cancelled && r.ok) setSites(Array.isArray(r.body) ? r.body : (r.body?.items || [])); })
+      .catch(() => {});
     return () => { cancelled = true; };
-  }, [targets]);
+  }, []);
 
-  const camName = useCallback((nodeId, cameraId) => camNames.get(`${nodeId}:${cameraId}`) || t('obj.cameraN', { id: cameraId }), [camNames, t]);
+  const scopeParams = useCallback(() => {
+    const p = new URLSearchParams();
+    if (scope !== 'all') p.set('nodeId', scope);
+    if (siteId > 0) p.set('siteId', String(siteId));
+    return p;
+  }, [scope, siteId]);
 
-  async function loadCamNames(list) {
-    const per = await Promise.all(list.map(async (n) => {
-      const r = await api(`/api/nodes/${encodeURIComponent(n.nodeId)}/proxy/api/cameras?limit=500`, { noRedirect: true }).catch(() => ({ ok: false }));
-      const cams = r.ok ? (Array.isArray(r.body) ? r.body : (r.body?.items || [])) : [];
-      return { nodeId: n.nodeId, cams };
-    }));
-    const m = new Map();
-    per.forEach(({ nodeId, cams }) => cams.forEach((c) => m.set(`${nodeId}:${c.id}`, c.name || t('obj.cameraN', { id: c.id }))));
-    setCamNames(m);
-  }
+  // The label picker is populated from the fleet-wide union, computed server-side. The old
+  // browser version capped its fan-out at 25 nodes, so a larger estate silently offered a
+  // filter list missing whatever the remaining nodes had seen.
+  useEffect(() => {
+    let cancelled = false;
+    const p = scopeParams();
+    api(`/api/nodes/search/labels?${p}`, { noRedirect: true })
+      .then((r) => {
+        if (cancelled || !r.ok) return;
+        setLabels(Array.isArray(r.body?.labels) ? r.body.labels : []);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [scopeParams]);
 
   async function runSearch(e) {
     if (e && e.preventDefault) e.preventDefault();
     setLoading(true);
     setSearched(true);
-    const filters = [];
-    if (from) filters.push({ fieldName: 'startedAt', compare: 5, value: dayStartEpoch(from) });
-    if (to) filters.push({ fieldName: 'startedAt', compare: 6, value: dayEndEpoch(to) });
-    if (objs.length) filters.push({ fieldName: 'label', compare: 7, value: objs });
-    if (minConf > 0) filters.push({ fieldName: 'maxConfidence', compare: 5, value: minConf / 100 });
-    const sorters = [{ fieldName: 'startedAt', sort: 2 }];
-    const per = await Promise.all(targets.map(async (n) => {
-      const p = new URLSearchParams({ limit: String(PER_NODE_LIMIT), offset: '0', filters: JSON.stringify(filters), sorters: JSON.stringify(sorters) });
-      const r = await api(`/api/nodes/${encodeURIComponent(n.nodeId)}/proxy/api/observations?${p}`, { noRedirect: true }).catch(() => ({ ok: false }));
-      const items = r.ok ? (Array.isArray(r.body) ? r.body : (r.body?.items || [])) : [];
-      return items.map((it) => ({ ...it, id: `${n.nodeId}:${it.id}`, _nodeId: n.nodeId, _nodeName: n.name || n.nodeId }));
-    }));
-    const merged = per.flat().sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
-    setRows(merged.slice(0, MAX_RESULTS));
-    setTruncated(merged.length > MAX_RESULTS);
+    const p = scopeParams();
+    if (from) p.set('from', String(dayStartEpoch(from)));
+    if (to) p.set('to', String(dayEndEpoch(to)));
+    if (objs.length) p.set('labels', objs.join(','));
+    if (text.trim()) p.set('text', text.trim());
+    if (minConf > 0) p.set('minConfidence', String(minConf / 100));
+    p.set('limit', String(RESULT_LIMIT));
+    const r = await api(`/api/nodes/search?${p}`, { noRedirect: true }).catch(() => ({ ok: false }));
+    if (!r.ok) {
+      setRows([]);
+      // A failed search is not an empty one. Leaving the previous coverage on screen would
+      // attach it to results that were never fetched.
+      setCoverage({ failed: true, message: r.message || '' });
+      setTruncated(false);
+      setLoading(false);
+      return;
+    }
+    setRows((Array.isArray(r.body?.items) ? r.body.items : []).map(adaptHit));
+    setCoverage(r.body?.coverage || null);
+    setTruncated(Boolean(r.body?.truncated));
     setLoading(false);
-    loadCamNames(targets);
   }
 
   const columns = [
     { key: '_nodeName', label: t('obj.colNode') },
+    { key: 'siteName', label: t('obj.colSite') },
     { key: 'startedAt', label: t('obj.colTime'), render: (v) => formatTimestamp(v) },
-    { key: 'cameraId', label: t('obj.colCamera'), render: (v, r) => camName(r._nodeId, v) },
+    { key: '_cameraLabel', label: t('obj.colCamera'), render: (v, r) => v || t('obj.cameraN', { id: r.cameraId }) },
     {
       key: 'label',
       label: t('obj.colObject'),
-      render: (v, r) => (
+      render: (v, r) => (r.kind === 'identity' ? (
+        <span className="object-tag object-tag--identity" title={v}>
+          {r.identity}
+          <span className="object-tag-kind">{r.identityKind === 'plate' ? t('obj.kindPlate') : t('obj.kindFace')}</span>
+        </span>
+      ) : (
         <span className={`object-tag object-tag--${objectCategory(v)}`}>{v}{r.maxCount > 1 ? ` ×${r.maxCount}` : ''}</span>
-      ),
+      )),
     },
     { key: 'maxConfidence', label: t('obj.colConfidence'), render: (v) => `${Math.round((v || 0) * 100)}%` },
     {
       key: 'footage',
       label: t('obj.colFootage'),
       filterable: false,
-      render: (_v, r) => (r.footagePending || !r.segmentId
-        ? <span className="footage-pending">{t('obj.footagePending')}</span>
-        : <FootageThumb row={r} onPlay={() => setPlaying(r)} onMaximize={() => setMaximizing(r)} t={t} />),
+      render: (_v, r) => {
+        // An identity hit is an ALERT, not a presence interval: its evidence is the stored
+        // alert snapshot, and it has no covering segment to seek into. Falling through to
+        // the object branch would have labelled every plate the fleet ever recognized
+        // "No footage" while its picture sat on the node, unoffered.
+        if (r.kind === 'identity') {
+          return r.hasSnapshot
+            ? <IdentityThumb row={r} onOpen={() => setMaximizing(r)} t={t} />
+            : <span className="footage-pending">{t('obj.noSnapshot')}</span>;
+        }
+        if (r.footagePending || !r.segmentId) {
+          return <span className="footage-pending">{r.footagePending ? t('obj.footagePending') : t('obj.noFootage')}</span>;
+        }
+        return <FootageThumb row={r} onPlay={() => setPlaying(r)} onMaximize={() => setMaximizing(r)} t={t} />;
+      },
     },
   ];
 
@@ -160,8 +204,20 @@ function FleetObjectSearch({ nodes }) {
               {nodeList.map((n) => <option key={n.nodeId} value={n.nodeId}>{n.name || n.nodeId}</option>)}
             </select>
           </label>
+          {sites.length > 1 ? (
+            <label>{t('obj.site')}
+              <select value={siteId} onChange={(e) => setSiteId(Number(e.target.value) || 0)} disabled={loading}>
+                <option value="0">{t('obj.allSites')}</option>
+                {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </label>
+          ) : null}
           <label>{t('obj.object')}
             <LabelPicker labels={labels} value={objs} onChange={setObjs} disabled={loading} t={t} />
+          </label>
+          <label>{t('obj.identity')}
+            <input type="search" value={text} placeholder={t('obj.identityPlaceholder')}
+              onChange={(e) => setText(e.target.value)} disabled={loading} />
           </label>
           <label>{t('obj.from')}<input type="date" value={from} max={to} onChange={(e) => setFrom(e.target.value)} disabled={loading} /></label>
           <label>{t('obj.to')}<input type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)} disabled={loading} /></label>
@@ -169,7 +225,7 @@ function FleetObjectSearch({ nodes }) {
           <button type="submit" disabled={loading}><span className="btn-icon"><Ico n="search" /> {loading ? t('obj.searching') : t('obj.search')}</span></button>
         </form>
 
-        {truncated ? <p className="settings-hint">{t('obj.truncated', { n: MAX_RESULTS })}</p> : null}
+        {searched && !loading ? <SearchCoverage coverage={coverage} truncated={truncated} t={t} /> : null}
         {searched && !loading && rows.length === 0 ? (
           <p className="settings-hint">{t('obj.noResults')}</p>
         ) : (
@@ -185,6 +241,63 @@ function FleetObjectSearch({ nodes }) {
           onPlay={() => { const r = maximizing; setMaximizing(null); setPlaying(r); }}
           t={t}
         />
+      ) : null}
+    </div>
+  );
+}
+
+// COVERAGE_STATUS_KEY maps a node's coverage status onto its translated label. Written as an
+// explicit map rather than a built key so the i18n drift guard can see every string that
+// ships, and so an unknown status from a newer control plane renders as itself rather than
+// as a missing-key placeholder.
+const COVERAGE_STATUS_KEY = {
+  offline: 'obj.statusOffline',
+  timeout: 'obj.statusTimeout',
+  denied: 'obj.statusDenied',
+  unsupported: 'obj.statusUnsupported',
+  error: 'obj.statusError',
+};
+
+// SearchCoverage says what the search actually reached.
+//
+// It is not decoration. An empty result set means one of two completely different things —
+// "the fleet never saw this" or "the recorders that would have seen it were not asked" —
+// and only this block can tell them apart. So it renders on EVERY completed search: a
+// reassuring line when coverage was total, a warning naming each unanswered node otherwise.
+function SearchCoverage({ coverage, truncated, t }) {
+  if (!coverage) return null;
+  if (coverage.failed) {
+    return <p className="search-coverage search-coverage--bad">{coverage.message || t('obj.coverageFailed')}</p>;
+  }
+  const searched = coverage.searched || 0;
+  const answered = coverage.answered || 0;
+  const problems = (coverage.nodes || []).filter((n) => n.status && n.status !== 'ok');
+  const statusText = (status) => (COVERAGE_STATUS_KEY[status] ? t(COVERAGE_STATUS_KEY[status]) : status);
+
+  if (searched === 0) {
+    return <p className="search-coverage search-coverage--bad">{t('obj.coverageNone')}</p>;
+  }
+  const complete = Boolean(coverage.complete) && !truncated;
+  return (
+    <div className={`search-coverage ${complete ? 'search-coverage--ok' : 'search-coverage--warn'}`}>
+      <p className="search-coverage-headline">
+        {complete ? t('obj.coverageComplete', { n: searched }) : t('obj.coveragePartial', { answered, searched })}
+        {coverage.skippedKind > 0 ? ` ${t('obj.coverageSkipped', { n: coverage.skippedKind })}` : ''}
+      </p>
+      {!complete && coverage.completeThrough > 0 ? (
+        <p className="search-coverage-horizon">{t('obj.coverageHorizon', { time: formatTimestamp(coverage.completeThrough) })}</p>
+      ) : null}
+      {truncated ? <p className="search-coverage-horizon">{t('obj.truncated', { n: RESULT_LIMIT })}</p> : null}
+      {problems.length > 0 ? (
+        <ul className="search-coverage-nodes">
+          {problems.map((n) => (
+            <li key={n.nodeId}>
+              <strong>{n.nodeName || n.nodeId}</strong>
+              <span className={`coverage-status coverage-status--${n.status}`}>{statusText(n.status)}</span>
+              {n.reason ? <span className="coverage-reason">{n.reason}</span> : null}
+            </li>
+          ))}
+        </ul>
       ) : null}
     </div>
   );
@@ -233,22 +346,56 @@ function boxStrFromPeak(peakBox) {
   return '';
 }
 
+// snapshotUrl builds the image for one sighting, at the requested width.
+//
+// The two kinds of hit keep their evidence in different places, and this is the only spot
+// that needs to know: an object sighting is a moment inside recorded footage, so the frame
+// is rendered from its covering segment with the peak box drawn on; an identity hit is an
+// alert, whose snapshot the node already stored when the rule fired. Both go over the
+// node's proxy — the browser never contacts an appliance directly.
+function snapshotUrl(row, width) {
+  const proxy = `${apiBase()}/api/nodes/${encodeURIComponent(row._nodeId)}/proxy`;
+  if (row.kind === 'identity') {
+    return `${proxy}/api/vision/alerts/${row.id}/snapshot`;
+  }
+  const pct = Math.round((row.maxConfidence || 0) * 100);
+  const params = new URLSearchParams({ seek: String(row.seekSeconds || 0), w: String(width) });
+  const boxStr = boxStrFromPeak(row.peakBox);
+  if (boxStr) {
+    params.set('box', boxStr);
+    params.set('label', `${row.label || ''} ${pct}%`.trim());
+  }
+  return `${proxy}/api/recording/segments/${row.segmentId}/frame?${params}`;
+}
+
+// IdentityThumb is the footage cell for a recognized plate or face: the alert snapshot the
+// node kept, click to enlarge. There is no play action — an alert is a moment, and the
+// clip that may or may not surround it is a different question from "is this the car".
+function IdentityThumb({ row, onOpen, t }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return <span className="footage-pending">{t('obj.noSnapshot')}</span>;
+  }
+  return (
+    <div className="obs-thumb">
+      <img src={snapshotUrl(row, 200)} alt="" loading="lazy" onError={() => setFailed(true)} />
+      <div className="obs-thumb-actions">
+        <button type="button" className="obs-thumb-btn" onClick={onOpen} title={t('obj.maximize')} aria-label={t('obj.maximize')}>
+          <Ico n="camera" sz={16} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // FootageThumb is the footage cell, matching mymatasan's Object Search exactly: a boxed
 // snapshot of the sighting moment (proxied frame, box + label drawn server-side) with
 // translucent overlay buttons — Play (opens the covering segment) and Maximize (opens the
 // snapshot large). Falls back to a plain play button if the frame fails to load.
 function FootageThumb({ row, onPlay, onMaximize, t }) {
   const [failed, setFailed] = useState(false);
-  const boxStr = boxStrFromPeak(row.peakBox);
-  const pct = Math.round((row.maxConfidence || 0) * 100);
-  const params = new URLSearchParams({ seek: String(row.seekSeconds || 0), w: '200' });
-  if (boxStr) {
-    params.set('box', boxStr);
-    // Label the box with the object + its confidence, so the drawn frame reads e.g.
-    // "person 87%".
-    params.set('label', `${row.label || ''} ${pct}%`.trim());
-  }
-  const url = `${apiBase()}/api/nodes/${encodeURIComponent(row._nodeId)}/proxy/api/recording/segments/${row.segmentId}/frame?${params}`;
+  // The box + label are drawn server-side, so the cell reads e.g. "person 87%".
+  const url = snapshotUrl(row, 200);
   if (failed) {
     return (
       <button type="button" className="obs-thumb obs-thumb--empty" onClick={onPlay} title={t('obj.play')} aria-label={t('obj.play')}>
@@ -313,7 +460,7 @@ function ObjVideoModal({ row, onClose, t }) {
       <div className="video-dialog" onClick={(e) => e.stopPropagation()}>
         <div className="video-dialog-header">
           <div className="video-dialog-title-group">
-            <span className="video-dialog-title">{row._nodeName} · {t('obj.cameraN', { id: row.cameraId })}</span>
+            <span className="video-dialog-title">{row._nodeName} · {row._cameraLabel || t('obj.cameraN', { id: row.cameraId })}</span>
             <span className={`object-tag object-tag--${objectCategory(row.label)}`}>{row.label}{row.maxCount > 1 ? ` ×${row.maxCount}` : ''}</span>
           </div>
           <button type="button" className="video-dialog-close" onClick={onClose} aria-label={t('obj.close')}>✕</button>
@@ -351,14 +498,8 @@ function ObjVideoModal({ row, onClose, t }) {
 // ObjSnapModal opens the sighting snapshot large (higher-res render of the same boxed frame),
 // with a Play action to switch to footage — mirroring mymatasan's maximize dialog.
 function ObjSnapModal({ row, onClose, onPlay, t }) {
-  const boxStr = boxStrFromPeak(row.peakBox);
   const pct = Math.round((row.maxConfidence || 0) * 100);
-  const params = new URLSearchParams({ seek: String(row.seekSeconds || 0), w: '1280' });
-  if (boxStr) {
-    params.set('box', boxStr);
-    params.set('label', `${row.label || ''} ${pct}%`.trim());
-  }
-  const url = `${apiBase()}/api/nodes/${encodeURIComponent(row._nodeId)}/proxy/api/recording/segments/${row.segmentId}/frame?${params}`;
+  const url = snapshotUrl(row, 1280);
   useEffect(() => {
     const k = (e) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', k);
@@ -369,7 +510,7 @@ function ObjSnapModal({ row, onClose, onPlay, t }) {
       <div className="snap-dialog" onClick={(e) => e.stopPropagation()}>
         <div className="video-dialog-header">
           <div className="video-dialog-title-group">
-            <span className="video-dialog-title">{row._nodeName} · {t('obj.cameraN', { id: row.cameraId })}</span>
+            <span className="video-dialog-title">{row._nodeName} · {row._cameraLabel || t('obj.cameraN', { id: row.cameraId })}</span>
             <span className={`object-tag object-tag--${objectCategory(row.label)}`}>{row.label}{row.maxCount > 1 ? ` ×${row.maxCount}` : ''}</span>
           </div>
           <button type="button" className="video-dialog-close" onClick={onClose} aria-label={t('obj.close')}>✕</button>
@@ -377,9 +518,11 @@ function ObjSnapModal({ row, onClose, onPlay, t }) {
         <div className="snap-body"><img className="snap-image" src={url} alt="" /></div>
         <div className="video-dialog-meta">
           {formatTimestamp(row.startedAt)} · {pct}%
-          <button type="button" className="quiet snap-play" onClick={onPlay}>
-            <span className="btn-icon"><Ico n="play" /> {t('obj.play')}</span>
-          </button>
+          {row.segmentId ? (
+            <button type="button" className="quiet snap-play" onClick={onPlay}>
+              <span className="btn-icon"><Ico n="play" /> {t('obj.play')}</span>
+            </button>
+          ) : null}
         </div>
       </div>
     </div>

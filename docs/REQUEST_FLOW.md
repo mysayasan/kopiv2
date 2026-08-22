@@ -255,6 +255,57 @@ event), this flow is timer-driven: nothing a node does triggers it, only the pas
 → (compliant | drifted | unknown | unmanaged) → if drifted AND enforcing: merge + `PUT` +
 re-`GET` verify → audit (`policy.enforce`) → stored compliance report → served to the SPA.
 
+## Federated Cross-Node Search Flow (myseliasan → nodes)
+
+This flow answers "where was this seen" across the whole fleet in one request — federated
+cross-node search, flagship hardening W2-4 (finding F-10). Unlike every other node-tunneled
+flow in this document, it fans a SINGLE request out to MANY nodes at once rather than
+proxying one browser call to one node.
+
+1. The browser calls `GET /api/nodes/search` (or `/search/labels`) once, with the search
+   terms in the query string — never a per-node proxied call, unlike the browser-side fan-out
+   this replaced.
+2. `apps/myseliasan/apis/fleet_search_api.go` resolves the caller's **live** role and calls
+   `FleetSearchService.Search`, which resolves the set of nodes that role can reach (per-node
+   access grants, the same ones the node proxy uses) and that are a kind capable of holding
+   sightings (a camera node; an IoT hub or door controller is skipped and counted, not
+   silently dropped).
+3. For each target node, concurrently (bounded to 8 at once, each under its own 15s
+   deadline), `apps/myseliasan/services/fleet_search.go` sends ONE tunneled `control.Request`
+   per requested source over the SAME control channel/tunnel the node proxy and the fleet
+   policy reconciler use: `GET /api/observations/search` (object sightings) and/or
+   `GET /api/vision/alerts/identities` (recognized plates/faces).
+4. On the node, each endpoint answers through `apps/mymatasan/services/sighting_search.go`,
+   which reads through the SAME `ObservationService` the node's own Objects page uses (so a
+   sighting found by the fleet search resolves to the same footage segment the node's own UI
+   would open for it), joins in camera names, and declares `capped`/`oldest` when it returned
+   only a prefix of its matches.
+5. Each node's outcome — success (with its hits), or a transport/HTTP failure classified into
+   `offline | timeout | denied | unsupported | error` — becomes one `NodeCoverage` entry;
+   `myseliasan` never treats a failed or unreachable node as "saw nothing".
+6. Once every fan-out goroutine returns (or times out), the results are merged newest-first
+   (deterministic tie-break: node id, then row id), clamped to the requested limit
+   (`truncated: true` if cut), and returned alongside the `coverage` block: which nodes were
+   searched, how many answered, whether the result set is `complete`, and — if any node
+   capped — `completeThrough`, the timestamp back to which the merged result is guaranteed
+   complete.
+7. `fleet_search_api.go` audits the search as `fleet.search` with the query terms and an
+   outcome of `"partial"` whenever `coverage.complete` is false, so the audit trail can never
+   be misread as proof the whole fleet was actually asked.
+8. The frontend (`views/components/objects.js`'s `FleetObjectSearch`) renders a coverage
+   banner on every completed search — a reassuring line when every reachable node answered in
+   full, and a per-node breakdown (status + reason) otherwise — so an empty or partial result
+   set is never displayed as "nothing was seen" when part of the fleet was never actually
+   reached.
+
+**Data path summary:** browser → `GET /api/nodes/search` → `FleetSearchService.Search` →
+(per accessible, sighting-capable node, bounded parallel fan-out) control channel →
+`GET /api/observations/search` + `GET /api/vision/alerts/identities` → node's
+`SightingSearch` (reuses `ObservationService`'s footage linkage) → merged, capped, and
+coverage-annotated `FleetSearchResult` → audit (`fleet.search`, outcome `success`/`partial`)
+→ browser coverage banner. See `docs/modules/apps/myseliasan/services/fleet_search.go.md`,
+`docs/modules/apps/mymatasan/services/sighting_search.go.md`.
+
 ## Two-Way Audio (Talk-Back) Flow (browser mic → mymatasan → camera)
 
 This flow lets an operator speak through a camera's own speaker from the live-view tile. Direction is the reverse of live view — audio flows browser → server → camera. Two transports are resolved server-side, in order: the standard ONVIF RTSP audio backchannel, then the TP-Link Tapo/VIGI proprietary port-8800 protocol for consumer cameras with no RTSP backchannel.

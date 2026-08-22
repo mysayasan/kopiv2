@@ -351,6 +351,54 @@ actually lost. See the plan's W2-2 entry. Re-benched at 99s against 100s.
 - Data dirs survive `docker rm`, so a re-run inherits a rotated password and an already-paired
   node. Wipe them, or try every known password.
 
+## W2-4 · Federated cross-node search  ⟨ DONE (2026-08-22), 36/36
+
+`tools/fleetbench/bench_w24_search.py` on the same two-node harness. No cameras and no
+recording: the sightings are SEEDED straight into each node's sqlite with the container
+stopped, because what is being benched is the federation, not the detector.
+
+The seed is deliberately awkward in one way — **both nodes number their cameras 1 and 2** —
+so a result identified by camera id alone would be ambiguous, and the assertion that each
+node joined its OWN camera names actually means something.
+
+What passed: one search returning both nodes' sightings merged newest-first; object, time,
+site, plate-text and person-name filters each narrowing correctly; a partial plate and a
+lower-cased person name both found on the right node and camera; the descriptor an operator
+reads off an alert ("white car") finding the plate; alerts carrying no identity — including
+the diagnostics that are the bulk of the table — staying out of identity results; objects and
+identities interleaved in one list; the label picker as the fleet-wide union; a truncated
+page declaring itself and saying how far back it IS complete; and every search written to the
+audit trail with its terms, `partial` when coverage was incomplete and `success` when it was
+not.
+
+**The assertion the feature exists for:** `docker stop node-b` mid-investigation, then search
+again. node-b is reported BY NAME with status `offline` and a reason, the result refuses to
+call itself complete, node-a's sightings still come back, the label picker drops node-b's
+labels AND says so — and a search for a person who is only on node-b returns nothing with the
+coverage block explaining why. Restarting node-b returns the search to complete.
+
+**The defect the bench found came from the BROWSER, not the API.** A headless-Chrome pass
+over the rewritten screen showed every sighting labelled "Recording…" — footage on its way —
+on cameras that record nothing at all, because "newer than this camera's newest footage" is
+true forever when there is none. Fixed by reading the recording configs to LABEL, never to
+filter. **Drive the screen, not only the endpoint: a green API and a screen that lies look
+identical from the API side.**
+
+### Traps this bench added
+
+- **`SendPagingResult` is DOUBLE-wrapped** — `{message, durationMs, data:{result, paging}}` —
+  while `SendResult` returns `{message, result}`. Reading the audit endpoint with the
+  single-level unwrapper yields an empty list, which is indistinguishable from a feature that
+  recorded nothing; the first run of this bench reported exactly that about a perfectly
+  working audit trail. The same double-wrapping is why the control plane's node-response
+  decoder accepts all three shapes.
+- **Seed with a VERIFIED column list.** `PRAGMA table_info` first and fail loudly on any key
+  that is not a real column: a mismatched name is dropped in silence by the dict filter and
+  the row lands with that field empty, which reads as a bug in whatever consumes it.
+- **Compute the expected count from the seed, not from memory.** The first run asserted two
+  rows in a time window that genuinely contains three — a bench bug that looked exactly like
+  a filter being off by one boundary.
+
 ---
 
 # The fleet harness — build it once, reuse it

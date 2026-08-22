@@ -332,6 +332,11 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// observation service is the read/maintenance side (search + footage linkage + purge).
 	metadataRecorder := services.NewMetadataRecorder(repo.ObjectObservation, recordingService, appCfg.Vision.Detector.MinObjectConfidence)
 	observationService := services.NewObservationService(repo.ObjectObservation, recordingService)
+	// The federated-search answering service (W2-4). It reads through the observation
+	// service so a sighting found by a fleet search resolves to the same footage segment
+	// the node's own Objects page would open for it, and adds the alert-event half —
+	// plates and recognized faces — which the object index does not hold.
+	sightingSearch := services.NewSightingSearch(observationService, repo.AlertEvent, repo.Camera)
 	notificationService := notification.NewService(repo.Notification, notificationOptionsFromAppConfig(deps.Config, deps.Logger, deps.Metrics))
 	// Incrementally aggregate the notifications feed into the hourly rollup table
 	// that powers the dashboard's baseline/anomaly analytics (Phase 0). The cursor
@@ -618,6 +623,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		faceGallery:    faceGalleryService,
 		recording:      recordingService,
 		observation:    observationService,
+		sightingSearch: sightingSearch,
 		metadata:       metadataRecorder,
 		localUser:      localUserService,
 		setupState:     setupStateService,

@@ -17,6 +17,7 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o .artifacts/fleetbench/bin/myse
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o .artifacts/fleetbench/bin/mymatasan  ./cmd/mymatasan
 python tools/fleetbench/fleet_harness.py      # stand up cp + node-a + node-b, adopt both
 python tools/fleetbench/bench_w22_sla.py      # W2-2: node state history + SLA reporting
+python tools/fleetbench/bench_w24_search.py   # W2-4: federated cross-node search
 ```
 
 Container data dirs and bench output go to `.artifacts/fleetbench/` (gitignored); override

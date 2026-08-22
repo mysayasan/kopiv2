@@ -26,11 +26,12 @@ type visionApi struct {
 	notifDest services.INotificationDestinationsProvider
 	source    *services.DetectionSource
 	cipher    *atrest.Cipher
+	search    *services.SightingSearch
 }
 
 // NewVisionApi registers AI detection rule, alert, and class-registry routes.
-func NewVisionApi(router *mux.Router, serv services.IVisionService, classes services.IDetectionClassService, recorder *recording.Manager, notifier services.INotificationService, camera services.ICameraService, settings services.IRuntimeSettingsService, notifDest services.INotificationDestinationsProvider, cipher *atrest.Cipher) {
-	handler := &visionApi{serv: serv, classes: classes, recorder: recorder, notifier: notifier, camera: camera, settings: settings, notifDest: notifDest, cipher: cipher,
+func NewVisionApi(router *mux.Router, serv services.IVisionService, classes services.IDetectionClassService, recorder *recording.Manager, notifier services.INotificationService, camera services.ICameraService, settings services.IRuntimeSettingsService, notifDest services.INotificationDestinationsProvider, cipher *atrest.Cipher, search *services.SightingSearch) {
+	handler := &visionApi{serv: serv, classes: classes, recorder: recorder, notifier: notifier, camera: camera, settings: settings, notifDest: notifDest, cipher: cipher, search: search,
 		source: services.NewDetectionSource(camera, recorder, settings, nil)}
 	group := router.PathPrefix("/vision").Subrouter()
 
@@ -41,6 +42,14 @@ func NewVisionApi(router *mux.Router, serv services.IVisionService, classes serv
 	group.HandleFunc("/rules", handler.saveRule).Methods("POST")
 	group.HandleFunc("/rules/{id}", handler.deleteRule).Methods("DELETE")
 	group.HandleFunc("/alerts", handler.listAlerts).Methods("GET")
+	// The identity half of federated fleet search (W2-4): plates and recognized faces,
+	// which live on alert events rather than in the object-metadata index.
+	//
+	// It sits under /vision, NOT under /observations beside the object half, because that
+	// is where its data lives and therefore which grant should govern it. A role that may
+	// read object metadata but not the AI log must not learn who was recognized on this
+	// appliance simply because the question was asked through the control plane.
+	group.HandleFunc("/alerts/identities", handler.searchIdentities).Methods("GET")
 	group.HandleFunc("/alerts", handler.createAlert).Methods("POST")
 	group.HandleFunc("/alerts/purge", handler.purgeAlerts).Methods("POST")
 	group.HandleFunc("/alerts/{id}/snapshot", handler.getAlertSnapshot).Methods("GET")
@@ -49,6 +58,21 @@ func NewVisionApi(router *mux.Router, serv services.IVisionService, classes serv
 	group.HandleFunc("/classes", handler.saveClass).Methods("POST")
 	group.HandleFunc("/classes/{id}", handler.deleteClass).Methods("DELETE")
 	group.HandleFunc("/labels", handler.listLabelCatalog).Methods("GET")
+}
+
+// searchIdentities answers one node's share of a federated identity search — "where has
+// this plate / this person been seen".
+func (a *visionApi) searchIdentities(w http.ResponseWriter, r *http.Request) {
+	if a.search == nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, "search is unavailable")
+		return
+	}
+	page, err := a.search.SearchIdentities(r.Context(), sightingQueryFromRequest(r))
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, page, "succeed")
 }
 
 // detectionFrame returns, as a JPEG, the exact frame the AI detector would sample

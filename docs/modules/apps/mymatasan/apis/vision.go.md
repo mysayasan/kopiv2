@@ -12,6 +12,7 @@ Registers AI detection rule and alert routes for standalone `mymatasan`.
 | `POST`   | `/api/vision/rules`               | Create or update a detection rule. |
 | `DELETE` | `/api/vision/rules/{id}`          | Delete a detection rule. |
 | `GET`    | `/api/vision/alerts`              | List detection alert events with server-side filtering and paging (see query params below). |
+| `GET`    | `/api/vision/alerts/identities`   | **Federated cross-node search (W2-4, F-10)** — this node's answer to the identity half of a fleet-wide search: recognized plates and faces, which live on alert events, not the object-metadata index. Same query-string contract as `GET /api/observations/search` (`from`/`to`, `text`, `identityKinds`, `minConfidence`, `limit` — parsed by the shared `sightingQueryFromRequest`, `apis/observation.go`); delegates to `services.SightingSearch.SearchIdentities`. |
 | `POST`   | `/api/vision/alerts`              | Create an alert event; also triggers clip extraction when a recorder is configured. |
 | `POST`   | `/api/vision/alerts/purge`        | Purge alert events older than `days` (int query param; 0 = all up to now). `onlyDiagnostics=true` limits deletion to diagnostic rows only. Returns `{"deleted": N}`. |
 | `POST`   | `/api/vision/alerts/{id}/ack`     | Mark an alert as acknowledged by the current local user. |
@@ -37,6 +38,7 @@ The legacy `createdAfter`/`createdBefore`/`ruleId`/`detectionType` query params 
 
 ## Notes
 
+- `NewVisionApi(router, serv, classes, recorder, notifier, camera, settings, notifDest, cipher, search *services.SightingSearch)` — the trailing `search` param backs `/alerts/identities`. It sits under `/vision`, NOT under `/observations` beside the object half of federated search, because that is where its data lives and therefore which grant should govern it: a role that may read object metadata but not the AI log must not learn who was recognized on this appliance simply because the question arrived through the control plane. Returns `500` (`"search is unavailable"`) rather than panicking if `search` is `nil`.
 - Route protection is provided by the app-level local Basic Auth middleware.
 - The manual `POST /api/vision/alerts` path passes `frameCapturedAt = 0` to the recorder, which falls back to `time.Now()` as the clip anchor since no source frame is available.
 - JSON request bodies are capped at 2 MiB.
