@@ -98,6 +98,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-22 — mymatasan 1.128.0, myseliasan 1.69.0 (75faf23)
+
+### Added
+
+- **mymatasan,myseliasan**: The fleet can now be asked one question at a time instead of one appliance at a time. A new federated search on the control plane asks every node an operator can reach — in parallel, over the existing mTLS control channel — what it saw, and merges the answers newest-first into a single list: object classes the AI detected, and the plates and people it recognized, narrowed by node, site, object, plate or person text, time window and confidence. Recognized identities do not live in the object index, so each node answers from both: presence intervals from its metadata recorder, and the license-plate and face identities recorded on its alerts. Results carry the node, the site and the CAMERA'S OWN NAME, because every recorder numbers its cameras from one and "camera 3" means a different place on each. Objects are searched under the node's Objects grant and identities under its AI-log grant, so no role can reach through the fleet for data it could not read on the appliance itself, and every estate-wide search is written to the audit trail with the terms it used. The Objects screen now shows a coverage line above the results on every search — which nodes answered, which did not and why, and how far back the answer is actually complete. That line is the feature: the browser used to fan out to each node itself and silently swallow the ones that failed, so a recorder that had been unreachable for a week simply contributed no rows, and an investigator reading an empty table could not tell "the fleet never saw it" from "the half of the fleet that would have seen it was never asked".
 ## 2026-08-22 — mymatasan 1.127.0, myseliasan 1.68.0, core 1.95.0 (3da546e)
 
 ### Added
