@@ -190,6 +190,34 @@ func (a *recordingAlarm) has(kind string) bool {
 	return false
 }
 
+// awaitAlarm waits for an alarm of this kind to be raised, and fails the test if it is not.
+//
+// It exists because the controller RECORDS a door event and THEN raises its alarm, back to back
+// on whichever goroutine noticed — the tick loop, for held-open. A test that takes the recorded
+// event off the store's channel as its cue has therefore only been told about the first of the
+// two, and sampling has() at that instant is a race it loses whenever the machine is busy. It
+// lost it on CI while passing on every developer's laptop.
+//
+// Waiting is not weakening the assertion: what the product promises is that both happen
+// promptly, not that the alarm precedes the log. An alarm that is never raised still fails
+// here, just after a bounded wait rather than immediately.
+func (a *recordingAlarm) awaitAlarm(t *testing.T, kind string, within time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	for {
+		if a.has(kind) {
+			return
+		}
+		if time.Now().After(deadline) {
+			a.mu.Lock()
+			raised := append([]string(nil), a.raised...)
+			a.mu.Unlock()
+			t.Fatalf("no %s alarm was raised within %s (raised: %v)", kind, within, raised)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
 // rig is a controller wired to a real OSDP bus and a real simulated reader.
 type rig struct {
 	t     *testing.T
@@ -562,9 +590,7 @@ func TestEndToEndDoorForcedRaisesAlarm(t *testing.T) {
 	if ev.DoorId != 1 {
 		t.Errorf("event door = %d", ev.DoorId)
 	}
-	if !r.alarm.has(AlarmDoorForced) {
-		t.Error("no forced-door alarm was raised")
-	}
+	r.alarm.awaitAlarm(t, AlarmDoorForced, 3*time.Second)
 }
 
 // TestEndToEndBadgeThenOpenDoesNotAlarm is the other half: walking through your own grant must not
@@ -615,9 +641,7 @@ func TestEndToEndHeldOpenRaisesAlarm(t *testing.T) {
 		select {
 		case ev := <-r.store.eventsCh:
 			if ev.Reason == entities.ReasonDoorHeldOpen {
-				if !r.alarm.has(AlarmDoorHeldOpen) {
-					t.Error("held-open was logged but no alarm was raised")
-				}
+				r.alarm.awaitAlarm(t, AlarmDoorHeldOpen, 3*time.Second)
 				return
 			}
 		case <-deadline:

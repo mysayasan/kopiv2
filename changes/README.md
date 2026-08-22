@@ -39,6 +39,13 @@ The version bump tool also supports the newer multi-target shape:
 
 `type` can be `major`, `minor`, `patch`, or a mapped change kind such as `fixed`, `docs`, `cleanup`, `refactor`, `added`, `changed`, `removed`, `deprecated`, or `security`.
 Comma-separated `scope` values can include core aliases (`core`, `shared`, `apphost`, `infra`, `domain`, `bootstrap`, `config`) and app names from `infra/versioning/version.json`.
-Documentation-only tokens such as `docs`, `readme`, `tests`, and `changelog` are accepted and ignored for version-target selection.
+Documentation-only tokens such as `docs`, `readme`, `cleanup`, `tests`, and `changelog` are
+accepted and ignored for version-target selection.
+
+**They cannot be the ONLY tokens.** An entry whose scope selects neither `core` nor a known
+app fails the bump with `change does not target core or a known app`, and that failure runs
+on `main` — so it breaks the release workflow after the merge, not the PR that introduced it.
+A change with no version impact at all (a test-only fix, say) simply needs no entry in this
+folder; do not write one scoped `tests` to satisfy a habit.
 
 After the workflow bumps `infra/versioning/version.json`, processed folders are moved from `changes/pending/` to `changes/applied/`.
