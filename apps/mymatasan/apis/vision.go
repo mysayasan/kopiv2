@@ -284,9 +284,10 @@ func (a *visionApi) alertOptions(ctx context.Context, alert *entities.AlertEvent
 	if alert == nil {
 		return opts
 	}
-	name, ruleDests := a.ruleInfo(ctx, alert.RuleId)
+	name, ruleDests, archive := a.ruleInfo(ctx, alert.RuleId)
 	opts.RuleName = name
 	opts.RuleDestinations = ruleDests
+	opts.ArchiveClip = archive
 	if a.notifDest != nil {
 		opts.Destinations = a.notifDest.Destinations(ctx)
 	}
@@ -302,26 +303,26 @@ func (a *visionApi) alertOptions(ctx context.Context, alert *entities.AlertEvent
 
 // ruleName resolves a detection rule's name by id, or "" when unavailable.
 func (a *visionApi) ruleName(ctx context.Context, ruleID int64) string {
-	name, _ := a.ruleInfo(ctx, ruleID)
+	name, _, _ := a.ruleInfo(ctx, ruleID)
 	return name
 }
 
 // ruleInfo resolves a detection rule's name and its per-rule destination routing
 // (ruleConfig.destinations) by id. Returns ("", nil) when unavailable.
-func (a *visionApi) ruleInfo(ctx context.Context, ruleID int64) (string, []string) {
+func (a *visionApi) ruleInfo(ctx context.Context, ruleID int64) (string, []string, bool) {
 	if a.serv == nil || ruleID <= 0 {
-		return "", nil
+		return "", nil, false
 	}
 	rules, _, err := a.serv.GetRules(ctx, 1000, 0)
 	if err != nil {
-		return "", nil
+		return "", nil, false
 	}
 	for _, rule := range rules {
 		if rule != nil && rule.Id == ruleID {
-			return rule.Name, services.ParseRuleDestinations(rule.RuleConfig)
+			return rule.Name, services.ParseRuleDestinations(rule.RuleConfig), rule.ArchiveClip
 		}
 	}
-	return "", nil
+	return "", nil, false
 }
 
 // readSnapshot reads a stored alert snapshot, decrypting it when encryption-at-rest is

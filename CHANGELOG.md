@@ -97,6 +97,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-22 — mymatasan 1.127.0, myseliasan 1.68.0, core 1.95.0 (3da546e)
+
+### Added
+
+- **core,mymatasan,myseliasan**: The fleet can now keep its own copy of the footage that matters, off the appliance. A new per-rule 'Keep a fleet copy' flag on a mymatasan detection rule (default off) marks the alerts whose evidence must survive the recorder being stolen, burned, submerged or wiped by whoever set off the alarm — the failure modes that destroy the recording of the very event it is evidence of, and the one case that retention, tamper detection and continuity monitoring all assume cannot happen. When such a rule fires, the flag rides upstream with the alert; the control plane queues the clip, waits for the node to finish cutting it, then pulls it over the existing mutual-TLS control tunnel in bounded byte ranges, hashes the bytes as they arrive, and stores the footage and its snapshot encrypted at rest beside the incident record. A new read-only /api/clips surface lists what the fleet has kept and plays it back with seeking, publishing the digest so a recipient can verify the copy; every viewing is written to the audit trail, because once the fleet holds a copy the appliance's own trail can no longer answer who watched it. Deliberately narrow: nothing is archived unless a rule was explicitly flagged, since a control plane holding every clip from every camera is a storage problem pretending to be a security feature. Deliberately careful too — a clip that arrives short is refused rather than stored (a truncated video still plays, so nothing downstream would ever notice the missing thirty seconds with the incident in them), a snapshot is kept only if it really is an image, a clip the fleet was asked to keep and could not raises an alert rather than failing quietly, and an archive that reaches its size limit stops and says so rather than deleting older evidence to make room.
 ## 2026-08-21 — myseliasan 1.67.0 (3f34d2e)
 
 ### Added

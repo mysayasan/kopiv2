@@ -756,6 +756,9 @@ func (m *module) Entities() []any {
 		// SLA can be reported over a past window rather than only observed in the present.
 		appentities.NodeStateEvent{},
 		appentities.FleetMonitorGap{},
+		// Critical-clip archive: the fleet's own copy of the footage that matters, so an
+		// appliance that is stolen or burned does not take the evidence with it.
+		appentities.ArchivedClip{},
 	}
 }
 
@@ -1272,8 +1275,14 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 			notificationService.RelayToStream(context.Background(), n)
 		}, busLog)
 
+	// Declared here and assigned once the control server exists (it needs the tunnel to
+	// fetch with, and the tunnel needs the event handler below). The closure reads the
+	// variable when a node event arrives, and no node can connect until the control
+	// listener starts further down — so there is no window where this is nil in anger.
+	var clipArchive services.IClipArchiveService
+
 	onNodeEvent := func(nodeID, kind string, body []byte) {
-		ingestNodeEvent(notificationService, relayDedup, nodeID, kind, body)
+		ingestNodeEvent(notificationService, relayDedup, clipArchive, nodeID, kind, body)
 		// Feed the same event to the correlator. It is deliberately fed the NODE event rather
 		// than the control plane's own re-published notification: correlating on our own output
 		// would let a fleet rule's alert satisfy another fleet rule's clause, and two rules could
@@ -1328,11 +1337,22 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		deps.Logger.Infof("myseliasan.cluster", "instance-to-instance node forwarding enabled; this instance advertises %s", clusterCfg.AdvertiseURL)
 	}
 
+	// Critical-clip archive: the fleet's own copy of the footage a rule was flagged to
+	// keep. Built here because it needs the control tunnel to pull clips over and the
+	// server's presence oracle to know when a node is even reachable; the ingest path
+	// above enqueues into it.
+	clipDir := apphost.ResolveWritablePath(deps.DataDir, "clips")
+	clipArchive = services.NewClipArchiveService(deps.Db, controlServer, registry,
+		controlServer.IsConnected, secretCipher, clipDir,
+		func(n notification.Notification) { notificationService.Publish(context.Background(), n) },
+		func(f string, a ...any) { deps.Logger.Infof("myseliasan.clips", f, a...) })
+	apis.NewClipsApi(api, *deps.Auth, controlSession, clipArchive, auditService)
+
 	controlServer.SetOnConnect(func(nodeID string) {
 		// Claimed before the replay: from this moment the node's commands can be served
 		// here, and the other instances need to know that as early as possible.
 		nodeOwners.Claim(context.Background(), nodeID)
-		replayNodeNotifications(controlServer, notificationService, relayDedup, nodeID,
+		replayNodeNotifications(controlServer, notificationService, relayDedup, clipArchive, nodeID,
 			func(f string, a ...any) { deps.Logger.Infof("myseliasan.notif-replay", f, a...) })
 	})
 	// Withdraw the claim as soon as the channel drops, so another instance can take the node
@@ -1414,6 +1434,24 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// reliable only for nodes attached to the leader.
 	leaderTicker(bgCtx, deps.Leader, hbInterval, func(ctx context.Context) {
 		registry.Heartbeat(ctx)
+	})
+
+	// Critical-clip archive worker. Leader-gated for the same reason the heartbeat is:
+	// two instances working the same queue would pull the same clip twice, doubling the
+	// tunnel traffic and racing on the file. A minute is brisk enough that a flagged
+	// alert is off the appliance within a couple of minutes of its clip being cut, and
+	// slow enough that a fleet with nothing to archive costs one indexed query a minute.
+	leaderTicker(bgCtx, deps.Leader, time.Minute, func(ctx context.Context) {
+		clipArchive.RunOnce(ctx)
+	})
+	// Retention. Hourly is ample for a 90-day window, and keeping it off the fetch path
+	// means a slow purge can never delay getting evidence off an appliance.
+	leaderTicker(bgCtx, deps.Leader, time.Hour, func(ctx context.Context) {
+		if n, err := clipArchive.Purge(ctx, time.Now().Unix()); err != nil {
+			deps.Logger.Warnf("myseliasan.clips", "clip retention sweep failed: %v", err)
+		} else if n > 0 {
+			deps.Logger.Infof("myseliasan.clips", "clip retention removed the media of %d archived clip(s)", n)
+		}
 	})
 
 	// Fleet AI agent, part 2: the chat service (needs the control server's
@@ -1647,14 +1685,14 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 // It returns the notification it published (if any) so a multi-instance deployment can
 // relay that exact row to the other instances' live feeds. A false second return means
 // nothing was published and nothing should be relayed.
-func ingestNodeEvent(svc *notification.Service, dedup *services.RelayDedup, nodeID, kind string, body []byte) (notification.Notification, bool) {
+func ingestNodeEvent(svc *notification.Service, dedup *services.RelayDedup, clips services.IClipArchiveService, nodeID, kind string, body []byte) (notification.Notification, bool) {
 	switch kind {
 	case "notification":
 		var n notification.Notification
 		if err := json.Unmarshal(body, &n); err != nil {
 			return notification.Notification{}, false
 		}
-		return republishNodeNotification(svc, dedup, nodeID, n)
+		return republishNodeNotification(svc, dedup, clips, nodeID, n)
 	case "going-offline":
 		return svc.Publish(context.Background(), notification.Notification{
 			Category: notification.CategorySystem,
@@ -1675,7 +1713,7 @@ func ingestNodeEvent(svc *notification.Service, dedup *services.RelayDedup, node
 			if n.Severity == "" {
 				n.Severity = severityForNodeKind(kind)
 			}
-			return republishNodeNotification(svc, dedup, nodeID, n)
+			return republishNodeNotification(svc, dedup, clips, nodeID, n)
 		}
 		return svc.Publish(context.Background(), notification.Notification{
 			Category: categoryForNodeKind(kind),
@@ -1700,7 +1738,7 @@ func ingestNodeEvent(svc *notification.Service, dedup *services.RelayDedup, node
 // because the dedup ledger had already seen it or because there was nothing to publish;
 // nothing should be relayed in that case, or a peer's bell would show an event this
 // instance deliberately dropped.
-func republishNodeNotification(svc *notification.Service, dedup *services.RelayDedup, nodeID string, n notification.Notification) (notification.Notification, bool) {
+func republishNodeNotification(svc *notification.Service, dedup *services.RelayDedup, clips services.IClipArchiveService, nodeID string, n notification.Notification) (notification.Notification, bool) {
 	originID := n.ID // the node's engine id; identical on the live push and a pulled row's __oid
 	if dedup != nil && dedup.SeenOrRecord(context.Background(), nodeID, originID, n.CreatedAt) {
 		return notification.Notification{}, false // already ingested (live or a prior replay)
@@ -1711,7 +1749,16 @@ func republishNodeNotification(svc *notification.Service, dedup *services.RelayD
 		n.Data = map[string]any{}
 	}
 	n.Data["nodeId"] = nodeID
-	return svc.Publish(context.Background(), n), true
+	published := svc.Publish(context.Background(), n)
+	// The archive hook lives HERE rather than at the live-event call site, because this
+	// one function is also what the reconnect replay funnels through. A node that raised
+	// a flagged alert while its channel was down has that alert backfilled minutes or
+	// hours later, and the whole point of the feature is that THAT clip gets archived
+	// too — hooking the live path alone would quietly archive only the easy half.
+	if clips != nil {
+		clips.Consider(context.Background(), nodeID, published)
+	}
+	return published, true
 }
 
 // notifReplayWindow bounds how far back a reconnect replay pulls a node's notifications. It must
@@ -1787,7 +1834,7 @@ func nodeRowToNotification(row nodeNotifRow) notification.Notification {
 // tunnel and ingests the ones the control plane is missing. Idempotent via relayDedup: events
 // already delivered live (or by an earlier replay) are skipped. Called on every (re)connect; a
 // node that is offline or has nothing to replay is a cheap no-op.
-func replayNodeNotifications(sender services.ControlSender, svc *notification.Service, dedup *services.RelayDedup, nodeID string, logf func(string, ...any)) {
+func replayNodeNotifications(sender services.ControlSender, svc *notification.Service, dedup *services.RelayDedup, clips services.IClipArchiveService, nodeID string, logf func(string, ...any)) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	cursor := time.Now().Add(-notifReplayWindow).Unix()
@@ -1809,7 +1856,7 @@ func replayNodeNotifications(sender services.ControlSender, svc *notification.Se
 		}
 		maxTs := cursor
 		for _, row := range rows {
-			if _, published := republishNodeNotification(svc, dedup, nodeID, nodeRowToNotification(row)); published {
+			if _, published := republishNodeNotification(svc, dedup, clips, nodeID, nodeRowToNotification(row)); published {
 				ingested++
 			}
 			if row.CreatedAt > maxTs {

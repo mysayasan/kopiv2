@@ -1162,6 +1162,8 @@ export default {
   'vi.startDatetime': 'Tarikh masa mula',
   'vi.endDatetime': 'Tarikh masa tamat',
   'vi.soundAlert': 'Amaran bunyi',
+  'vi.archiveClip': 'Simpan salinan armada',
+  'vi.archiveClipHint': 'Menghantar klip peristiwa peraturan ini ke satah kawalan, supaya rakaman kekal jika peranti ini dicuri atau musnah.',
   'vi.saveRule': 'Simpan Peraturan',
   'vi.addRule': 'Tambah Peraturan',
   'vi.enableRule': 'Dayakan peraturan',

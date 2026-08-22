@@ -1162,6 +1162,8 @@ export default {
   'vi.startDatetime': '开始日期时间',
   'vi.endDatetime': '结束日期时间',
   'vi.soundAlert': '声音警报',
+  'vi.archiveClip': '保留机群副本',
+  'vi.archiveClipHint': '将此规则的事件片段发送到控制平面，即使本设备被盗或损毁，录像仍可保留。',
   'vi.saveRule': '保存规则',
   'vi.addRule': '添加规则',
   'vi.enableRule': '启用规则',
