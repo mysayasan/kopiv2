@@ -24,7 +24,7 @@ lands the work.
 | W2-1 | Fleet configuration policy + drift detection | F-06 | `feat/myseliasan-fleet-policy` | ✅ shipped |
 | W2-2 | Node state history + SLA reporting | F-08 | `feat/myseliasan-node-sla` | ✅ shipped, benched 2026-08-21 (33/33 on a real two-node fleet) |
 | W2-3 | Critical-clip archive to control plane | F-09 | `feat/fleet-clip-archive` | ✅ shipped, benched 2026-08-21 (22/22 — footage verified surviving a destroyed node) |
-| W2-4 | Federated cross-node search | F-10 | — | ☐ not started |
+| W2-4 | Federated cross-node search | F-10 | `feat/fleet-federated-search` | ✅ shipped, benched 2026-08-22 (36/36 on a real two-node fleet) |
 | W2-5 | Staged version rollout | F-07 | — | ☐ not started |
 | W2-6 | Instrument dropped control-channel events | F-11 | — | ☐ not started |
 | W2-7 | Email notification channel | F-20a | — | ☐ not started |
@@ -657,7 +657,10 @@ rather than the logic:
 - unauthenticated read and write both refused; a policy naming a section its node kind does
   not have, and a policy with no settings, are both refused **in a readable sentence**
 
-Only the SCREEN is unexercised — the API beneath it is. Worth a look in Arabic when
+Only the SCREEN was unexercised — the API beneath it was. **Loaded in a real browser
+2026-08-22** while benching W2-4 (`tools/fleetbench/uicheck.js`, same fleet): it renders, the
+compliance tiles and the "unknown is not compliant" note read correctly against a two-node
+fleet with no policies, and the console is clean. Still not exercised in Arabic. Worth a look in Arabic when
 somebody is next in the UI; the page uses logical CSS properties throughout.
 
 **W2-2 · Node state history + SLA reporting** (F-08). **Shipped — benched against a real
@@ -735,10 +738,54 @@ those are snapshotted at archive time rather than resolved on read.
 CONFIGURATION backup; rows without their gigabytes of media would restore into a list of
 incidents whose footage is missing, which is worse than listing nothing.
 
-**W2-4 · Federated cross-node search** (F-10). `services/metadata_recorder.go` on the node
-already produces the observation index. Either federate the query over the control
-channel or replicate a compact index upward. Query terms: plate, face, object class, time
-window, site.
+**W2-4 · Federated cross-node search** (F-10). **Shipped — benched against a real two-node
+fleet (2026-08-22), 36/36.** `FleetSearchService` on the control plane scatter-gathers over
+every node the caller's role can reach (bounded parallelism, a per-node deadline), merges
+newest-first, and serves `GET /api/nodes/search` + `/search/labels`. Each node answers with
+`SightingSearch`: object presence intervals from the metadata recorder, AND the plates and
+faces recorded on its alert events, joined to its own camera names. Site scope, plate/person
+text, object class, time window and confidence are all query terms. The fleet Object Search
+screen now calls it instead of fanning out from the browser.
+
+**THE QUERY TRAVELS, NOT THE INDEX — and the reason generalises.** The plan offered a choice:
+federate the query, or replicate a compact index upward. The observation index is the
+highest-volume derived data in the product, so replicating it grows the control-plane
+database with the whole estate's detection volume and needs a queue on every appliance, its
+own retention, and a backfill for everything written while the link was down. The node
+already holds the index AND the footage the answer must link to; the control plane already
+has an authenticated, authorized, audited transport to it. **Same shape as W2-3's pull-not-push:
+before adding state to the device, ask what the other end already has.**
+
+**THE COST OF FEDERATING IS THE FEATURE.** An offline node contributes nothing — so every
+result carries a coverage block naming each node, its outcome (`ok | offline | timeout |
+denied | unsupported | error`) and a reason, plus how far back the answer is actually
+complete. Replication would have hidden the same gap behind stale data, which is worse: it
+answers confidently and wrongly. **An investigator must be able to tell "the fleet never saw
+it" from "the recorders that would have seen it were not asked", and only the search itself
+can tell them.** The browser-side fan-out this replaces could not: its per-node `.catch`
+returned an empty list, so an unreachable recorder simply produced fewer rows, and its label
+fan-out was silently capped at 25 nodes.
+
+**Two grants, not one, and that decided where the routes live.** Objects are served from
+`/api/observations/search` and identities from `/api/vision/alerts/identities`, because
+identities live on alert events — so a role with the Objects page but not the AI log cannot
+learn who was recognized by asking through the control plane. The control-plane routes sit
+under `/api/nodes` for the opposite reason: the prefix grant every fleet role already holds
+covers them, so shipping the feature did not quietly take it away from every non-superadmin.
+A per-source refusal is reported as `denied` rather than rolled up as a healthy node.
+
+**What benching found.** The live UI check — not the API bench — caught it: sightings from
+cameras that record nothing were labelled "Recording…" forever, because "newer than this
+camera's newest footage" is true by construction on a camera that keeps none. Fixed by
+consulting the recording configs to label, never to filter. **A promise the system cannot
+keep is worse than an honest blank.** The mutation pass then found the test gap that fix
+opened: nothing covered the case where the recording config cannot be READ, where the honest
+answer is the softer one. 39 mutations, all killed.
+
+**Deliberately not built:** paging. There is no offset parameter, because a global offset
+cannot be honoured across independent sources — each node pages its own result set — and the
+usual workaround (over-fetch then slice) drops real rows the moment any node caps. A wide
+search is narrowed by its time window, and the coverage block says when it is too wide.
 
 **W2-5 · Staged rollout** (F-07). Canary rings, health gate between rings, halt on
 failure, rollback. `apps/mymatasan/services/update.go` is the node-side primitive it

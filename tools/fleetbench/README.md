@@ -17,7 +17,18 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o .artifacts/fleetbench/bin/myse
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o .artifacts/fleetbench/bin/mymatasan  ./cmd/mymatasan
 python tools/fleetbench/fleet_harness.py      # stand up cp + node-a + node-b, adopt both
 python tools/fleetbench/bench_w22_sla.py      # W2-2: node state history + SLA reporting
+python tools/fleetbench/bench_w24_search.py   # W2-4: federated cross-node search
+node   tools/fleetbench/uicheck.js .artifacts/fleetbench objects   # drive a SCREEN
 ```
+
+**`uicheck.js` is the screen half, and it is not optional for an item that ships a screen.**
+W2-4's API bench passed 36/36 and the screen it shipped still lied — every sighting from a
+camera that records nothing was labelled "Recording…" forever. A green backend and a
+misleading screen look identical from the API side. It drives headless Chrome over CDP (no
+puppeteer, no npm install): signs in, skips the first-run wizard, clicks the nav entry whose
+label you name, submits the page's form, prints a JSON summary of the rendered DOM, and
+writes a screenshot. **Assert on the JSON, not on the screenshot** — an assertion you have
+to squint at is not one.
 
 Container data dirs and bench output go to `.artifacts/fleetbench/` (gitignored); override
 with `KOPIV2_BENCH_DIR`. **Point it at a roomy drive**: the node's disk guard reads the

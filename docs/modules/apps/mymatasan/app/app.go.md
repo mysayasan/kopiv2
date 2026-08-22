@@ -101,6 +101,11 @@ sequencing, and the helpers that don't belong to any one subsystem.
    `deps.AccessRoles` as a second argument); resolves `shredPasses` (`config_map.go`, off
    `appCfg`); sizes the NVENC semaphore from the boot-time recording-storage settings;
    constructs `recordingService`, `metadataRecorder`, `observationService`,
+   `sightingSearch` (`services.NewSightingSearch(observationService, repo.AlertEvent, repo.Camera)`
+   — the node's half of federated cross-node search, W2-4/F-10: reads through
+   `observationService` so a sighting a fleet search finds resolves to the same footage
+   segment the node's own Objects page would open for it, plus the alert-event half (plates
+   and recognized faces) the object index does not hold — see `services/sighting_search.go.md`),
    `notificationService` (+ rollups/maintainer), and the settings services
    (notification/health/machine-health/anomaly). Syncs persisted notification delivery
    settings into the hub. Face recognition is off until an admin enrolls someone **and** a

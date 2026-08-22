@@ -34,7 +34,9 @@ previously just inline statements in the middle of an 800-line function.
        through to any signed-in user and gated writes with a suffix-matched allow-list — see
        `apis/authorization.go.md`.
   3. Registers every protected API group in order: `NewLocalAuthApi`, `NewOnvifApi`,
-     `NewCameraApi` (now also takes `w.audit`), `NewVisionApi`, `NewTrainingApi`,
+     `NewCameraApi` (now also takes `w.audit`), `NewVisionApi` (now also takes
+     `w.sightingSearch`, backing `GET /api/vision/alerts/identities` — the identity half of
+     federated cross-node search, W2-4/F-10), `NewTrainingApi`,
      `NewTeachApi`, `NewFacesApi`
      (`w.faceGallery` — the face-recognition roster/enrollment surface, see
      `apis/faces.go.md`; admin-only via the same `NewRequireRolePermission` matrix, not a
@@ -43,7 +45,9 @@ previously just inline statements in the middle of an 800-line function.
      `w.appCfg.Decoder.BrowseRoots` — both off mymatasan's own config since Tier 2 phase C,
      previously `deps.Config` — `w.accessRoles`, which backs `GET /api/settings/roles`, and
      now `w.audit`, `w.continuitySettings`, `w.tamperSettings`),
-     `NewRecordingApi` (now also takes `w.audit`), `NewObservationApi`, `NewNotificationApi`,
+     `NewRecordingApi` (now also takes `w.audit`), `NewObservationApi` (now also takes
+     `w.sightingSearch`, backing `GET /api/observations/search` — the object half of
+     federated cross-node search), `NewNotificationApi`,
      `NewAnomalyApi`, `NewCapacityApi`, `NewSetupApi`, `NewDeploymentApi` (deployment mode /
      Phase 1 multi-instance safety — a fixed, read-only `GET /api/deployment/preflight`
      answering `Appliance: true, ApplianceReason: sharedservices.ApplianceLocalMedia`:

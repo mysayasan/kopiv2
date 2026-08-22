@@ -49,6 +49,8 @@ type wiring struct {
 	faceGallery    *services.FaceGalleryService
 	recording      services.IRecordingService
 	observation    *services.ObservationService
+	// sightingSearch answers the control plane's federated fleet search over this node.
+	sightingSearch *services.SightingSearch
 	metadata       *services.MetadataRecorder
 	localUser      services.ILocalUserService
 	setupState     sharedservices.ISetupStateService
@@ -137,6 +139,7 @@ func (w *wiring) validate() error {
 	check("faceGallery", w.faceGallery != nil)
 	check("recording", w.recording != nil)
 	check("observation", w.observation != nil)
+	check("sightingSearch", w.sightingSearch != nil)
 	check("metadata", w.metadata != nil)
 	check("localUser", w.localUser != nil)
 	check("setupState", w.setupState != nil)

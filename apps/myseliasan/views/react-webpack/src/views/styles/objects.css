@@ -52,6 +52,89 @@
   color: var(--text-muted);
 }
 
+/* A recognized identity (plate or face) reads as a distinct kind of hit from an object
+   class: it names a specific thing, so it gets the emphasis colour plus a small qualifier
+   saying which sort of identity it is. */
+.object-tag--identity {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  color: #7c3aed;
+  border-color: #cfbdf5;
+  text-transform: none;
+}
+.object-tag-kind {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* Search coverage: what the fleet search actually reached.
+   It is placed above the results and rendered on EVERY completed search, because an empty
+   table means two entirely different things depending on it. The warning variant is styled
+   to be read, not dismissed — a partial answer presented as a plain hint is a partial answer
+   nobody notices. */
+.search-coverage {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-soft);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.search-coverage--ok {
+  color: var(--text-muted);
+  background: transparent;
+}
+.search-coverage--warn {
+  color: #92400e;
+  border-color: #f0cfa0;
+  background: rgba(217, 119, 6, 0.08);
+}
+.search-coverage--bad {
+  color: #b91c1c;
+  border-color: #f2b8b8;
+  background: rgba(220, 38, 38, 0.08);
+}
+.search-coverage-headline {
+  margin: 0;
+  font-weight: 600;
+}
+.search-coverage-horizon {
+  margin: 4px 0 0;
+}
+.search-coverage-nodes {
+  margin: 8px 0 0;
+  padding-inline-start: 18px;
+  display: grid;
+  gap: 3px;
+}
+.search-coverage-nodes li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+.coverage-status {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0 6px;
+  border-radius: 8px;
+  border: 1px solid currentColor;
+}
+.coverage-status--offline,
+.coverage-status--timeout { color: #b45309; }
+.coverage-status--denied { color: #b91c1c; }
+.coverage-status--unsupported { color: #6d28d9; }
+.coverage-status--error { color: #b91c1c; }
+.coverage-reason {
+  color: var(--text-muted);
+}
+
 /* Multi-select dropdown (object labels). */
 .multi-select {
   position: relative;

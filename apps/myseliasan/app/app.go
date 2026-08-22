@@ -1624,6 +1624,14 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	}
 
 	apis.NewRecordingStreamApi(api, *deps.Auth, nodeSender, accessService, controlSession)
+
+	// Federated cross-node search. Registered BEFORE the node proxy so /api/nodes/search
+	// is matched here; the proxy's catch-all only claims /api/nodes/{id}/proxy/..., but
+	// keeping the specific route ahead of the prefix route is what makes that independent
+	// of how gorilla orders its fallbacks.
+	fleetSearchService := services.NewFleetSearchService(registry, siteService, nodeSender, accessService)
+	apis.NewFleetSearchApi(api, *deps.Auth, controlSession, fleetSearchService, auditService)
+
 	apis.NewNodeProxyApi(api, *deps.Auth, nodeSender, accessService, controlSession, auditService)
 
 	// Fleet configuration policy. Wired HERE, after nodeSender exists, because the
