@@ -48,6 +48,17 @@ run as a container on `benchnet`. **Remove it before re-running the harness** �
 `docker rm -f smtp-sink` — or `teardown` cannot delete the network, `docker network create`
 fails, and the fleet comes up unadopted.
 
+The same applies to any bench that attaches its own containers to `benchnet`.
+`bench_w31_timeline.py` leaves two camera sources behind:
+
+```
+docker rm -f smtp-sink camsrc tlsrc-steady tlsrc-gappy
+```
+
+is the sweep to run before re-standing the fleet up. The symptom of forgetting is always the
+same and never mentions containers: the network cannot be recreated, so both nodes come up
+unadopted and every assertion fails for a reason unrelated to the item under test.
+
 **`uicheck.js` is the screen half, and it is not optional for an item that ships a screen.**
 W2-4's API bench passed 36/36 and the screen it shipped still lied — every sighting from a
 camera that records nothing was labelled "Recording…" forever. A green backend and a

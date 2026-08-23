@@ -726,6 +726,11 @@ watching the check fail with the original wording.
   autoplay block rather than the player.
 - **Chrome needs an ABSOLUTE `--user-data-dir`** (already in the other uicheck scripts) and a
   distinct devtools port per script — `uicheck_timeline.js` uses 9225.
+- **Sweep the bench's own containers before re-standing the fleet up.** This bench leaves
+  `tlsrc-steady` and `tlsrc-gappy` on `benchnet`; like `smtp-sink`, they stop the network
+  being deleted, so `docker network create` fails and both nodes come up UNADOPTED — a
+  symptom that never mentions containers and looks like the item under test is broken.
+  `docker rm -f smtp-sink camsrc tlsrc-steady tlsrc-gappy` first.
 - **The docker CLI's `--format` is mangled by bash on Windows**; drive it from PowerShell or
   from Python's subprocess, which is what the benches do.
 
