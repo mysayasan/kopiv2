@@ -2,6 +2,7 @@ package apis
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -58,6 +59,17 @@ func NewRecordingApi(router *mux.Router, serv services.IRecordingService, record
 	g.HandleFunc("/status", h.recorderStatus).Methods("GET")
 	g.HandleFunc("/storage/status", h.storageStatus).Methods("GET")
 	g.HandleFunc("/coverage", h.coverage).Methods("GET")
+	// Timeline playback. Deliberately under /recording rather than a new top-level
+	// prefix: the Recordings page grant is canRead("/api/recording"), so every role that
+	// can already browse footage gets the timeline on upgrade. A new prefix would have
+	// been ungranted on every existing role, and the feature would have shipped invisible
+	// to everyone but a superadmin.
+	//
+	// Detection marks are NOT served here. They come from /api/vision/alerts, which is a
+	// different page grant — an operator granted Recordings but not Alerts must not learn
+	// what the AI recognised by scrubbing a bar.
+	g.HandleFunc("/timeline", h.timeline).Methods("GET")
+	g.HandleFunc("/timeline/seek", h.timelineSeek).Methods("GET")
 	g.HandleFunc("/streams/{cameraId}", h.listCameraStreams).Methods("GET")
 	g.HandleFunc("/streams/{cameraId}/live", h.setLiveStream).Methods("POST")
 }
@@ -183,6 +195,112 @@ func (a *recordingApi) coverage(w http.ResponseWriter, r *http.Request) {
 
 // coverageMaxBuckets bounds one coverage request: a month of days, or ~a month of hours.
 const coverageMaxBuckets = 768
+
+// timelineMaxCameras bounds one timeline/seek request. Eight is the largest synchronised
+// wall the screen offers, and the bound exists so one URL cannot fan a segment scan across
+// the whole estate.
+const timelineMaxCameras = 8
+
+// timelineMaxSpan bounds one timeline window. The bar is a scrubbing surface, not an
+// archive report — beyond a month a pixel is worth hours and nothing on it is clickable.
+const timelineMaxSpan = int64(31 * 86400)
+
+// timelineCameraIds reads the repeated (?cameraId=1&cameraId=2) or comma-separated
+// (?cameraId=1,2) forms, de-duplicating while keeping the caller's order — the order is
+// the order the tiles appear in, so it is the operator's choice, not the database's.
+func timelineCameraIds(r *http.Request) []int64 {
+	seen := map[int64]bool{}
+	out := []int64{}
+	for _, raw := range r.URL.Query()["cameraId"] {
+		for _, part := range strings.Split(raw, ",") {
+			id, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64)
+			if err != nil || id <= 0 || seen[id] {
+				continue
+			}
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// timeline serves the scrub bar: every requested camera's playable segments and merged
+// footage spans over one window.
+//
+//	GET /api/recording/timeline?cameraId=3&cameraId=4&from=<unix>&to=<unix>
+func (a *recordingApi) timeline(w http.ResponseWriter, r *http.Request) {
+	cameraIds := timelineCameraIds(r)
+	if len(cameraIds) == 0 {
+		controllers.SendError(w, controllers.ErrBadRequest, "cameraId is required")
+		return
+	}
+	if len(cameraIds) > timelineMaxCameras {
+		controllers.SendError(w, controllers.ErrBadRequest,
+			fmt.Sprintf("at most %d cameras at a time", timelineMaxCameras))
+		return
+	}
+	now := time.Now().UTC().Unix()
+	to := parseInt64Query(r, "to")
+	if to <= 0 || to > now {
+		// Never let the window run past now. An in-progress segment has no EndedAt and is
+		// credited to the end of the window, so a `to` in the future would shade footage
+		// that has not been recorded yet — a bar promising evidence that does not exist.
+		to = now
+	}
+	from := parseInt64Query(r, "from")
+	if from <= 0 {
+		from = to - 86400
+	}
+	if to <= from {
+		controllers.SendError(w, controllers.ErrBadRequest, "to must be after from")
+		return
+	}
+	if to-from > timelineMaxSpan {
+		controllers.SendError(w, controllers.ErrBadRequest,
+			fmt.Sprintf("range too large: ask for at most %d days at a time", timelineMaxSpan/86400))
+		return
+	}
+
+	report, err := a.serv.Timeline(r.Context(), cameraIds, from, to)
+	if err != nil {
+		// A refusal to draw a bar the caller can fix by narrowing is a 400, not a 500 —
+		// the request is answerable, just not at this width.
+		if errors.Is(err, services.ErrTimelineTooManySegments) {
+			controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+			return
+		}
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, report, "succeed")
+}
+
+// timelineSeek resolves one wall-clock moment to a playable segment + offset per camera.
+//
+//	GET /api/recording/timeline/seek?cameraId=3&cameraId=4&at=<unix>
+func (a *recordingApi) timelineSeek(w http.ResponseWriter, r *http.Request) {
+	cameraIds := timelineCameraIds(r)
+	if len(cameraIds) == 0 {
+		controllers.SendError(w, controllers.ErrBadRequest, "cameraId is required")
+		return
+	}
+	if len(cameraIds) > timelineMaxCameras {
+		controllers.SendError(w, controllers.ErrBadRequest,
+			fmt.Sprintf("at most %d cameras at a time", timelineMaxCameras))
+		return
+	}
+	at := parseInt64Query(r, "at")
+	if at <= 0 {
+		controllers.SendError(w, controllers.ErrBadRequest, "at is required")
+		return
+	}
+	results, err := a.serv.SeekAt(r.Context(), cameraIds, at)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, map[string]any{"at": at, "cameras": results}, "succeed")
+}
 
 func (a *recordingApi) deleteSegment(w http.ResponseWriter, r *http.Request) {
 	id, ok := readRecordingID(w, r)

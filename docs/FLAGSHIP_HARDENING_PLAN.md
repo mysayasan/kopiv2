@@ -29,7 +29,7 @@ lands the work.
 | W2-6 | Instrument dropped control-channel events | F-11 | `feat/control-channel-drop-metrics` | ✅ shipped, benched 2026-08-23 (19/19 on a real two-node fleet) |
 | W2-7 | Email notification channel | F-20a | `feat/email-notification-channel` | ✅ shipped, benched 2026-08-23 (34/34 on a real two-node fleet + 3 screen passes) |
 | **Phase 3 — Win the bake-off** |
-| W3-1 | Timeline playback | F-12 | — | ☐ not started |
+| W3-1 | Timeline playback | F-12 | `feat/timeline-playback` | ✅ shipped, benched 2026-08-23 (29/29 on real recorded footage + 25/25 en and 26/26 ar screen passes; the screen pass found 3 defects the API bench could not) |
 | W3-2 | Appearance search across cameras/nodes | F-16 | — | ☐ not started |
 | W3-3 | Cases + video wall | F-17, F-18 | — | ☐ not started |
 | W3-4 | Loitering / left-behind / directional rules | F-15 | — | ☐ not started |
@@ -937,9 +937,117 @@ decode-and-compare round trip and mutation-checked; it has not been benched live
 
 Target ~8–12 weeks, ordered by how often each decides a competitive evaluation.
 
-**W3-1 · Timeline playback** (F-12). Scrub bar with coverage shading (reuses W1-3's
-coverage endpoint), seek across segment boundaries, multi-camera sync, speed control,
-detection events plotted as jump targets. Shares its backend with W1-4.
+**W3-1 · Timeline playback** (F-12). **Shipped — benched against real recorded footage
+with a real hole in it (29/29), plus screen passes in English (23/23) and Arabic (24/24).**
+
+Scrub bar shaded by coverage, seek across segment boundaries, multi-camera sync, speed
+control, detection events plotted as jump targets. `GET /api/recording/timeline` returns
+each camera's playable segment index plus the merged spans the bar shades;
+`GET /api/recording/timeline/seek` resolves one wall-clock moment to a (segment, offset)
+per camera. A new Timeline screen sits beside Live View in the nav.
+
+**THE UNIT IS A MOMENT, NOT A FILE — and that is the whole design.** Everything on screen
+is a rendering of one number, `cursor`, in unix seconds. Multi-camera sync then falls out
+rather than being built: the tiles do not synchronise with each other, they each answer the
+same question about the same instant. A camera with no footage at that instant says so,
+which is exactly what an investigator is looking at a wall to find out.
+
+**THE SEEK RESOLVER ALREADY EXISTED.** `pickCovering` in `services/observation.go` —
+which resolves an object sighting to its footage, including preferring continuous footage
+over a short event clip that overlaps it — is the same rule playback needs. It was reused,
+not reimplemented, and its paging loop was lifted to a package function both call. A second
+copy would have meant the Objects screen and the timeline disagreeing about which file
+holds a moment, which is one fact described two ways. **Before writing a resolver, check
+whether some other screen already resolves the same thing.**
+
+**IT IS A SERVER CALL ON PURPOSE, not arithmetic over the index the browser already holds.**
+Two reasons, and the second is the one that decided it: there is no JS test runner in this
+repo, so a client-side copy of the rule would be the one piece of load-bearing logic with no
+test at all; and an appliance under disk pressure evicts its oldest footage continuously, so
+an index fetched a minute ago can name a segment that no longer exists. Asking at seek time
+turns that into an honest *"that footage is gone, the next is at 04:12"*.
+
+**THE BAR AND THE COVERAGE REPORT ARE ONE FACT.** `coveredSpans` was factored out of
+`recording_coverage.go` so the shading and the percentages come from the same merge. A bar
+that shades an hour the coverage report calls empty is a bar that promises evidence, and the
+bench asserts the two agree to 0.01% on real segments.
+
+**IT REFUSES RATHER THAN TRUNCATING.** `GetSegments` orders newest-first, so a capped read
+silently drops the OLDEST segments and the LEFT of the bar renders empty — and empty on a
+scrub bar does not read as "we did not fetch this", it reads as "there is no footage here".
+Over the segment cap the request is refused with the fix named ("ask for a shorter window").
+Same reasoning as W2-7's refuse-at-save-time.
+
+**THE ROUTES LIVE UNDER `/api/recording` and the detection marks do NOT.** The Recordings
+page grant is `canRead("/api/recording")`, so every role that can already browse footage
+gets the timeline on upgrade; a new prefix would have shipped the flagship feature invisible
+to everyone but a superadmin (the W2-4 lesson). The marks come from `/api/vision/alerts`,
+a different page grant — an operator granted Recordings but not Alerts must not learn what
+the AI recognised by scrubbing a bar. That split needed no new endpoint at all: the alerts
+API already takes field filters, so the browser asks it directly and renders no marks on 403.
+
+**WHAT THE BENCH PROVED THAT NO UNIT TEST COULD.** Every seek in the product is
+`at - startedAt`, which is only a real offset if the file holds as many seconds as its row
+claims to span. The bench downloads a segment and asks ffprobe: 60.00s of media against a
+60s recorded span. It holds because `infra/recording.segmentEndedAt` stores StartedAt plus
+the PROBED duration rather than the moment the recorder closed the file — so a segment
+truncated by an ffmpeg crash reports the length it actually contains. Had that not held,
+every scrub would have been silently off by however long the stream stalled, and the player
+would have looked like it was working.
+
+**THE SCREEN PASS FOUND THREE DEFECTS. THE API BENCH PASSED 29/29 THROUGH ALL OF THEM.**
+Every one is invisible from the API side, and two of them make the feature wrong rather
+than merely ugly. This is now the strongest evidence in the programme for the rule that an
+item touching a screen owes a browser pass.
+
+**1 · Every scrub landed later than the click.** The bar hit-tested the pointer against the
+surrounding panel, while the shaded spans, the detection marks and the cursor are all
+positioned inside the TRACK — which is inset by the fixed-width camera label at the start of
+each row. The result was a constant offset of about 5.6% of the visible window: three
+minutes on an hour, eighty on a day. Nothing about it looks wrong — a segment loads, the
+readout shows a time, the frames play — so it survives every check except one that compares
+where the cursor came to rest with where the operator clicked. That comparison is now an
+assertion. **When a click is mapped to a value, measure against the element the marks are
+drawn in, and prove the two agree.**
+
+**2 · The window control could not move the window.** A keep-the-cursor-visible effect ran
+unconditionally and in both directions, so setting "ending at" to last night snapped
+straight back to wherever the playhead sat — the control was inert for the one thing it is
+for. It now follows only while PLAYING and only forwards, and moving the window by hand
+takes the cursor with it. A second, narrower version of the same fight remained afterwards:
+a stale `timeupdate` from the clip still decoding kept reporting the old position, which
+dragged the window back after a manual jump. Fixed by ignoring any position reported by an
+element that is not playing the segment the cursor is being computed from.
+
+**3 · Two controls edited in one tick discarded each other.** The window's end and its width
+were separate pieces of state, so changing the zoom and then the end time — an entirely
+ordinary sequence — applied one and silently dropped the other, each handler having read the
+other's pre-change value out of its closure. The window is now a single value mirrored into
+a synchronously-updated ref, so the second edit composes with the first.
+
+**AND THE ONE IN ARABIC.** The API bench passed 29/29. Driving the
+screen, the tile that had to skip a hole rendered **"تم التخطي 0 دقيقة"** — *skipped 0
+minutes* — because the note rounded the gap to whole minutes and the hole was 43 seconds.
+That note exists for exactly one purpose: to let an operator tell "this camera missed the
+incident" from "the player put me in the wrong place". Rounding it to zero states that
+nothing was skipped, on the one tile whose entire job is to say that something was. Fixed
+with a magnitude-following formatter (seconds / minutes / hours) that can never render zero.
+**A quantity whose whole meaning is "this is not nothing" must not be rounded.** It surfaced
+in Arabic and not in English purely because that run's click happened to land nearer the end
+of the hole — which is an argument for running the screen pass in more than one language on
+its own merits, quite apart from checking the direction the layout mirrors.
+
+**THE BENCH'S OWN BUG, seen for the fourth time in this programme.** The first version of
+the zero-gap check was `notes.every(...)` — trivially true on an empty array — and it passed
+on a run that never reached the hole. The gap click was also aimed at a fixed fraction of a
+window whose right edge is *now*, so it drifted out from under the click as the bench ran.
+Both fixed: the window is pinned before the click, and the assertion requires a note to
+exist. **A check that cannot tell "the thing did not happen" from "I failed to make it
+happen" is not a check.**
+
+**Deliberately not built:** hover thumbnails on the scrub bar. `/segments/{id}/frame` would
+serve them, but each hover spawns ffmpeg on the appliance, and a scrub bar generates hovers
+continuously. Not worth the load for this item; revisit with a pre-extracted sprite sheet.
 
 **W3-2 · Appearance search** (F-16). The strongest differentiator available, and the
 infrastructure is largely built: `services/face_embedder.go`, `face_gallery.go` and

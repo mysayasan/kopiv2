@@ -205,6 +205,19 @@ func (s *ObservationService) resolveCoveringSegments(ctx context.Context, rows [
 }
 
 // fetchCoveringCandidates loads a camera's segments that could cover any moment in
+// [minAt, maxAt], newest-first.
+func (s *ObservationService) fetchCoveringCandidates(ctx context.Context, cameraId, minAt, maxAt int64) []*entities.RecordingSegment {
+	return coveringSegmentCandidates(ctx, s.recording, cameraId, minAt, maxAt)
+}
+
+// segmentPager is the one read coveringSegmentCandidates needs. Narrowing it to this
+// keeps the timeline's seek path callable from recordingService itself, which cannot
+// depend on IRecordingService without a cycle.
+type segmentPager interface {
+	GetSegments(ctx context.Context, limit, offset uint64, cameraId, alertId, startedAfter, startedBefore int64) ([]*entities.RecordingSegment, uint64, error)
+}
+
+// coveringSegmentCandidates loads a camera's segments that could cover any moment in
 // [minAt, maxAt], newest-first. It pages back (the repo caps each read at 100 rows)
 // only until it reaches a *continuous* segment starting at/before minAt — the nearest
 // full-footage segment preceding the earliest sighting is enough to cover it — then
@@ -212,12 +225,20 @@ func (s *ObservationService) resolveCoveringSegments(ctx context.Context, rows [
 // stop deliberately ignores short event clips: one can start after (yet end before)
 // the moment a continuous segment actually covers, so stopping on it would miss the
 // covering footage at a page boundary.
-func (s *ObservationService) fetchCoveringCandidates(ctx context.Context, cameraId, minAt, maxAt int64) []*entities.RecordingSegment {
+//
+// Shared by object search (resolve a sighting to its footage) and by the playback
+// timeline's seek (resolve a scrubbed moment to its footage). Those must agree: a
+// sighting the search screen can play and the timeline cannot is the same footage
+// described two ways.
+func coveringSegmentCandidates(ctx context.Context, src segmentPager, cameraId, minAt, maxAt int64) []*entities.RecordingSegment {
+	if src == nil {
+		return nil
+	}
 	const pageSize = 100
 	const maxPages = 50 // safety bound: at most ~5000 candidate segments
 	var candidates []*entities.RecordingSegment
 	for page := 0; page < maxPages; page++ {
-		batch, _, err := s.recording.GetSegments(ctx, pageSize, uint64(page*pageSize), cameraId, 0, 0, maxAt+1)
+		batch, _, err := src.GetSegments(ctx, pageSize, uint64(page*pageSize), cameraId, 0, 0, maxAt+1)
 		if err != nil || len(batch) == 0 {
 			break
 		}

@@ -23,6 +23,22 @@ Gaps in the timeline are informative rather than broken. A gap means recording w
 the camera was offline, recording was off, or the appliance was down. It is worth knowing which,
 and [Camera reliability](dashboard#reliability) usually answers it.
 
+## Timeline playback {#timeline}
+
+**Timeline**, next to Live Views in the side-nav, plays footage by the clock instead of file by
+file: drag anywhere on the scrub bar and playback crosses segment boundaries on its own — no
+finding and opening the next clip by hand. The shading on the bar is the same footage the coverage
+strip above reports, so the two never disagree.
+
+Watch up to **8 cameras** against the same moment, synchronised, at anywhere from **0.25x** to
+**8x** speed. If a rule fired during the window, its events are plotted on the bar as clickable
+marks — click one to jump straight to it, the same shortcut [Jumping from an alert](#from-alert)
+offers from the notification side. Marks need the Alerts page as well as Recordings; without it the
+bar still scrubs, just without the marks.
+
+Scrubbing to a moment with no footage does not silently guess: playback says so and snaps forward to
+the next moment that has any, and tells you how much was skipped to get there.
+
 ## Jumping from an alert {#from-alert}
 
 The far more common route is the other direction: you have an alert and want the footage. Use

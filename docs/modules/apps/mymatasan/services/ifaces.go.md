@@ -83,6 +83,8 @@ Declares service contracts for app-specific domain.
   - `GetSegments(ctx, limit, offset, cameraId, alertId, startedAfter, startedBefore)` — paginated clip list with optional camera, alert, and time-range filters
   - `GetSegmentById(ctx, id)` — fetch one clip row by ID
   - `Coverage(ctx, cameraId, from, to, bucket)` — how much of `[from, to)` actually has footage on disk, bucketed hourly or daily; the read model behind the coverage strip UI and the continuity monitor (`services/recording_coverage.go.md`)
+  - `Timeline(ctx, cameraIds, from, to)` — each requested camera's playable segment index and merged footage spans over `[from, to)`, sharing its span arithmetic with `Coverage` so the two can never disagree; the read model behind the Timeline screen's scrub bar (`services/recording_timeline.go.md`)
+  - `SeekAt(ctx, cameraIds, at)` — resolves one wall-clock moment to a playable `(segment, offset)` per camera, snapping forward over a gap; the server call behind Timeline seeking, sharing the same covering-segment rule object search uses (`services/recording_timeline.go.md`)
   - `SaveSegment(ctx, seg recording.SegmentResult)` — called by the infra recorder after a clip is written; satisfies `SegmentSink`
   - `DeleteSegment(ctx, id)` — removes the DB row and the file on disk
   - `ListConfigs(ctx)` — all per-camera recording configs

@@ -612,6 +612,11 @@ export function SideNav({ activeTab, isAdmin, busy, cameras, managingCameraId, t
       items: [
         navItem('dashboard', t('nav.dashboard'), 'monitor', 'steel'),
         navItem('views', t('tab.views'), 'grid2', 'teal'),
+        // Timeline sits beside Live View because it is its counterpart — the same wall,
+        // played back. Not gated on isAdmin: reviewing footage is exactly what a viewer
+        // role exists to do, and the server gates it on the Recordings page grant that
+        // already governs /api/recording.
+        navItem('timeline', t('tab.timeline'), 'film', 'violet'),
       ],
     },
     {
