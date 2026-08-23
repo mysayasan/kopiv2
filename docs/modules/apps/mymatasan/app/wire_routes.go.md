@@ -45,9 +45,13 @@ previously just inline statements in the middle of an 800-line function.
      `w.appCfg.Decoder.BrowseRoots` — both off mymatasan's own config since Tier 2 phase C,
      previously `deps.Config` — `w.accessRoles`, which backs `GET /api/settings/roles`, and
      now `w.audit`, `w.continuitySettings`, `w.tamperSettings`),
-     `NewRecordingApi` (now also takes `w.audit`), `NewObservationApi` (now also takes
+     `NewRecordingApi` (now also takes `w.audit` and, W3-2, `w.observation` — so the
+     per-camera "Purge now" action also purges object metadata/appearance descriptors, see
+     `apis/recording.go.md`), `NewObservationApi` (now also takes
      `w.sightingSearch`, backing `GET /api/observations/search` — the object half of
-     federated cross-node search), `NewNotificationApi`,
+     federated cross-node search — and, W3-2, `w.appearance`, backing
+     `GET /api/observations/appearance`(`/vector`) — see `services/appearance_search.go.md`),
+     `NewNotificationApi`,
      `NewAnomalyApi`, `NewCapacityApi`, `NewSetupApi`, `NewDeploymentApi` (deployment mode /
      Phase 1 multi-instance safety — a fixed, read-only `GET /api/deployment/preflight`
      answering `Appliance: true, ApplianceReason: sharedservices.ApplianceLocalMedia`:

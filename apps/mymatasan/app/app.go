@@ -154,6 +154,7 @@ func (m *module) Entities() []any {
 		appentities.RecordingSegment{},
 		appentities.RecordingConfig{},
 		appentities.ObjectObservation{},
+		appentities.ObjectAppearance{},
 		sharedentities.Notification{},
 		sharedentities.NotificationRollup{},
 		// The append-only audit trail, shared with myidsan and myseliasan. New table on
@@ -332,6 +333,18 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// observation service is the read/maintenance side (search + footage linkage + purge).
 	metadataRecorder := services.NewMetadataRecorder(repo.ObjectObservation, recordingService, appCfg.Vision.Detector.MinObjectConfidence)
 	observationService := services.NewObservationService(repo.ObjectObservation, recordingService)
+	// Appearance search: a descriptor of what each recorded person/vehicle looked like, so
+	// an operator can pick a sighting and ask where else it went. Off per camera by
+	// default — it costs a forward pass per crop per sampled frame.
+	//
+	// It is wired into the recorder (write side) and the observation service (purge side)
+	// rather than passed to their constructors, because it needs the at-rest cipher and
+	// both of those are built before it. The purge leg is not optional: a descriptor that
+	// outlives the sighting it describes is a searchable record of somebody the retention
+	// policy says has been forgotten.
+	appearanceService := services.NewAppearanceService(repo.ObjectAppearance, atrestCipher)
+	metadataRecorder.SetAppearanceStore(appearanceService)
+	observationService.SetAppearanceReaper(appearanceService)
 	// The federated-search answering service (W2-4). It reads through the observation
 	// service so a sighting found by a fleet search resolves to the same footage segment
 	// the node's own Objects page would open for it, and adds the alert-event half —
@@ -624,6 +637,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		recording:      recordingService,
 		observation:    observationService,
 		sightingSearch: sightingSearch,
+		appearance:     appearanceService,
 		metadata:       metadataRecorder,
 		localUser:      localUserService,
 		setupState:     setupStateService,

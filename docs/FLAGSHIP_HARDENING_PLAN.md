@@ -30,7 +30,7 @@ lands the work.
 | W2-7 | Email notification channel | F-20a | `feat/email-notification-channel` | ✅ shipped, benched 2026-08-23 (34/34 on a real two-node fleet + 3 screen passes) |
 | **Phase 3 — Win the bake-off** |
 | W3-1 | Timeline playback | F-12 | `feat/timeline-playback` | ✅ shipped, benched 2026-08-23 (29/29 on real recorded footage + 25/25 en and 26/26 ar screen passes; the screen pass found 4 defects the API bench could not) |
-| W3-2 | Appearance search across cameras/nodes | F-16 | — | ☐ not started |
+| W3-2 | Appearance search across cameras/nodes | F-16 | `feat/appearance-search` | ✅ shipped, benched 2026-08-23 (11/11 on the real model, 34/34 on a real two-node fleet, 17/17 en and 18/18 ar screen passes) |
 | W3-3 | Cases + video wall | F-17, F-18 | — | ☐ not started |
 | W3-4 | Loitering / left-behind / directional rules | F-15 | — | ☐ not started |
 | W3-5 | PTZ presets + ONVIF events & relay I/O | F-13, F-14 | — | ☐ not started |
@@ -1050,10 +1050,89 @@ happen" is not a check.**
 serve them, but each hover spawns ffmpeg on the appliance, and a scrub bar generates hovers
 continuously. Not worth the load for this item; revisit with a pre-extracted sprite sheet.
 
-**W3-2 · Appearance search** (F-16). The strongest differentiator available, and the
-infrastructure is largely built: `services/face_embedder.go`, `face_gallery.go` and
-`entities/face_embedding.go` are the storage-and-match seam. Extend from faces to person
-and vehicle appearance embeddings, then federate through the control plane (needs W2-4).
+**W3-2 · Appearance search** (F-16). **Shipped — benched three ways: 11/11 against the real
+model on real pixels, 34/34 against a real two-node fleet, and screen passes of 17/17 in
+English and 18/18 in Arabic.**
+
+An operator picks a recorded sighting and asks where else it went. `GET
+/api/observations/appearance` ranks that node's sightings; `GET /api/nodes/search/appearance`
+asks the whole fleet. A "Find similar" action sits on every object-search row.
+
+**NO THIRD-PARTY MODEL, AND THE DECIDING CONSTRAINT TURNED OUT TO BE LICENSING.** The
+descriptor is 560-d: a 512-d ImageNet embedding from the resnet18 the ANOMALY feature already
+installs (renamed `_crop_backbone`, since it now serves two stages) plus a 48-d two-band
+hue/lightness histogram.
+
+The first instinct was air-gap — no download. That reasoning was **wrong and worth
+correcting**: `yolo11n.pt` is 5.6 MB, tracked in git and shipped by goreleaser, so the
+constraint forbids runtime egress, not bundling weights. The real blocker is licensing.
+Re-identification code is usually permissive, but the published checkpoints are trained on
+Market-1501, DukeMTMC-reID or MSMT17 — all research-only, and **DukeMTMC was withdrawn by its
+own authors over consent concerns.** Weights derived from non-consensual surveillance footage
+are not shippable in a product that is sold, and that is a sharper objection than any
+technical one. Histograms over pixels carry no such freight.
+
+**THE COLOUR HALF IS THE HALF THAT WORKS.** The embedding alone separated a red figure from a
+blue one by 0.033; colour alone separates them by 0.115, and the combined descriptor by
+0.074. An ImageNet backbone is trained for CLASS invariance — it answers "person" whatever
+they are wearing — which is precisely the opposite of what appearance search needs, and it is
+also the opposite of what an operator means, since nobody searches for a torso texture.
+Weight held at 1.0 rather than favouring colour: the bench scene is flat-coloured rectangles
+under even light, the best case colour will ever see and the worst case shape will ever see.
+
+Every row stamps its model, and vectors from different models are never compared — a swap
+degrades to "no older matches" rather than to confident nonsense. **If you ever want more:
+CLIP image embeddings are MIT-licensed and far more attribute-sensitive than an ImageNet
+classifier; the cost is ~150 MB and heavier inference on an appliance already running
+detection.**
+
+**THE BENCH KILLED THE CALIBRATION, AND THE FIX IS THE MOST REUSABLE THING HERE.** Measured
+on the real model: two crops of the SAME subject score **0.9825**; a red figure against a
+blue one scores **0.9498**. ImageNet features are dominated by structure — a person-shaped
+thing on a background — and discard most of what an operator means by "the man in the red
+jacket". So the shipped 0.45 similarity floor filtered nothing, the "strong ≥ 0.75" band
+marked every row strong, and the screen would have printed "95% match" between two unrelated
+people. Not a weak feature: a wrong answer delivered confidently, on a screen someone acts on.
+
+The ORDER was always right. Only the absolute number was meaningless. So a hit is now scored
+by **how far it stands out from the other candidates compared** — a robust z-score,
+deviations above the MEDIAN scaled by the median absolute deviation, the same shape the
+dashboard's baseline analytics already use. That is self-calibrating per site, per camera and
+per class, with no threshold for anybody to tune. **Ask of any similarity score: what is its
+RANGE on real data? A metric that only ever returns 0.94–0.99 is an ordering, not a verdict,
+and presenting it as a percentage is the bug.**
+
+Median and MAD rather than mean and standard deviation, because the thing being searched for
+is an outlier: if somebody walked past six cameras, six near-duplicates are in the candidate
+set, a mean climbs towards them and a standard deviation widens, and the very matches the
+search exists to surface are the ones it flattens. Below twelve comparisons it reports
+`calibrated: false` and says so on screen rather than dressing three results up as a finding.
+
+**FEDERATION IS TWO HOPS, and the second one is easy to miss.** The operator names a sighting
+on one node; that id means nothing anywhere else. So the control plane fetches the DESCRIPTOR
+from the node holding it, then fans the descriptor out. A version that passed the id around
+would return results only from the node that recorded it — and would look like it worked. The
+first hop is authorized identically to the search, or it is a read the caller does not have
+dressed up as a query. Merge order is by standout, not raw similarity: each node calibrates
+against its own crowd, so the two are not comparable quantities across nodes.
+
+**WHAT THE FLEET BENCH FOUND: "Purge now" was not purging.** It destroyed a camera's footage
+and snapshots and left the object index intact — a searchable record of every person and
+vehicle the camera saw, pointing at footage that no longer exists. Appearance search made
+that materially worse by hanging a descriptor off each row. `POST /api/recording/purge-camera`
+now cascades to the metadata and reports the count. **A destroy action must be checked against
+everything DERIVED from what it destroys, not just the primary artefact.**
+
+**Two seams became shared rather than copied**, both of which would have been bugs as copies:
+the at-rest vector codec (now one implementation with the face gallery) and `pickCovering`,
+so a sighting found by ranking opens the same footage the Objects grid would open for it.
+
+**Not built, and stated because the gap is real:** no end-to-end proof that a camera watching
+a real person produces a stored descriptor. The harness films synthetic test patterns, so the
+detector finds no person to describe. Part one of the bench covers the embedding on real
+pixels, the unit tests cover the recorder's hand-off, and the join between them is not
+exercised. Also not built: searching by an uploaded photograph, which is a different feature
+with a different risk profile — it turns a review tool into a watchlist.
 
 **W3-3 · Cases + video wall** (F-17, F-18). Bookmarks, annotation, multi-clip incident
 packaging, assignment, closure — the natural home for W1-4's export bundle and W1-2's

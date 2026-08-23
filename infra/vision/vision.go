@@ -133,6 +133,11 @@ type Frame struct {
 	// for this frame. Set only for cameras with an active face rule — the per-camera compute gate,
 	// exactly like WantLPR, so the embedding path never runs on cameras that don't need it.
 	WantFace bool `json:"-"`
+	// WantAppearance requests an appearance vector on each person/vehicle detection, so those
+	// sightings can later be ranked by "find more like this". The same per-camera compute gate
+	// as the two above: it is a forward pass per crop, and a camera nobody searches by
+	// appearance should not pay for one.
+	WantAppearance bool `json:"-"`
 }
 
 // Detection is one detector result before it is persisted as an alert event.

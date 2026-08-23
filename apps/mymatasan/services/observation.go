@@ -31,13 +31,30 @@ type ObservationResult struct {
 
 // ObservationService is the read/maintenance side of the metadata recorder: it
 // searches recorded observations and resolves each to the footage covering it.
+// AppearanceReaper is the slice of appearance storage the observation retention paths
+// need. A descriptor MUST NOT outlive the sighting it describes: the footage and the index
+// are gone, and what is left behind is a searchable record of a person the retention policy
+// says has been forgotten. Nil disables the leg (installs without appearance search).
+type AppearanceReaper interface {
+	DeleteForObservations(ctx context.Context, observationIds []int64) (int, error)
+	DeleteForCamera(ctx context.Context, cameraId int64) (int, error)
+}
+
 type ObservationService struct {
 	repo      dbsql.IGenericRepo[entities.ObjectObservation]
 	recording IRecordingService
+	// appearance purges descriptors alongside the sightings they describe. Nil = off.
+	appearance AppearanceReaper
 }
 
 // NewObservationService builds the query service. recording is used to resolve the
 // footage segment covering each observation and to align retention with recordings.
+// SetAppearanceReaper wires appearance purging. Set after construction because the
+// appearance service needs the at-rest cipher, which is built later in the wiring.
+func (s *ObservationService) SetAppearanceReaper(r AppearanceReaper) {
+	s.appearance = r
+}
+
 func NewObservationService(repo dbsql.IGenericRepo[entities.ObjectObservation], recording IRecordingService) *ObservationService {
 	return &ObservationService{repo: repo, recording: recording}
 }
@@ -204,6 +221,65 @@ func (s *ObservationService) resolveCoveringSegments(ctx context.Context, rows [
 	return out, newestEnd
 }
 
+// FootagePoint is one (camera, moment) to resolve to footage.
+type FootagePoint struct {
+	CameraId int64
+	At       int64
+}
+
+// FootageRef is where a moment lives, or zeroes when nothing covers it.
+type FootageRef struct {
+	SegmentId int64 `json:"segmentId"`
+	Seek      int64 `json:"seek"`
+}
+
+// ResolveFootageFor batches a set of moments to their covering segments.
+//
+// Appearance search needs this: a ranked hit an operator cannot open is a hit they cannot
+// act on. It goes through the SAME pickCovering the object search uses — including the
+// preference for continuous footage over a short event clip — so a sighting found by
+// ranking opens the same file the Objects grid would open for it.
+//
+// Batched per camera because the naive version is one segment page-walk per hit, and a
+// shortlist is up to two hundred of them.
+func (s *ObservationService) ResolveFootageFor(ctx context.Context, points []FootagePoint) []FootageRef {
+	out := make([]FootageRef, len(points))
+	if s == nil || s.recording == nil || len(points) == 0 {
+		return out
+	}
+	type camSpan struct {
+		min, max int64
+		idxs     []int
+	}
+	byCam := map[int64]*camSpan{}
+	for i, p := range points {
+		if p.CameraId <= 0 || p.At <= 0 {
+			continue
+		}
+		sp := byCam[p.CameraId]
+		if sp == nil {
+			sp = &camSpan{min: p.At, max: p.At}
+			byCam[p.CameraId] = sp
+		}
+		if p.At < sp.min {
+			sp.min = p.At
+		}
+		if p.At > sp.max {
+			sp.max = p.At
+		}
+		sp.idxs = append(sp.idxs, i)
+	}
+	for cam, sp := range byCam {
+		candidates := coveringSegmentCandidates(ctx, s.recording, cam, sp.min, sp.max)
+		for _, i := range sp.idxs {
+			if seg := pickCovering(candidates, points[i].At); seg != nil {
+				out[i] = FootageRef{SegmentId: seg.Id, Seek: points[i].At - seg.StartedAt}
+			}
+		}
+	}
+	return out
+}
+
 // fetchCoveringCandidates loads a camera's segments that could cover any moment in
 // [minAt, maxAt], newest-first.
 func (s *ObservationService) fetchCoveringCandidates(ctx context.Context, cameraId, minAt, maxAt int64) []*entities.RecordingSegment {
@@ -319,6 +395,14 @@ func (s *ObservationService) PurgeAllForCamera(ctx context.Context, cameraId int
 	filters := []sqldataenums.Filter{
 		{FieldName: "CameraId", Compare: sqldataenums.Equal, Value: cameraId},
 	}
+	// Descriptors go FIRST, by camera, in one statement. Deleting them per observation id
+	// as the loop below progresses would leave every descriptor whose row-delete failed
+	// stranded with no owner to find it by, and a camera-wide delete cannot miss any.
+	if s.appearance != nil {
+		if _, err := s.appearance.DeleteForCamera(ctx, cameraId); err != nil {
+			return 0, err
+		}
+	}
 	deleted := 0
 	for {
 		batch, _, err := s.repo.Get(ctx, "", 500, 0, filters, nil)
@@ -372,6 +456,20 @@ func (s *ObservationService) PurgeOldObservations(ctx context.Context) (int, err
 			}
 			if len(batch) == 0 {
 				break
+			}
+			// Descriptors before rows, for the same reason as above: once an observation
+			// row is gone, nothing points at its descriptor and no later sweep can find
+			// it. Retention would then quietly stop applying to the appearance index.
+			if s.appearance != nil {
+				ids := make([]int64, 0, len(batch))
+				for _, row := range batch {
+					if row != nil {
+						ids = append(ids, row.Id)
+					}
+				}
+				if _, err := s.appearance.DeleteForObservations(ctx, ids); err != nil {
+					return deleted, err
+				}
 			}
 			for _, row := range batch {
 				if _, err := s.repo.DeleteById(ctx, "", uint64(row.Id)); err == nil {

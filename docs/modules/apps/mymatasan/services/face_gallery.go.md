@@ -35,7 +35,9 @@ with cosine similarity. The database's only job is durable, portable storage —
   (`{model, persons:[{id, name, embeddings:[[float]]}]}`), including only **enabled** people with at
   least one embedding, then calls `reload()` to restart the detector so it re-reads the file. Written
   atomically (temp file + rename) so the worker never reads a half-written file.
-- **`encodeVector`/`decodeVector`** — float32 little-endian bytes → `atrest.Cipher`
+- **`encodeVector`/`decodeVector`** — thin wrappers over the shared codec
+  (`encodeVectorAtRest`/`decodeVectorAtRest` in `vector_codec.go`, now also used by appearance
+  search — see `services/vector_codec.go.md`): float32 little-endian bytes → `atrest.Cipher`
   encrypt/decrypt (nil-safe, e.g. tests) → base64 (portable TEXT), and the inverse.
 - `DeletePerson` **crypto-shreds** the person: their embeddings are deleted first (the ciphertext
   becomes unrecoverable once the rows are gone), then the person row, then the gallery is rebuilt so

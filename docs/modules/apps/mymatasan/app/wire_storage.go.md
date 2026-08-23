@@ -10,13 +10,15 @@ repositories were previously constructed in three scattered clumps through the f
 
 - `type repos struct` — one `dbsql.IGenericRepo[T]` field per app entity (`Camera`,
   `CameraOnvif`, `DetectionRule`, `DetectionClass`, `AlertEvent`, `ObjectObservation`,
-  `RecordingConfig`, `RecordingSegment`, `TrainingDataset`, `TrainingImage`,
+  `ObjectAppearance`, `RecordingConfig`, `RecordingSegment`, `TrainingDataset`, `TrainingImage`,
   `TrainingModel`, `TeachSkill`, `FacePerson`, `FaceEmbedding`, `RuntimeSetting`,
   `LocalUser`) plus the two shared-domain tables this app also owns rows in
   (`Notification`, `NotificationRollup`). `FacePerson`/`FaceEmbedding` back the global
   face-recognition gallery (see `entities/face_person.go.md`/`entities/face_embedding.go.md`
   and `services/face_gallery.go.md`) — added alongside `TeachSkill`, bringing the total to
-  18 repositories.
+  18 repositories. `ObjectAppearance` (W3-2 — one appearance descriptor per sighting, see
+  `entities/object_appearance.go.md`) brings it to 19, and backs `services.AppearanceService`
+  (`services/appearance_search.go.md`).
 - `newRepos(db dbsql.IDbCrud) repos` — constructs every field via
   `dbsql.NewGenericRepo[T](db)` against the bootstrapped database.
 

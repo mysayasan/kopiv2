@@ -734,6 +734,109 @@ watching the check fail with the original wording.
 - **The docker CLI's `--format` is mangled by bash on Windows**; drive it from PowerShell or
   from Python's subprocess, which is what the benches do.
 
+## W3-2 · Appearance search  ⟨ DONE (2026-08-23), 11/11 + 34/34 + 17/17 en and 18/18 ar
+
+Three benches, because the feature has three separable claims:
+
+```
+python tools/fleetbench/bench_w32_embedding.py            # does the MODEL discriminate?
+KOPIV2_NODE_IMAGE=debian-ffmpeg:bench python tools/fleetbench/fleet_harness.py
+python tools/fleetbench/bench_w32_appearance.py           # search, refusals, retention, federation
+node   tools/fleetbench/uicheck_appearance.js .artifacts/fleetbench en
+node   tools/fleetbench/uicheck_appearance.js .artifacts/fleetbench ar
+```
+
+**Part one runs on the HOST, not in a container**, and calls `_appearance_embed` directly
+over a drawn scene. The appearance stage rides torch + torchvision, which the anomaly
+feature already requires and no bench image carries; installing a multi-gigabyte ML stack
+into a throwaway image to test a function that runs on the host anyway would bench a
+different deployment from the one that ships.
+
+**IT MEASURED THE THING THAT REDESIGNED THE FEATURE — twice.** First: the embedding alone
+scored the same subject at **0.9825** and a red figure against a blue one at **0.9498**, a
+separation of 0.033, which is what forced relative scoring. Then, after a colour histogram
+was added to the descriptor, it measured what that was worth: colour alone separates the two
+subjects by **0.115** (3.5x the embedding's 0.033) and the combined descriptor by 0.074.
+
+So the bench scores **each half separately** and asserts the colour block's contribution,
+not just the total. A change that quietly neuters colour then shows up as a failure here
+rather than as slightly worse rankings nobody traces back. It still pins the PREMISE behind
+relative scoring — unrelated subjects at 0.85 against a true match at 0.92 is a sliver near
+the top, so an absolute threshold remains the wrong tool. If a future model genuinely spreads
+these out, that check FAILS, and the failure is the signal to revisit relative scoring rather
+than a regression to fix.
+
+**Before trusting any similarity threshold, measure the metric's real range. And when you
+add a component to a descriptor, measure the component, not only the sum.**
+
+**Not measured, and it gates a real decision:** the colour weight is 1.0 because the bench
+scene is flat-coloured rectangles under even light — the best case colour will ever have and
+the worst case shape will ever have. Tuning it needs footage of real people under real
+lighting, which this harness does not have.
+
+**Part two SEEDS descriptors rather than filming them**, and says so. The harness points
+synthetic patterns at its cameras, so the detector finds no person or vehicle and the stage
+correctly produces nothing. It writes rows straight into the node's sqlite with the app
+stopped. Not claimed: a camera watching a real person producing a stored descriptor.
+
+What it proved on a real fleet: the ranking finds both real matches and no crowd member; a
+CAR with a byte-identical descriptor is excluded by the label scope; a row from another
+model is excluded from the ranking; the query does not match itself; both refusals; the
+two-hop federated search reaching the other node; an unreachable node named with a reason
+rather than silently contributing nothing; and the retention cascade.
+
+**What the fleet bench FOUND: "Purge now" destroyed a camera's footage and left its object
+index — and now its appearance descriptors — behind.** Fixed; `purge-camera` cascades to the
+metadata and reports the count.
+
+### The traps this one added
+
+- **A synthetic scene has to reproduce the real CONDITION, not just have a right answer.**
+  The first crowd was built on a different axis from the query, so every crowd vector was
+  ORTHOGONAL to it: similarity exactly 0, spread 0, and the search correctly reported it
+  could not calibrate. That scene tested nothing — on real data every crop of a person
+  scores ~0.95 against every other one, and separating a match from a crowd that is already
+  that close is the entire feature. The bench now ASSERTS its own scene is right (crowd
+  median between 0.5 and 0.95) before asserting anything over it. Same shape as W1-5's
+  3px-banded scene that averaged away to flat grey.
+- **A bench that seeds must clear first.** The second run appended to the first, so the
+  median came from a blend of two scenes that never coexist, and the true match scored
+  below the floor. `DELETE` before `INSERT`.
+- **`[]` satisfies every claim about its members — seen twice more here.** The screen check
+  opened whichever sighting was newest, which happened to be the wrong-model decoy, got an
+  empty list, and passed "no result is presented as a percentage" having examined no
+  results. Guard with `hits > 0`, and arrange the scene so the row the check opens is the
+  one it means. Fifth and sixth sightings of this pattern in the programme.
+- **The Objects screen hides sightings whose camera has metadata recording off**, which is
+  correct behaviour and means seeded rows are invisible until a camera row exists with
+  recording enabled. Create the cameras through the real API first.
+- **Swapping a node binary needs the per-node copy.** `node_binary()` gives each container
+  its own `bin/mymatasan-<name>`; rebuilding `bin/mymatasan` alone changes nothing until
+  those are re-copied and the containers restarted. The symptom is a bench asserting against
+  fields the running build has never heard of.
+- **`fleet_harness.result_of` re-wraps a bare ARRAY result as `{"result": [...]}`**, so a
+  list endpoint arrives as a dict with one key — iterate it blind and you get the string
+  `"result"` and conclude the fleet has no nodes.
+- The node's sqlite lives at `.artifacts/fleetbench/<node>/mymatasan.db`, not under a
+  `data/` subdirectory.
+
+### And the one that was not caught here at all
+
+**W3-1 shipped with the whole `:root` design-token block deleted from `app.css`** — an
+append that wrote from the start of the file instead of the end — and every screen check
+passed while it was broken, because they all assert on DOM text, geometry and video state,
+none of which a missing colour changes. CSS has no undefined-variable error, only an empty
+substitution, so nothing upstream failed either.
+
+Both `uicheck_appearance.js` and `uicheck_timeline.js` now read the tokens back out of the
+live page and assert the body is actually painted. Verified in both directions: deleting the
+token block makes the check report nine unresolved tokens and a transparent body.
+
+**Never append to a repo file with a shell heredoc redirect** — use an editor tool or a
+Python write. This is the second silent file corruption of this shape in the project; the
+first was PowerShell's `Get-Content|Set-Content` adding a BOM. Both left a file that still
+parsed.
+
 ---
 
 # The fleet harness — build it once, reuse it

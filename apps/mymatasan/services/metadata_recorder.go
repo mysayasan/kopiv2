@@ -37,8 +37,9 @@ type RecordingConfigLister interface {
 
 // metaCamCfg is the cached per-camera metadata-recording config.
 type metaCamCfg struct {
-	enabled bool
-	gapSec  int
+	enabled    bool
+	gapSec     int
+	appearance bool
 }
 
 // openObservation is an in-progress presence interval for one (camera,label).
@@ -52,6 +53,13 @@ type openObservation struct {
 	peakConf      float64
 	peakBox       vision.Box
 	peakAt        int64
+	// peakAppearance is the appearance vector of the crop the peak box came from, kept so
+	// the interval can be described by its CLEAREST view rather than by whichever frame
+	// happened to close it. It moves with peakBox/peakAt and for the same reason: a
+	// descriptor taken from a half-occluded final frame ranks badly against every future
+	// query, and nothing downstream could tell that was why.
+	peakAppearance      []float32
+	peakAppearanceModel string
 }
 
 // MetadataRecorder records "what objects each camera saw" as presence intervals. It
@@ -73,11 +81,40 @@ type MetadataRecorder struct {
 	cfgMu sync.RWMutex
 	cfg   map[int64]metaCamCfg
 
-	writeCh chan entities.ObjectObservation
+	writeCh chan pendingObservation
+	// appearance persists the peak crop's descriptor for each written observation. Nil
+	// disables the whole appearance leg, which is the state on any install that has not
+	// turned it on — the recorder must work exactly as before in that case.
+	appearance AppearanceStore
+}
+
+// AppearanceStore is the slice of appearance persistence the recorder needs. Narrowed to
+// one method so the recorder can be tested without a cipher, a repo or a search path.
+type AppearanceStore interface {
+	Store(ctx context.Context, rec AppearanceRecord) error
+}
+
+// pendingObservation is a row and the descriptor that belongs to it, queued together.
+//
+// They travel as one item because the descriptor is keyed by the observation's id, which
+// does not exist until the row is inserted. Queuing them separately would mean holding a
+// vector while hoping the matching insert succeeds, and pairing them afterwards by
+// (camera, label, time) — a join on values that are not unique.
+type pendingObservation struct {
+	entity     entities.ObjectObservation
+	appearance []float32
+	model      string
 }
 
 // NewMetadataRecorder builds the recorder. minConfidence filters weak candidates out
 // of the metadata (mirrors the detector's object-confidence floor).
+// SetAppearanceStore wires appearance persistence. Optional and settable after
+// construction, because the appearance service needs the at-rest cipher, which is built
+// later in the wiring than the recorder is.
+func (r *MetadataRecorder) SetAppearanceStore(store AppearanceStore) {
+	r.appearance = store
+}
+
 func NewMetadataRecorder(repo dbsql.IGenericRepo[entities.ObjectObservation], configs RecordingConfigLister, minConfidence float64) *MetadataRecorder {
 	gap := defaultMetadataGapSeconds
 	return &MetadataRecorder{
@@ -89,7 +126,7 @@ func NewMetadataRecorder(repo dbsql.IGenericRepo[entities.ObjectObservation], co
 		open:          map[int64]map[string]*openObservation{},
 		lastAt:        map[int64]int64{},
 		cfg:           map[int64]metaCamCfg{},
-		writeCh:       make(chan entities.ObjectObservation, metadataWriteBuffer),
+		writeCh:       make(chan pendingObservation, metadataWriteBuffer),
 	}
 }
 
@@ -121,6 +158,11 @@ func (r *MetadataRecorder) Observe(cameraID int64, capturedAt int64, candidates 
 		count    int
 		bestConf float64
 		bestBox  vision.Box
+		// bestAppearance belongs to the SAME candidate as bestBox. Tracking it separately
+		// (say, "the first vector seen this frame") would pair one object's descriptor with
+		// another object's box on any frame holding two people.
+		bestAppearance      []float32
+		bestAppearanceModel string
 	}
 	perLabel := map[string]*frameAgg{}
 	for _, c := range candidates {
@@ -137,6 +179,8 @@ func (r *MetadataRecorder) Observe(cameraID int64, capturedAt int64, candidates 
 		if c.Confidence > a.bestConf {
 			a.bestConf = c.Confidence
 			a.bestBox = c.Box
+			a.bestAppearance = c.Appearance
+			a.bestAppearanceModel = c.AppearanceModel
 		}
 	}
 
@@ -172,6 +216,15 @@ func (r *MetadataRecorder) Observe(cameraID int64, capturedAt int64, candidates 
 			iv.peakConf = a.bestConf
 			iv.peakBox = a.bestBox
 			iv.peakAt = capturedAt
+			// Only overwrite the kept descriptor when this frame actually produced one.
+			// The appearance stage skips crops that are too small or too uncertain, so a
+			// frame can raise the peak confidence and carry no vector — and clearing the
+			// one already held would lose the only description of an interval because a
+			// later, marginally-better-scored frame happened to be a distant view.
+			if len(a.bestAppearance) > 0 {
+				iv.peakAppearance = a.bestAppearance
+				iv.peakAppearanceModel = a.bestAppearanceModel
+			}
 		}
 	}
 }
@@ -209,6 +262,20 @@ func (r *MetadataRecorder) IsEnabled(cameraID int64) bool {
 	return r.cfg[cameraID].enabled
 }
 
+// IsAppearanceEnabled reports whether this camera should have appearance descriptors
+// computed for its sightings. It is the per-camera compute gate the sampler reads, in the
+// same shape as the LPR and face gates: the expensive stage runs only where it was asked
+// for. It also returns false when the appearance store is not wired, so a build or an
+// install without it never pays for vectors that have nowhere to go.
+func (r *MetadataRecorder) IsAppearanceEnabled(cameraID int64) bool {
+	if r == nil || r.appearance == nil {
+		return false
+	}
+	r.cfgMu.RLock()
+	defer r.cfgMu.RUnlock()
+	return r.cfg[cameraID].appearance
+}
+
 func (r *MetadataRecorder) run(ctx context.Context) {
 	r.refreshConfig(ctx)
 	t := time.NewTicker(metadataCloseTickSeconds * time.Second)
@@ -241,7 +308,15 @@ func (r *MetadataRecorder) refreshConfig(ctx context.Context) {
 		if gap <= 0 {
 			gap = r.defaultGapSec
 		}
-		next[c.CameraId] = metaCamCfg{enabled: c.MetadataEnabled, gapSec: gap}
+		// Appearance is meaningless without the observation row it attaches to, so it is
+		// AND-ed with metadata recording here rather than trusted from the column alone.
+		// A config that says appearance-on / metadata-off would otherwise make the worker
+		// embed crops on every frame and then throw every vector away.
+		next[c.CameraId] = metaCamCfg{
+			enabled:    c.MetadataEnabled,
+			gapSec:     gap,
+			appearance: c.MetadataEnabled && c.AppearanceEnabled,
+		}
 	}
 	r.cfgMu.Lock()
 	r.cfg = next
@@ -259,7 +334,7 @@ func (r *MetadataRecorder) cameraConfig(cameraID int64) (metaCamCfg, bool) {
 // least the camera's gap window.
 func (r *MetadataRecorder) closeStale() {
 	now := r.now().UTC().Unix()
-	var toWrite []entities.ObjectObservation
+	var toWrite []pendingObservation
 	r.mu.Lock()
 	for cam, labels := range r.open {
 		cfg, _ := r.cameraConfig(cam)
@@ -285,7 +360,7 @@ func (r *MetadataRecorder) closeStale() {
 
 // flushAll closes every open interval regardless of gap (shutdown path).
 func (r *MetadataRecorder) flushAll() {
-	var toWrite []entities.ObjectObservation
+	var toWrite []pendingObservation
 	r.mu.Lock()
 	for cam, labels := range r.open {
 		for _, iv := range labels {
@@ -301,23 +376,27 @@ func (r *MetadataRecorder) flushAll() {
 	}
 }
 
-func (r *MetadataRecorder) toEntity(cam int64, iv *openObservation) entities.ObjectObservation {
+func (r *MetadataRecorder) toEntity(cam int64, iv *openObservation) pendingObservation {
 	boxJSON, _ := json.Marshal(iv.peakBox)
-	return entities.ObjectObservation{
-		CameraId:      cam,
-		Label:         iv.label,
-		StartedAt:     iv.startedAt,
-		EndedAt:       iv.lastSeen,
-		MaxConfidence: iv.maxConfidence,
-		MaxCount:      iv.maxCount,
-		SampleCount:   iv.sampleCount,
-		PeakBox:       string(boxJSON),
-		PeakAt:        iv.peakAt,
-		CreatedAt:     r.now().UTC().Unix(),
+	return pendingObservation{
+		entity: entities.ObjectObservation{
+			CameraId:      cam,
+			Label:         iv.label,
+			StartedAt:     iv.startedAt,
+			EndedAt:       iv.lastSeen,
+			MaxConfidence: iv.maxConfidence,
+			MaxCount:      iv.maxCount,
+			SampleCount:   iv.sampleCount,
+			PeakBox:       string(boxJSON),
+			PeakAt:        iv.peakAt,
+			CreatedAt:     r.now().UTC().Unix(),
+		},
+		appearance: iv.peakAppearance,
+		model:      iv.peakAppearanceModel,
 	}
 }
 
-func (r *MetadataRecorder) enqueue(e entities.ObjectObservation) {
+func (r *MetadataRecorder) enqueue(e pendingObservation) {
 	select {
 	case r.writeCh <- e:
 	default:
@@ -344,8 +423,36 @@ func (r *MetadataRecorder) writer(ctx context.Context) {
 	}
 }
 
-func (r *MetadataRecorder) write(e entities.ObjectObservation) {
-	if _, err := r.repo.Create(context.Background(), "", e); err != nil {
-		log.Printf("metadata recorder: write observation cam%d %q failed: %v", e.CameraId, e.Label, err)
+func (r *MetadataRecorder) write(p pendingObservation) {
+	ctx := context.Background()
+	id, err := r.repo.Create(ctx, "", p.entity)
+	if err != nil {
+		log.Printf("metadata recorder: write observation cam%d %q failed: %v",
+			p.entity.CameraId, p.entity.Label, err)
+		return
+	}
+	if r.appearance == nil || len(p.appearance) == 0 {
+		return
+	}
+	// The descriptor is written AFTER the row it points at, and its failure is logged but
+	// not propagated: losing the ability to rank one sighting by appearance is a much
+	// smaller harm than losing the record that the sighting happened, and the two must not
+	// share a fate. An orphaned descriptor is impossible in this order; an orphaned
+	// observation is merely one that cannot be searched by appearance.
+	rec := AppearanceRecord{
+		ObservationId: int64(id),
+		CameraId:      p.entity.CameraId,
+		SeenAt:        p.entity.PeakAt,
+		Label:         p.entity.Label,
+		Confidence:    p.entity.MaxConfidence,
+		Vector:        p.appearance,
+		Model:         p.model,
+	}
+	if rec.SeenAt <= 0 {
+		rec.SeenAt = p.entity.StartedAt
+	}
+	if serr := r.appearance.Store(ctx, rec); serr != nil {
+		log.Printf("metadata recorder: store appearance for observation %d cam%d %q failed: %v",
+			id, p.entity.CameraId, p.entity.Label, serr)
 	}
 }

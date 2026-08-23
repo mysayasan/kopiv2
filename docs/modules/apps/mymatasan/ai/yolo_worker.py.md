@@ -50,6 +50,54 @@ always-running worker, is individually documented).
 - Any failure (bad gallery JSON, opencv error) is caught, logged to stderr, and returns no face
   candidates for that frame rather than failing the whole detection response.
 
+## Appearance search stage (`_appearance_embed`, W3-2)
+
+- Gated per-request on `request["appearance"]` (set only when the sampling camera has
+  `AppearanceEnabled` on — see `apps/mymatasan/services/vision_monitor.go.md`'s *Appearance
+  capture gate* and `apps/mymatasan/services/appearance_search.go.md`).
+- Runs on the **shared** resnet18 embedder, `_crop_backbone()` — renamed from
+  `_anomaly_backbone()` because it now serves **two** stages: taught-anomaly scoring (compares
+  a ROI against a memory bank of normal embeddings) and appearance search (embeds person/vehicle
+  crops so "find more like this" has something to rank). The globals were renamed to match
+  (`_CROP_BACKBONE`/`_CROP_PREP`/`_CROP_BACKBONE_DISABLED`, formerly `_ANOMALY_*`); behaviour is
+  unchanged — same lazy-load-once, same CUDA placement, same disable-on-failure sentinel. Sharing
+  is deliberate: it is already a dependency of the anomaly feature, so appearance search needs no
+  additional model download, which matters because this product is deployed into networks with
+  no egress.
+- It is **not** a person re-identification network, and appearance search says so rather than
+  implying otherwise (see `apps/mymatasan/services/appearance_search.go.md`'s *What this is and
+  is not*): ImageNet features separate coarse appearance (clothing colour, shape, vehicle type)
+  well and are markedly weaker at matching the same person across large changes in pose or
+  lighting. Every vector is stamped with the model name that produced it (`APPEARANCE_MODEL =
+  "resnet18-hsv-560"`) so a stronger model can replace this later without old
+  vectors being silently compared against new ones.
+- Enriches **existing** detections; never invents one. Eligible detections are filtered to
+  `APPEARANCE_LABELS` (`person`, `car`, `truck`, `bus`, `motorcycle`, `bicycle`, `train`,
+  `boat`), a confidence floor (`APPEARANCE_MIN_CONFIDENCE = 0.45`), and a minimum box-area
+  fraction (`APPEARANCE_MIN_BOX_FRACTION = 0.015` — a distant figure a dozen pixels tall embeds
+  to something that matches everything, which is worse than no result). The biggest-boxed
+  survivors are kept up to `APPEARANCE_MAX_PER_FRAME` (8) per frame, so a crowd scene runs a
+  bounded number of forward passes rather than one per person in frame.
+- Crops are batched into **one** `torch.no_grad()` forward pass per frame (not one call per
+  crop) concatenated with a two-band hue/lightness histogram, L2-normalised, and attached to each kept detection as `appearance: [float, ...]` (560-d: 512 shape + 48 colour)
+  + `appearanceModel: "resnet18-hsv-560"`.
+
+  The colour half is not an optimisation, it is the half that discriminates. Measured on the
+  real model the embedding alone separated two crops of the same subject (0.9825) from a red
+  figure against a blue one (0.9498) by just 0.033 — an ImageNet backbone is trained for
+  CLASS invariance and answers "person" whatever they are wearing. Colour alone separates the
+  same pair by 0.115. The weight between the two halves is held at 1.0 because the bench
+  scene flatters colour and penalises shape; tuning it needs real footage.
+- Runs **last**, on the merged detection list (after `_merge`, LPR, anomaly and face), inside the
+  same `try` block that holds the temp JPEG open — after the earlier stages so a custom-model
+  detection that replaced a stock one is the thing described, and inside the `try` so the file is
+  guaranteed to still exist for it (moving the `unlink` out to keep the file alive would leak a
+  JPEG per frame the moment any earlier stage raises, which on a camera failing repeatedly fills
+  the temp directory).
+- Any failure (missing torch/PIL, bad crop, OOM) is caught, logged to stderr, and returns zero
+  embedded detections for that frame rather than failing the whole detection response — the same
+  fail-open shape every other optional stage in this file uses.
+
 ## Notes
 
 - Install Python dependencies from `apps/mymatasan/ai/requirements-yolo.txt`. Face recognition is a

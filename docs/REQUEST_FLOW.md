@@ -320,6 +320,61 @@ coverage-annotated `FleetSearchResult` → audit (`fleet.search`, outcome `succe
 → browser coverage banner. See `docs/modules/apps/myseliasan/services/fleet_search.go.md`,
 `docs/modules/apps/mymatasan/services/sighting_search.go.md`.
 
+## Federated Appearance Search Flow (myseliasan → nodes, W3-2)
+
+This flow answers "where else in the estate did this sighting go?" — the appearance-search
+counterpart of the flow above. It shares the same scatter-gather machinery
+(`FleetSearchService`, bounded parallelism, per-node timeout, `coverage` vocabulary) but adds
+a hop the object search does not need, because the thing being asked about (one sighting) only
+means something on the node that recorded it.
+
+> This endpoint currently ships **API-only** — there is no `myseliasan` frontend screen that
+> calls it yet (the shipped UI for "find more like this" is node-local, on each `mymatasan`'s
+> own Objects page — see the node-local Object Search / appearance-search technical-spec entry).
+> The flow below describes what a caller (an operator tool, a future fleet-wide UI, or a
+> script) hitting the endpoint would trigger.
+
+1. A caller sends `GET /api/nodes/search/appearance?nodeId=<source>&observationId=<n>` once,
+   naming the node holding the sighting to search from (as picked on that node's own Objects
+   screen's **Find similar** action) and the sighting's id.
+2. `apps/myseliasan/apis/fleet_search_api.go` resolves the caller's live role and calls
+   `FleetSearchService.AppearanceSearch`.
+3. **Hop one**: resolved against the SAME per-node access grants as any other fleet search,
+   `AppearanceSearch` sends one tunneled `GET /api/observations/appearance/vector` to the
+   source node, fetching the sighting's appearance descriptor in wire form (base64url of the
+   raw float32 bytes — unencrypted at this layer, since it is already travelling over the
+   authenticated, encrypted control-channel mTLS tunnel). If the source node is unreachable
+   or the sighting has no descriptor (recorded before appearance search was turned on for that
+   camera), the whole search stops here with an explaining error — never an empty result, which
+   would misread as "the estate never saw anything like it".
+4. **Hop two**: with the descriptor in hand, the SAME bounded-parallel fan-out as object search
+   sends `GET /api/observations/appearance?vector=&model=&label=...` to every node the caller's
+   role can reach — including the source node itself, which is asked to `excludeObservationId`
+   so the operator's own pick never comes back as its own best match.
+5. Each node answers through `apps/mymatasan/services/appearance_search.go`'s `Search`, which
+   ranks its own recorded sightings against the supplied vector and reports `standout` (how far
+   a candidate stands out from the OTHERS THAT NODE compared, not a raw similarity — see the
+   node-local Object Search / appearance-search technical-spec entry) alongside `scanned`,
+   `median`/`spread`, and `calibrated`.
+6. Results merge across nodes by `standout`, not raw similarity — a node's calibration is
+   relative to its own candidate set, so "0.97 at the depot" and "0.97 at the gate" are not the
+   same claim, but "stands out 6 deviations at the depot" and "stands out 6 deviations at the
+   gate" are comparably meaningful. The same `coverage` block (searched/answered/complete) rides
+   along, for the same reason it does on object search: an unreachable node must never read as
+   "saw nothing like it".
+7. `fleet_search_api.go` audits the search as `fleet.search.appearance` — separately from
+   `fleet.search` — recording which sighting (`sourceNodeId`/`observationId`) drove the query,
+   since this flow follows an individual across an estate rather than answering "what was
+   seen".
+
+**Data path summary:** caller → `GET /api/nodes/search/appearance` →
+`FleetSearchService.AppearanceSearch` → hop one: `GET /api/observations/appearance/vector` on
+the source node → hop two (per accessible node, bounded parallel fan-out): control channel →
+`GET /api/observations/appearance?vector=...` → node's `AppearanceService.Search` → merged by
+`standout`, coverage-annotated `FleetAppearanceResult` → audit (`fleet.search.appearance`).
+See `docs/modules/apps/myseliasan/services/fleet_appearance.go.md`,
+`docs/modules/apps/mymatasan/services/appearance_search.go.md`.
+
 ## Staged Version Rollout Flow (myseliasan → node)
 
 This is how a fleet is moved to a specific `mymatasan` version a RING at a time (flagship

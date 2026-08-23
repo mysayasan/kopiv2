@@ -151,6 +151,34 @@ function rpc(ws) {
     }
     await sleep(1500);
 
+    // THE STYLESHEET IS LOADED AND ITS TOKENS RESOLVE.
+    //
+    // This check exists because W3-1 shipped with the whole ":root, .theme-light" token
+    // block destroyed — an append wrote over the head of app.css — and this very script
+    // passed 25/25 and 26/26 while it was broken. Every assertion here is on DOM text,
+    // element geometry and video state, and a missing colour changes none of them. CSS has
+    // no undefined-variable error either, only an empty substitution, so nothing upstream
+    // failed. A screenshot was written each run for a human to glance at; nobody glanced.
+    //
+    // So: read the tokens back out of the live page. It is the cheapest possible check for
+    // an entire class of silent stylesheet damage.
+    const theme = await evalJs(`(() => {
+      const root = getComputedStyle(document.documentElement);
+      const body = getComputedStyle(document.body);
+      const want = ['--bg-body','--bg-surface','--text-primary','--text-muted','--border-panel','--accent','--ok-text','--warn-bg','--ui-surface'];
+      return JSON.stringify({
+        missing: want.filter((t) => !root.getPropertyValue(t).trim()),
+        bodyBg: body.backgroundColor,
+        bodyColor: body.color,
+      });
+    })()`);
+    const th = JSON.parse(theme);
+    check('every design token in the stylesheet resolves', th.missing.length === 0,
+      th.missing.length ? 'unresolved: ' + th.missing.join(', ') : theme);
+    check('the page is actually painted', 
+      !!th.bodyBg && th.bodyBg !== 'rgba(0, 0, 0, 0)' && th.bodyBg !== 'transparent',
+      'body background = ' + th.bodyBg);
+
     const dir = await evalJs(`document.documentElement.getAttribute('dir') || getComputedStyle(document.body).direction`);
     if (LANG === 'ar') {
       check('the Arabic run really renders right-to-left', dir === 'rtl', 'dir=' + dir);
@@ -194,13 +222,40 @@ function rpc(ws) {
     check('every configured camera is offered as a chip', b.chips.length >= 2, JSON.stringify(b.chips));
 
     // Add the second (gappy) camera — this is the multi-camera half.
-    await evalJs(`(() => {
-      const chips = [...document.querySelectorAll('.tl-camera-chip')];
-      const off = chips.find(c => !c.classList.contains('is-on'));
-      if (off) off.querySelector('input').click();
-      return 1;
+    //
+    // Clicked with a REAL mouse event at real coordinates, not `input.click()`. The camera
+    // picker's checkbox is deliberately invisible and pointer-events:none — the pill is the
+    // control, because the sheet's global `input` rule was inflating the box to 47x38 and
+    // wrapping the camera name over three lines. Driving the input directly would keep
+    // passing if that pill ever stopped forwarding its clicks, which is the one way this
+    // design can break.
+    const chipBox = await evalJs(`(() => {
+      const off = [...document.querySelectorAll('.tl-camera-chip')].find(c => !c.classList.contains('is-on'));
+      if (!off) return '';
+      const r = off.getBoundingClientRect();
+      return JSON.stringify({ x: r.left + r.width / 2, y: r.top + r.height / 2, h: r.height });
     })()`);
+    check('there is a second camera to add', !!chipBox, chipBox || 'every chip already on');
+    if (chipBox) {
+      const cb = JSON.parse(chipBox);
+      // The pill must be a sane size. It was 63px tall with a 47x38 checkbox in it.
+      check('the camera pills are a sane height', cb.h > 0 && cb.h <= 40, 'chip height = ' + cb.h);
+      for (const type of ['mousePressed', 'mouseReleased']) {
+        await cdp.send('Input.dispatchMouseEvent', {
+          type, x: Math.round(cb.x), y: Math.round(cb.y), button: 'left', clickCount: 1,
+        });
+      }
+    }
     await sleep(4000);
+    const picked = await evalJs(`(() => {
+      const chips = [...document.querySelectorAll('.tl-camera-chip')];
+      return JSON.stringify({
+        on: chips.filter(c => c.classList.contains('is-on')).length,
+        checked: chips.filter(c => c.querySelector('input')?.checked).length,
+      });
+    })()`);
+    const pk = JSON.parse(picked);
+    check('clicking the pill actually selects the camera', pk.on === 2 && pk.checked === 2, picked);
 
     bar = await evalJs(`(() => {
       const tracks = [...document.querySelectorAll('.tl-track')];

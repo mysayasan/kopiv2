@@ -46,8 +46,10 @@ sequencing, and the helpers that don't belong to any one subsystem.
   during `RegisterAppRoutes`) to the shared `/ready` payload — advisory only, never flips
   the ready/not-ready verdict.
 - Registers app entities for bootstrap schema generation, including
-  `appentities.ObjectObservation{}` and `sharedentities.NotificationRollup{}` (object
-  metadata recorder + dashboard-analytics rollup table), `appentities.FacePerson{}` and
+  `appentities.ObjectObservation{}`, `appentities.ObjectAppearance{}` (W3-2 — one appearance
+  descriptor per sighting, see `entities/object_appearance.go.md`), and
+  `sharedentities.NotificationRollup{}` (object metadata recorder + dashboard-analytics
+  rollup table), `appentities.FacePerson{}` and
   `appentities.FaceEmbedding{}` (the global face-recognition gallery — see
   `entities/face_person.go.md`/`entities/face_embedding.go.md`), `sharedentities.AccessRole{}`
   and `sharedentities.AccessRolePermission{}` — mymatasan uses the shared accessrbac role +
@@ -101,6 +103,11 @@ sequencing, and the helpers that don't belong to any one subsystem.
    `deps.AccessRoles` as a second argument); resolves `shredPasses` (`config_map.go`, off
    `appCfg`); sizes the NVENC semaphore from the boot-time recording-storage settings;
    constructs `recordingService`, `metadataRecorder`, `observationService`,
+   `appearanceService` (`services.NewAppearanceService(repo.ObjectAppearance, atrestCipher)`,
+   W3-2 — then wired **into** `metadataRecorder`/`observationService` via
+   `SetAppearanceStore`/`SetAppearanceReaper`, post-construction, since it needs
+   `atrestCipher` which both of those are built before — see
+   `services/appearance_search.go.md`),
    `sightingSearch` (`services.NewSightingSearch(observationService, repo.AlertEvent, repo.Camera)`
    — the node's half of federated cross-node search, W2-4/F-10: reads through
    `observationService` so a sighting a fleet search finds resolves to the same footage

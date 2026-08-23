@@ -1,6 +1,7 @@
 package apis
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -37,6 +38,10 @@ func NewFleetSearchApi(router *mux.Router, auth middlewares.AuthMidware, session
 	g.Use(auth.Middleware)
 	g.HandleFunc("/search", h.runSearch).Methods("GET")
 	g.HandleFunc("/search/labels", h.labels).Methods("GET")
+	// Federated appearance search (W3-2). Same prefix and the same per-node authorization
+	// as /search, because it is the same question asked a different way — "where else did
+	// this go?" rather than "what was seen?" — over the same index and the same grants.
+	g.HandleFunc("/search/appearance", h.appearanceSearch).Methods("GET")
 }
 
 func (a *fleetSearchApi) runSearch(w http.ResponseWriter, r *http.Request) {
@@ -53,6 +58,46 @@ func (a *fleetSearchApi) runSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	a.recordSearch(r, q, result)
 	controllers.SendResult(w, result, "succeed")
+}
+
+// appearanceSearch answers "where else in the estate does this sighting appear?".
+//
+//	GET /api/nodes/search/appearance?nodeId=<source>&observationId=<n>&from=&to=&siteId=&minSimilarity=&limit=
+//
+// nodeId names the recorder holding the sighting the operator picked; the search itself
+// still visits every node the caller can reach unless scopeNodeId narrows it.
+func (a *fleetSearchApi) appearanceSearch(w http.ResponseWriter, r *http.Request) {
+	if a.search == nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, "fleet search is unavailable")
+		return
+	}
+	q := services.FleetAppearanceQuery{
+		SourceNodeId:        strings.TrimSpace(r.URL.Query().Get("nodeId")),
+		SourceObservationId: parseFleetInt64(r, "observationId"),
+		From:                parseFleetInt64(r, "from"),
+		To:                  parseFleetInt64(r, "to"),
+		SiteId:              parseFleetInt64(r, "siteId"),
+		NodeId:              strings.TrimSpace(r.URL.Query().Get("scopeNodeId")),
+		MinStandout:         parseFleetFloat(r, "minStandout"),
+		Limit:               int(parseFleetInt64(r, "limit")),
+	}
+	result, err := a.search.AppearanceSearch(r.Context(), a.roleId(r), q)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	a.recordAppearanceSearch(r, q, result)
+	controllers.SendResult(w, result, "succeed")
+}
+
+func parseFleetInt64(r *http.Request, key string) int64 {
+	v, _ := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get(key)), 10, 64)
+	return v
+}
+
+func parseFleetFloat(r *http.Request, key string) float64 {
+	v, _ := strconv.ParseFloat(strings.TrimSpace(r.URL.Query().Get(key)), 64)
+	return v
 }
 
 func (a *fleetSearchApi) labels(w http.ResponseWriter, r *http.Request) {
@@ -91,6 +136,54 @@ func (a *fleetSearchApi) roleId(r *http.Request) int64 {
 // The recorded outcome reflects COVERAGE, not row count: a search that reached three of
 // nine nodes is a partial answer, and a trail that calls it success invites someone to
 // later read "no sightings" off it as if the fleet had been asked.
+// recordAppearanceSearch audits "who asked where else this person went".
+//
+// Audited at least as carefully as an object search, and arguably more: an object search
+// asks what a camera saw, while this one follows an individual across an estate. The trail
+// records WHICH sighting was used as the query, so a review can reconstruct exactly who was
+// being looked for rather than only that somebody searched.
+func (a *fleetSearchApi) recordAppearanceSearch(r *http.Request, q services.FleetAppearanceQuery, result services.FleetAppearanceResult) {
+	if a.audit == nil {
+		return
+	}
+	outcome := "success"
+	if !result.Coverage.Complete {
+		outcome = "partial"
+	}
+	actorID, actorLabel, roleID := auditActor(r)
+	a.audit.Record(r.Context(), services.AuditEntry{
+		Action:     "fleet.search.appearance",
+		ActorId:    actorID,
+		ActorEmail: actorLabel,
+		ActorRole:  roleID,
+		TargetType: "fleet",
+		TargetId:   q.SourceNodeId,
+		Outcome:    outcome,
+		Detail: fmt.Sprintf("appearance of %s sighting %d on %s",
+			defaultLabelName(result.Label), q.SourceObservationId, q.SourceNodeId),
+		Metadata: map[string]any{
+			"sourceNodeId":  q.SourceNodeId,
+			"observationId": q.SourceObservationId,
+			"label":         result.Label,
+			"model":         result.Model,
+			"from":          q.From,
+			"to":            q.To,
+			"matches":       result.Total,
+			"scanned":       result.Scanned,
+			"searched":      result.Coverage.Searched,
+			"answered":      result.Coverage.Answered,
+			"complete":      result.Coverage.Complete,
+		},
+	})
+}
+
+func defaultLabelName(label string) string {
+	if strings.TrimSpace(label) == "" {
+		return "an object"
+	}
+	return label
+}
+
 func (a *fleetSearchApi) recordSearch(r *http.Request, q services.FleetSearchQuery, result services.FleetSearchResult) {
 	if a.audit == nil {
 		return

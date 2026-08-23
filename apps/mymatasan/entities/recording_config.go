@@ -20,6 +20,19 @@ type RecordingConfig struct {
 	// presence interval (0 = default).
 	MetadataEnabled    bool  `json:"metadataEnabled" form:"metadataEnabled" query:"metadataEnabled"`
 	MetadataGapSeconds int   `json:"metadataGapSeconds" form:"metadataGapSeconds" query:"metadataGapSeconds"`
+	// AppearanceEnabled adds an appearance descriptor to each person/vehicle sighting this
+	// camera records, so those sightings can later be ranked by "find more like this"
+	// (see services.AppearanceService). It REQUIRES MetadataEnabled, because the descriptor
+	// hangs off the observation row that metadata recording creates — on its own it would
+	// have nothing to attach to.
+	//
+	// Separate from MetadataEnabled rather than folded into it because it costs real
+	// compute: a neural-network forward pass per person or vehicle in every sampled frame.
+	// A site that wants the searchable text log of what was seen should not silently start
+	// paying for that, and on a small appliance running many cameras the difference decides
+	// whether frames are dropped. Off by default; added additively, so the auto-migrator
+	// adds the column and every existing camera keeps its current behaviour.
+	AppearanceEnabled bool `json:"appearanceEnabled" form:"appearanceEnabled" query:"appearanceEnabled"`
 	CreatedAt          int64 `json:"createdAt" form:"createdAt" query:"createdAt"`
 	UpdatedAt         int64  `json:"updatedAt" form:"updatedAt" query:"updatedAt"`
 }

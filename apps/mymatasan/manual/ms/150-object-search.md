@@ -60,6 +60,41 @@ Itulah sebabnya seseorang yang berjalan melintasi tempat letak kereta menghasilk
 bukan empat ratus — dan sebab melangkah sebentar di belakang tiang tidak memecahkan mereka menjadi
 dua orang.
 
+## Cari yang serupa {#appearance}
+
+Mana-mana baris orang atau kenderaan membawa tindakan **Cari yang serupa**. Pilih satu penampakan
+dan carian menyusun setiap penampakan lain yang direkodkan kamera itu mengikut sejauh mana ia
+*kelihatan serupa* dengan yang anda pilih — warna pakaian, bentuk badan, bentuk dan warna kenderaan.
+
+Ia suis berasingan daripada metadata objek, pada tab **Rakaman** yang sama: **Huraikan rupa untuk
+carian**. Ia memerlukan rakaman metadata dihidupkan terlebih dahulu — huraian itu menumpang metadata
+penampakan yang dicipta — dan ia tidak percuma seperti metadata. Ia satu laluan model bagi setiap
+orang atau kenderaan pada setiap bingkai yang disampel, di atas pengesan itu sendiri. Hidupkannya
+untuk kamera yang anda jangka akan ditanya "ke mana lagi ia pergi".
+
+> [!NOTE]
+> Tiada apa dihuraikan sehingga anda menghidupkan ini, dan tiada apa yang direkodkan sebelum saat
+> itu boleh dijumpai olehnya — had yang sama seperti metadata objek itu sendiri.
+
+### Apa maksud hasil bersusun, dan apa yang bukan {#appearance-scoring}
+
+Hasil yang tersusun tinggi bukan pengecaman identiti. Ia datang daripada huraian imej tujuan umum,
+bukan model pengecaman semula wajah atau tubuh, jadi ia baik membezakan rupa kasar — jaket merah
+daripada jaket hitam, van daripada hatchback — dan jauh lebih lemah mengecam individu yang sama
+merentasi perubahan besar dalam postur, cahaya atau kamera. Setiap hasil adalah senarai pendek untuk
+*anda* sahkan dengan mata, bukan sekali-kali keputusan muktamad, dan skrin tidak pernah mendakwa
+sebaliknya.
+
+Tiada juga peratusan padanan, dan itu sengaja bukan tertinggal. Diukur terhadap model sebenar, dua
+gambar orang yang *sama* mendapat kira-kira 98%, dan dua gambar dua orang yang *berbeza* mendapat
+kira-kira 95% — angka mentah hampir tidak berubah tidak kira siapa yang dibandingkan, jadi
+memaparkannya sebagai peratusan akan kelihatan seperti hampir pasti pada setiap baris. Skrin
+sebaliknya menunjukkan sejauh mana hasil itu **menonjol** berbanding segala yang lain dibandingkan
+bagi carian itu: hasil yang jelas mengatasi orang ramai berbaloi dilihat, yang hampir tidak berbuat
+demikian tidak, tidak kira apa yang dibaca angka asas. Dengan penampakan yang terlalu sedikit untuk
+dibandingkan, menonjol bermakna sedikit, dan skrin menyatakan demikian dan bukan mereka-reka
+kedudukan daripada bukti yang terlalu sedikit.
+
 ## Apa ia bukan {#limits}
 
 - **Ia bukan peraturan.** Tiada apa yang memberi amaran. Ia merekod supaya anda boleh mencari

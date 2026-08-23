@@ -39,6 +39,17 @@ type ObjectCandidate struct {
 	Confidence float64        `json:"confidence"`
 	Box        Box            `json:"box"`
 	Metadata   map[string]any `json:"metadata,omitempty"`
+	// Appearance is an L2-normalised descriptor of what this object looked like, present
+	// only when the frame asked for it and only on labels worth describing. It is what
+	// makes "find more like this" answerable later without keeping the footage hot.
+	//
+	// AppearanceModel names the network that produced it, and comparing vectors from two
+	// different models is meaningless rather than merely inaccurate — cosine similarity
+	// across unrelated feature spaces returns confident numbers with no content. Every
+	// consumer must filter on it, which is why it travels WITH the vector instead of being
+	// assumed from configuration that may have changed since the vector was written.
+	Appearance      []float32 `json:"appearance,omitempty"`
+	AppearanceModel string    `json:"appearanceModel,omitempty"`
 }
 
 type ObjectDetector interface {

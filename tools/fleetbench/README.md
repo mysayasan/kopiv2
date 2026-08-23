@@ -33,7 +33,18 @@ node   tools/fleetbench/uicheck_mail_dest.js .artifacts/fleetbench      # mymata
 KOPIV2_NODE_IMAGE=debian-ffmpeg:bench python tools/fleetbench/bench_w31_timeline.py
 node   tools/fleetbench/uicheck_timeline.js .artifacts/fleetbench en  # mymatasan, PLAYS
 node   tools/fleetbench/uicheck_timeline.js .artifacts/fleetbench ar  # ...and in RTL
+python tools/fleetbench/bench_w32_embedding.py            # W3-2: does the MODEL discriminate?
+python tools/fleetbench/bench_w32_appearance.py           # W3-2: search + federation
+node   tools/fleetbench/uicheck_appearance.js .artifacts/fleetbench en
+node   tools/fleetbench/uicheck_appearance.js .artifacts/fleetbench ar
 ```
+
+`bench_w32_embedding.py` (W3-2) runs on the HOST interpreter rather than in a container: the
+appearance stage rides torch + torchvision, which the anomaly feature already requires and
+which no bench image carries. `bench_w32_appearance.py` needs the fleet up, creates its own
+cameras, and SEEDS descriptors directly into each node's sqlite — the harness films synthetic
+test patterns, so no detector produces a person to describe. It writes `w32_context.json` for
+`uicheck_appearance.js`, so run them in that order.
 
 `bench_w31_timeline.py` (W3-1, timeline playback) needs the **ffmpeg node image** and runs
 for about eight minutes: it stands two mediamtx sources up, records both, then `docker
@@ -54,6 +65,11 @@ The same applies to any bench that attaches its own containers to `benchnet`.
 ```
 docker rm -f smtp-sink camsrc tlsrc-steady tlsrc-gappy
 ```
+
+**Swapping a node's binary needs the per-node copy.** `node_binary()` gives each container
+its own `bin/mymatasan-<name>`, so rebuilding `bin/mymatasan` alone changes nothing until
+those copies are refreshed and the containers restarted. The symptom is a bench asserting
+against response fields the running build has never heard of.
 
 is the sweep to run before re-standing the fleet up. The symptom of forgetting is always the
 same and never mentions containers: the network cannot be recreated, so both nodes come up

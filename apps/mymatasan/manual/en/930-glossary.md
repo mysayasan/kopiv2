@@ -17,6 +17,10 @@ administrators. See [Acknowledging](notifications#acknowledge).
 **Alert** — what a rule produces when it fires: a timestamp, a camera, what was seen, a
 snapshot, and a link to footage when there is any.
 
+**Appearance search** — ranking recorded sightings by how much they look like one you picked,
+rather than by object class. A shortlist to confirm by eye, not an identification. See
+[Find similar](object-search#appearance).
+
 **Bitrate** — how much data a stream produces per second. The main driver of how much disk a
 retention period costs.
 
