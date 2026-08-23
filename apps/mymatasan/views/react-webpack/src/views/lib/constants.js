@@ -113,7 +113,9 @@ export const notificationCategories = [
 // defaultDestination builds a blank destination of the given type. id is left
 // empty so the backend assigns one on save.
 export function defaultDestination(type = 'webhook') {
-  const name = type === 'telegram' ? 'Telegram' : type === 'mqtt' ? 'MQTT' : 'Webhook';
+  const name = type === 'telegram' ? 'Telegram'
+    : type === 'mqtt' ? 'MQTT'
+      : type === 'email' ? 'Email' : 'Webhook';
   return {
     id: '',
     name,
@@ -131,6 +133,11 @@ export function defaultDestination(type = 'webhook') {
       brokerUrl: '', topic: '', clientId: '', qos: 1, retain: false,
       username: '', password: '', caCert: '', clientCert: '', clientKey: '', insecureSkipVerify: false,
     },
+    // Email carries recipients only. The relay lives once per install under
+    // settings.smtp, so there is one mail server and one credential to rotate.
+    // Whether the snapshot is attached is snapshotMode above — the same control
+    // every other destination type already uses.
+    email: { to: [], subjectPrefix: '' },
   };
 }
 // Recording storage (at-rest compression) defaults; mirror Go RecordingStorageSettings.
@@ -151,6 +158,9 @@ export const defaultNotificationSettings = {
   webhook: { enabled: false, url: '', minSeverity: 'warning' },
   telegram: { enabled: false, botToken: '', chatId: '', minSeverity: 'warning' },
   retention: { days: 30, onlyRead: false, intervalHours: 6 },
+  // The one SMTP relay every email destination delivers through. Off by default:
+  // an air-gapped install must never reach for a mail server nobody pointed it at.
+  smtp: { enabled: false, host: '', port: 587, from: '', username: '', password: '', useStartTls: true },
   destinations: [],
 };
 export const defaultHealthSettings = {

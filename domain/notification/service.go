@@ -11,6 +11,7 @@ import (
 	"github.com/mysayasan/kopiv2/domain/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	"github.com/mysayasan/kopiv2/infra/mailer"
 	infranotif "github.com/mysayasan/kopiv2/infra/notification"
 	"github.com/mysayasan/kopiv2/infra/telemetry"
 )
@@ -87,7 +88,7 @@ type TelegramConfig struct {
 // subscription) and is addressable by Id for tailored per-destination delivery.
 type DestinationConfig struct {
 	Id          string
-	Type        string // "webhook" | "telegram" | "mqtt"
+	Type        string // "webhook" | "telegram" | "mqtt" | "email"
 	URL         string
 	Headers     map[string]string
 	BotToken    string
@@ -98,6 +99,35 @@ type DestinationConfig struct {
 	QueueSize  int
 	// Mqtt holds the MQTT-specific settings when Type is "mqtt".
 	Mqtt MqttDestinationConfig
+	// Email holds the recipient settings when Type is "email". The RELAY is not
+	// here — it is one per install, on ChannelConfig.Smtp.
+	Email EmailDestinationConfig
+}
+
+// EmailDestinationConfig is one email destination: who receives it and how it is
+// labelled. It carries no relay credentials on purpose — see ChannelConfig.Smtp.
+type EmailDestinationConfig struct {
+	// To is the recipient list.
+	To []string
+	// SubjectPrefix is prepended to every subject (e.g. "[Site A]").
+	SubjectPrefix string
+	// IncludeSnapshot attaches the alert image when the notification carries one.
+	IncludeSnapshot bool
+}
+
+// SmtpConfig is the ONE mail relay an install delivers through, shared by every
+// email destination. Kept apart from the destinations for the same reason the
+// destinations are kept apart from each other: adding a recipient is a routing
+// decision an operator makes often, while pointing the install at a different
+// mail server is an infrastructure decision made once and audited.
+type SmtpConfig struct {
+	Enabled     bool
+	Host        string
+	Port        int
+	From        string
+	Username    string
+	Password    string
+	UseStartTls bool
 }
 
 // MqttDestinationConfig holds the MQTT broker/publish settings for a destination.
@@ -122,6 +152,10 @@ type ChannelConfig struct {
 	Webhook      WebhookConfig
 	Telegram     TelegramConfig
 	Destinations []DestinationConfig
+	// Smtp is the shared mail relay backing every "email" destination. When it is
+	// disabled or hostless, email destinations build as no-ops — so switching the
+	// relay off silences mail without anyone having to delete their destinations.
+	Smtp SmtpConfig
 }
 
 // Service is a reusable, database-backed notification facade: it owns the hub,
@@ -184,7 +218,7 @@ func (s *Service) Configure(cfg ChannelConfig) {
 	var channels []Channel
 	byID := make(map[string]Channel, len(dests))
 	for _, d := range dests {
-		inner := s.buildDestinationChannel(d)
+		inner := s.buildDestinationChannel(d, cfg.Smtp)
 		if inner == nil {
 			continue
 		}
@@ -207,7 +241,13 @@ func (s *Service) Configure(cfg ChannelConfig) {
 // buildDestinationChannel builds the underlying delivery channel for a
 // destination. Severity/category filtering is applied by the wrapping
 // filteredChannel, so the inner channel is built without a severity floor.
-func (s *Service) buildDestinationChannel(d DestinationConfig) Channel {
+//
+// The relay is a PARAMETER rather than a field on the Service: Configure may be
+// called from two settings saves at once, and a relay stashed on the receiver
+// would be read by one call while the other overwrote it — a data race the
+// nightly -race job would eventually catch, and until then a channel built
+// against half of one relay and half of another.
+func (s *Service) buildDestinationChannel(d DestinationConfig, smtp SmtpConfig) Channel {
 	switch d.Type {
 	case "webhook":
 		if d.URL == "" {
@@ -247,6 +287,26 @@ func (s *Service) buildDestinationChannel(d DestinationConfig) Channel {
 			InsecureSkipVerify: d.Mqtt.InsecureSkipVerify,
 			QueueSize:          d.QueueSize,
 			Logger:             s.logger,
+		})
+	case "email":
+		if len(d.Email.To) == 0 {
+			return nil
+		}
+		return infranotif.NewMailChannel(infranotif.MailOptions{
+			Relay: mailer.Config{
+				Enabled:     smtp.Enabled,
+				Host:        smtp.Host,
+				Port:        smtp.Port,
+				From:        smtp.From,
+				Username:    smtp.Username,
+				Password:    smtp.Password,
+				UseStartTls: smtp.UseStartTls,
+			},
+			To:              d.Email.To,
+			SubjectPrefix:   d.Email.SubjectPrefix,
+			IncludeSnapshot: d.Email.IncludeSnapshot,
+			QueueSize:       d.QueueSize,
+			Logger:          s.logger,
 		})
 	default:
 		return nil

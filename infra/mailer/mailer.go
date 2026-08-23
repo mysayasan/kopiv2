@@ -13,7 +13,6 @@ import (
 	"net/smtp"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // Config is the SMTP relay connection, mirrored from the app config `smtp` block.
@@ -48,17 +47,40 @@ func (m *Mailer) From() string {
 	return strings.TrimSpace(m.cfg.Username)
 }
 
-// Send delivers a plain-text message to a single recipient. It dials the relay,
-// upgrades to TLS via STARTTLS when configured, authenticates when a username is
-// set, and refuses to send credentials over an un-upgraded connection.
+// Send delivers a plain-text message to a single recipient. It is a thin wrapper
+// over SendMessage, kept because myidsan's password-reset path has no need of
+// recipient lists or attachments.
 func (m *Mailer) Send(to, subject, body string) error {
+	return m.SendMessage(Message{To: []string{to}, Subject: subject, Body: body})
+}
+
+// SendMessage delivers one message to every recipient in a single SMTP
+// conversation. It dials the relay, upgrades to TLS via STARTTLS when
+// configured, authenticates when a username is set, and refuses to send
+// credentials over an un-upgraded connection.
+//
+// PARTIAL DELIVERY IS A SUCCESS. When the relay rejects SOME recipients (a typo,
+// a mailbox that has since been closed) the message is still delivered to the
+// rest and the rejections are returned as a RecipientError alongside a nil-free
+// send. Failing the whole send on one bad address would mean one stale entry in
+// a distribution list silences an alert for everybody else on it — and because
+// the notification channel retries transient failures, it would do so on every
+// single alert, forever. Only a message that reached NOBODY is an error.
+func (m *Mailer) SendMessage(msg Message) error {
 	if !m.Enabled() {
 		return errors.New("mailer is not configured")
 	}
-	to = strings.TrimSpace(to)
-	if to == "" {
+	rcpts := normalizeRecipients(msg.To)
+	if len(rcpts) == 0 {
 		return errors.New("empty recipient")
 	}
+	msg.To = rcpts
+
+	from := m.From()
+	if from == "" {
+		return errors.New("smtp: no From address configured")
+	}
+
 	host := strings.TrimSpace(m.cfg.Host)
 	port := m.cfg.Port
 	if port == 0 {
@@ -72,7 +94,7 @@ func (m *Mailer) Send(to, subject, body string) error {
 	}
 	defer c.Close()
 
-	if err := c.Hello(smtpHelloName(m.From())); err != nil {
+	if err := c.Hello(smtpHelloName(from)); err != nil {
 		return err
 	}
 
@@ -98,43 +120,66 @@ func (m *Mailer) Send(to, subject, body string) error {
 		}
 	}
 
-	from := m.From()
-	if from == "" {
-		return errors.New("smtp: no From address configured")
-	}
 	if err := c.Mail(from); err != nil {
 		return err
 	}
-	if err := c.Rcpt(to); err != nil {
-		return err
+	var accepted []string
+	var rejected []RejectedRecipient
+	for _, to := range rcpts {
+		if err := c.Rcpt(to); err != nil {
+			rejected = append(rejected, RejectedRecipient{Address: to, Err: err})
+			continue
+		}
+		accepted = append(accepted, to)
 	}
+	if len(accepted) == 0 {
+		return &RecipientError{Rejected: rejected, AllRejected: true}
+	}
+	// The To header lists only the addresses the relay accepted, so the message a
+	// recipient reads does not claim it went somewhere it did not.
+	msg.To = accepted
+
 	wc, err := c.Data()
 	if err != nil {
 		return err
 	}
-	if _, err := wc.Write([]byte(buildMessage(from, to, subject, body))); err != nil {
+	if _, err := wc.Write([]byte(msg.build(from))); err != nil {
 		return err
 	}
 	if err := wc.Close(); err != nil {
 		return err
 	}
-	return c.Quit()
+	if err := c.Quit(); err != nil {
+		return err
+	}
+	if len(rejected) > 0 {
+		return &RecipientError{Rejected: rejected}
+	}
+	return nil
 }
 
-// buildMessage assembles a minimal RFC 5322 plain-text message. Subject and header
-// values are sanitised of CR/LF to prevent header injection from any templated input.
-func buildMessage(from, to, subject, body string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "From: %s\r\n", stripHeader(from))
-	fmt.Fprintf(&b, "To: %s\r\n", stripHeader(to))
-	fmt.Fprintf(&b, "Subject: %s\r\n", stripHeader(subject))
-	fmt.Fprintf(&b, "Date: %s\r\n", time.Now().UTC().Format(time.RFC1123Z))
-	b.WriteString("MIME-Version: 1.0\r\n")
-	b.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
-	b.WriteString("\r\n")
-	// Normalise the body to CRLF line endings.
-	b.WriteString(strings.ReplaceAll(strings.ReplaceAll(body, "\r\n", "\n"), "\n", "\r\n"))
-	return b.String()
+// normalizeRecipients trims, drops blanks, and de-duplicates addresses
+// case-insensitively on the domain while preserving order. A list pasted from a
+// spreadsheet routinely contains the same address twice; sending the same alert
+// to the same mailbox twice reads as a bug in the alerting, not in the list.
+func normalizeRecipients(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, raw := range in {
+		for _, part := range strings.Split(raw, ",") {
+			addr := stripHeader(part)
+			if addr == "" {
+				continue
+			}
+			key := strings.ToLower(addr)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, addr)
+		}
+	}
+	return out
 }
 
 func stripHeader(v string) string {

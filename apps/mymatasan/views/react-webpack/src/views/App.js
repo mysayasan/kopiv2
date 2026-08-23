@@ -639,6 +639,7 @@ function AppInner({ lang, onLangChange }) {
       webhook: { ...defaultNotificationSettings.webhook, ...(result?.webhook || {}) },
       telegram: { ...defaultNotificationSettings.telegram, ...(result?.telegram || {}) },
       retention: { ...defaultNotificationSettings.retention, ...(result?.retention || {}) },
+      smtp: { ...defaultNotificationSettings.smtp, ...(result?.smtp || {}) },
       destinations: Array.isArray(result?.destinations) ? result.destinations : [],
     };
   }
@@ -703,6 +704,29 @@ function AppInner({ lang, onLangChange }) {
       const merged = mergeNotif(result);
       setSavedNotificationSettings(merged);
       setNotificationSettings((cur) => ({ ...cur, retention: merged.retention }));
+      setMessage(t('app.notifSaved'));
+    } catch (err) {
+      setMessage(err.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // saveNotificationSmtp persists ONLY the mail relay. It is separate from the
+  // destinations for the same reason retention is: the relay is infrastructure,
+  // the destinations are routing, and saving one must never rewrite the other
+  // from a stale copy this browser happened to be holding.
+  async function saveNotificationSmtp(smtp) {
+    setBusy(true);
+    setMessage('');
+    try {
+      const result = await request('/api/settings/notification/smtp', {
+        method: 'PUT',
+        body: JSON.stringify(smtp),
+      });
+      const merged = mergeNotif(result);
+      setSavedNotificationSettings(merged);
+      setNotificationSettings((cur) => ({ ...cur, smtp: merged.smtp }));
       setMessage(t('app.notifSaved'));
     } catch (err) {
       setMessage(err.message, 'error');
@@ -2783,6 +2807,7 @@ function AppInner({ lang, onLangChange }) {
           onSaveDestination={saveNotificationDestination}
           onDeleteDestination={deleteNotificationDestination}
           onSaveRetention={saveNotificationRetention}
+          onSaveSmtp={saveNotificationSmtp}
           onTestNotification={testNotificationChannel}
           onPurgeNotifications={purgeExpiredNotifications}
           healthSettings={healthSettings}

@@ -550,6 +550,86 @@ deserve the same standard.
   instrumentation" are indistinguishable. This one was a REAL product gap the bench caught,
   not a bench bug: the counters are now published at zero from boot.
 
+## W2-7 · Email notification channel  ⟨ DONE (2026-08-23), 34/34 + two screen passes
+
+`tools/fleetbench/bench_w27_email.py`, with `tools/fleetbench/smtp_sink.py` as a REAL
+recording SMTP server on the bench network. The claim of this item is "an operator finds out
+by email", and nothing short of a real SMTP conversation tests it — so every assertion is on
+what the relay RECEIVED (envelope, headers, body), never on what the app said it sent. A 200
+from a save endpoint is not a delivered message.
+
+**Both flagships, because the control plane had no outbound leg at all.** `myseliasan` built
+a notification service and never called `Configure`: a node going dark reached a browser and
+nowhere else. The bench configures the new `notification` settings section, restarts the
+control plane, stops a node, and waits for the mail.
+
+What passed — node (`mymatasan`): a critical notification arrives with the right envelope,
+subject prefix, severity tag, `X-Kopiv2-*` classification headers and a UTC-labelled body; a
+notification below the severity floor is NOT emailed; one rejected recipient does not silence
+the alert for the others AND the surviving address is not mailed again by a retry; the `To`
+header never names an address the relay refused; switching the relay off silences mail
+without deleting anyone's destination; a username with STARTTLS off is refused at save time;
+a recipient carrying CR/LF is refused.
+
+Control plane (`myseliasan`): the same two refusals plus "email needs the relay enabled"; the
+new `POST /api/settings/notification/test` delivers a real message and FAILS loudly against a
+dead relay; settings survive the config.json round trip and restart; the relay password is
+never returned to the browser; and stopping a node produces `[HQ] [CRITICAL] Node offline` in
+the operator's mailbox.
+
+**Not claimed:** a snapshot attachment travelling end to end. The harness runs no cameras, so
+no notification with an image was raised. The MIME assembly is unit-tested with a
+decode-and-compare round trip and mutation-checked, but it has not been benched live.
+
+### Traps this bench added
+
+- **Tear the SMTP sink down before re-running the harness.** The sink joins `benchnet`, so
+  `teardown` cannot remove the network and `fleet_harness.py` aborts half way through
+  `docker network create` — leaving a fleet that looks up but is not adopted.
+- **A PUT with no `id` CREATES a destination.** Editing the recipient list without echoing
+  the saved id added a SECOND email destination, so every alert was delivered twice — which
+  reads exactly like a retry bug in the code under test. Cost a full run.
+- **Filter every assertion by subject.** The fleet raises its own mail while the bench runs
+  (the node's disk guard alone produced four unrelated criticals), so a check that merely
+  counts new messages passes or fails on unrelated traffic and blames the code under test.
+- **Match the EVENT, not a word that appears in it.** The node-offline check first looked for
+  "node" anywhere in the message and passed on a relayed disk alert — proving mail works
+  while saying nothing about a node going dark. It also printed `msgs[0]`'s subject while
+  asserting on a different message, so the evidence in the log was not the evidence the check
+  used. Now it requires the title `Node offline` AND the control plane's `[HQ]` prefix.
+
+### The screen passes — and the one that lied about itself
+
+`tools/fleetbench/uicheck_settings.js` (myseliasan) and `tools/fleetbench/uicheck_mail_dest.js`
+(mymatasan). Both scan the rendered page for untranslated keys, which every API assertion in
+the world passes straight over.
+
+- **`uicheck_mail_dest.js` TYPES.** The recipient list is stored as an array and edited as
+  text; a controlled textarea whose value is `to.join('
+')` is impossible to type a second
+  address into, because parsing drops the empty entry the instant you press Enter. It
+  renders, the API accepts, unit tests pass, and the feature is unusable. The bench dispatches
+  real `Input.insertText` + `Enter` and asserts both addresses survive.
+- **Chrome silently refuses a RELATIVE `--user-data-dir`** and never opens the devtools port;
+  it surfaces only as "devtools never came up". Resolve the path.
+- **Scope a tab click to the settings tab bar.** A page-wide search for "Notifications" finds
+  the nav rail's notification FEED first (it renders as `Notifications10`, label plus unread
+  count), navigates away from Settings, and every assertion then reports an empty page —
+  reading as "the section did not render".
+- **A language switch must be PROVEN, not written.** The Arabic pass set a made-up
+  localStorage key, so the page stayed in English and the run reported "renders in ar" having
+  never switched language — passing for exactly the reason it was written to catch. The key
+  is the app's own (`myseliasan_lang`), and the check now fails if the labels are still ASCII
+  or the page is not RTL.
+- **A summary field that is always empty is a check that checks nothing.** The label list came
+  back `[]` because the selector read `childNodes[0]`, which misses any label wrapping a
+  `FieldTitle`. Assert the summary is non-empty.
+
+**What the screen pass found:** the snapshot-delivery hint enumerated "webhook/MQTT base64,
+Telegram photo" and not email, so an operator on an email destination could not tell whether
+the control applied to them. Fixed in all four languages. Same class as W2-4's "Recording…"
+label — a green API and a label that lies look identical from the API side.
+
 ---
 
 # The fleet harness — build it once, reuse it

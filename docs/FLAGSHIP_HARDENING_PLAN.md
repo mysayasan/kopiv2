@@ -27,7 +27,7 @@ lands the work.
 | W2-4 | Federated cross-node search | F-10 | `feat/fleet-federated-search` | ✅ shipped, benched 2026-08-22 (36/36 on a real two-node fleet) |
 | W2-5 | Staged version rollout | F-07 | `feat/fleet-staged-rollout` | ✅ shipped, benched 2026-08-22 (22/22 on a real two-node fleet) |
 | W2-6 | Instrument dropped control-channel events | F-11 | `feat/control-channel-drop-metrics` | ✅ shipped, benched 2026-08-23 (19/19 on a real two-node fleet) |
-| W2-7 | Email notification channel | F-20a | — | ☐ not started |
+| W2-7 | Email notification channel | F-20a | `feat/email-notification-channel` | ✅ shipped, benched 2026-08-23 (34/34 on a real two-node fleet + 3 screen passes) |
 | **Phase 3 — Win the bake-off** |
 | W3-1 | Timeline playback | F-12 | — | ☐ not started |
 | W3-2 | Appearance search across cameras/nodes | F-16 | — | ☐ not started |
@@ -872,10 +872,64 @@ counters are now published at zero for the kinds a node forwards.
 of the file — could not otherwise be exercised without standing up a websocket, and two
 mutations survived until they could be.
 
-**W2-7 · Email notification channel** (F-20a). `infra/mailer` exists and is used only by
-myidsan password reset. A `mail_channel.go` alongside the existing six channels in
-`infra/notification/`. Small, and it unblocks procurement conversations that Telegram
-cannot.
+**W2-7 · Email notification channel** (F-20a). **Shipped — benched 2026-08-23 against a real
+two-node fleet and a real SMTP server, 34/34, plus screen passes on both apps.** Phase 2 is
+complete.
+
+`infra/notification/mail_channel.go` beside the existing six channels, delivering through
+`infra/mailer` — which grew multi-recipient, custom headers and MIME attachments to carry it
+(`message.go`). `email` is now a destination type in `domain/notification`'s single dispatch
+switch, so mymatasan gets it in the per-destination model and any future app gets it free.
+
+**THE FINDING NAMED A CHANNEL; READING THE PATH FOUND A MISSING LEG.** `apps/myseliasan`
+built a notification `Service` and **never called `Configure`** — the control plane had no
+outbound delivery of any kind. Every node-offline, every relayed alert, every monitoring gap
+was persisted, logged, streamed to any open browser, and stopped there. An operator watching
+fifty sites had to be looking at the screen to learn one had gone dark, which is precisely
+the moment nobody is looking at a screen. It also made two config blocks lies:
+`notification.webhook` and `notification.telegram` had been in the shared model all along and
+were never consumed by that app. **When an item says "add a channel", check the other end is
+actually wired to any.**
+
+**THE RELAY IS ONE PER INSTALL, NOT ONE PER DESTINATION** — the design call worth reusing.
+Recipients are routing (changed often, by whoever decides who gets told); an SMTP relay is
+infrastructure (changed once, by whoever runs the mail server, and audited). Putting
+credentials on every destination row would multiply the secret to rotate and would let a
+notification screen quietly open egress on an install whose config says mail is off. It also
+gives an air-gapped deployment one place to look. Same instinct as W2-3/W2-4/W2-5: ask which
+end already knows enough.
+
+**PARTIAL DELIVERY IS A SUCCESS, AND THE ERROR CONTRACT IS THE WHOLE FEATURE.** When a relay
+accepts some recipients and rejects others, the message IS delivered and must NOT be retried.
+Failing the send would let one stale address in a distribution list silence the alert for
+everybody else — and because the worker retries, it would do so on every alert, forever.
+Only "nobody received it" is a failure, and even then a by-name rejection is permanent, since
+retrying the same list cannot change the answer. Three of the mutation-checked assertions
+exist for exactly this table.
+
+**A GUARD THAT CANNOT DELIVER MUST BE REFUSED AT SAVE TIME.** A username with STARTTLS off
+produces a relay that silently never sends, because the sender will not put a credential on a
+cleartext link. Both apps reject it when it is saved rather than when an incident needs it.
+The same reasoning added `POST /api/settings/notification/test` to myseliasan — the control
+plane already had a "test this connection" button for Redis and none for the alerting path.
+
+**WHAT THE MUTATION PASS FOUND, AND IT IS THE RECURRING ONE.** 34 mutations, 34 caught — but
+only after one survivor exposed a test named `RefusesCleartextCredentials` that never reached
+the guard it named: with `UseStartTls: true` the "STARTTLS not offered" check returns first.
+The rewritten test points the sender at a relay that OFFERS `AUTH` and asserts the password
+**never reached the wire**. *A test named after a guard is not evidence it runs.*
+
+**WHAT THE SCREEN PASS FOUND.** The snapshot-delivery hint listed "webhook/MQTT base64,
+Telegram photo" and not email, so an operator on an email destination could not tell whether
+the control applied to them — the same class as W2-4's "Recording…" label. Fixed in four
+languages. The mymatasan screen check also TYPES: the recipient list is an array edited as
+text, and a controlled textarea derived from `to.join()` cannot be typed into at all, because
+parsing eats the newline the instant Enter is pressed. It renders, the API accepts, and the
+feature is unusable.
+
+**Not claimed:** a snapshot attachment travelling end to end. The harness runs no cameras, so
+no notification carrying an image was raised. The MIME assembly is unit-tested with a
+decode-and-compare round trip and mutation-checked; it has not been benched live.
 
 ---
 

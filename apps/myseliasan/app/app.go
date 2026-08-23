@@ -963,6 +963,12 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	notificationService := notification.NewService(notificationRepo,
 		notification.Options{Logger: deps.Logger, Metrics: deps.Metrics}).
 		WithRollups(rollupRepo)
+	// Give the feed an OUTBOUND leg. Without this the control plane could only
+	// ever tell somebody who was already looking at the screen: a node going dark
+	// at 03:00 persisted, logged, streamed to any open browser, and stopped there.
+	// It also makes the notification.webhook / notification.telegram config blocks
+	// honest — they have been in the model all along and were never consumed.
+	notificationService.Configure(services.NotificationChannelConfig(deps.Config))
 	apis.NewNotificationApi(api, *deps.Auth, controlSession, notificationService)
 
 	// Fold the feed into hourly rollups (the heatmap/baseline substrate). The first

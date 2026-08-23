@@ -677,6 +677,9 @@ type INotificationSettingsService interface {
 	// SaveRetention persists only the retention section, leaving destinations (and
 	// legacy singletons) untouched. Returns the full updated settings.
 	SaveRetention(ctx context.Context, retention NotificationRetentionSettings) (NotificationSettings, error)
+	// SaveSmtp persists only the shared mail-relay section, leaving destinations
+	// and retention untouched. A blank password keeps the stored one.
+	SaveSmtp(ctx context.Context, smtp NotificationSmtpSettings) (NotificationSettings, error)
 	// Destinations returns the configured delivery destinations (for
 	// per-destination alert rendering). Implements INotificationDestinationsProvider.
 	Destinations(ctx context.Context) []NotificationDestination

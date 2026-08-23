@@ -25,8 +25,17 @@ python tools/fleetbench/bench_w22_sla.py      # W2-2: node state history + SLA r
 python tools/fleetbench/bench_w24_search.py   # W2-4: federated cross-node search
 KOPIV2_NODE_HOME_RW=1 python tools/fleetbench/fleet_harness.py  # rerun with writable node homes
 python tools/fleetbench/bench_w25_rollout.py  # W2-5: staged version rollout
+python tools/fleetbench/bench_w27_email.py    # W2-7: the email channel, both flagships
 node   tools/fleetbench/uicheck.js .artifacts/fleetbench objects   # drive a SCREEN
+node   tools/fleetbench/uicheck_settings.js  .artifacts/fleetbench en   # myseliasan settings
+node   tools/fleetbench/uicheck_settings.js  .artifacts/fleetbench ar   # ...and in RTL
+node   tools/fleetbench/uicheck_mail_dest.js .artifacts/fleetbench      # mymatasan, TYPES
 ```
+
+`bench_w27_email.py` brings its own dependency: `smtp_sink.py`, a real recording SMTP server
+run as a container on `benchnet`. **Remove it before re-running the harness** —
+`docker rm -f smtp-sink` — or `teardown` cannot delete the network, `docker network create`
+fails, and the fleet comes up unadopted.
 
 **`uicheck.js` is the screen half, and it is not optional for an item that ships a screen.**
 W2-4's API bench passed 36/36 and the screen it shipped still lied — every sighting from a

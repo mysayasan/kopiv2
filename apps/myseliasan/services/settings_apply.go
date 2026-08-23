@@ -74,6 +74,40 @@ func validateSection(section string, data map[string]any) error {
 		if p := g.i("agent.llm.sidecar.port"); p != 0 && (p < 1 || p > 65535) {
 			return fmt.Errorf("sidecar port must be between 1 and 65535")
 		}
+	case "notification":
+		if g.b("smtp.enabled") && strings.TrimSpace(g.s("smtp.host")) == "" {
+			return fmt.Errorf("an SMTP relay host is required when mail is enabled")
+		}
+		if p := g.i("smtp.port"); p != 0 && (p < 1 || p > 65535) {
+			return fmt.Errorf("SMTP port must be between 1 and 65535")
+		}
+		// Refused at save time rather than at send time: the sender will not
+		// transmit a credential over a cleartext link, so this combination produces
+		// a relay that silently never delivers. Saying so here is the difference
+		// between a corrected setting and an alerting path nobody knows is dead.
+		if strings.TrimSpace(g.s("smtp.username")) != "" && !g.b("smtp.useStartTls") {
+			return fmt.Errorf("STARTTLS must be enabled when an SMTP username is set — credentials are never sent over a cleartext link")
+		}
+		if g.b("notification.email.enabled") {
+			if strings.TrimSpace(g.s("notification.email.to")) == "" {
+				return fmt.Errorf("at least one email recipient is required when email delivery is enabled")
+			}
+			if !g.b("smtp.enabled") {
+				return fmt.Errorf("email delivery needs the SMTP relay enabled")
+			}
+			if strings.TrimSpace(g.s("smtp.from")) == "" && strings.TrimSpace(g.s("smtp.username")) == "" {
+				return fmt.Errorf("a sender address (from) is required when email delivery is enabled")
+			}
+		}
+		for _, addr := range splitList(g.s("notification.email.to")) {
+			if !looksLikeEmailAddress(addr) {
+				return fmt.Errorf("%q is not a valid email address", addr)
+			}
+		}
+		if sev := strings.ToLower(strings.TrimSpace(g.s("notification.email.minSeverity"))); sev != "" &&
+			sev != "info" && sev != "warning" && sev != "critical" {
+			return fmt.Errorf("minimum severity must be info, warning, or critical")
+		}
 	case "security":
 		if len(strings.TrimSpace(g.s("jwt.secret"))) < 16 {
 			return fmt.Errorf("JWT secret must be at least 16 characters")
@@ -178,6 +212,19 @@ func applyToConfig(cfg *config.AppConfigModel, section string, data map[string]a
 		cfg.Agent.LLM.Sidecar.ModelPath = strings.TrimSpace(g.s("agent.llm.sidecar.modelPath"))
 		allowDownloads := g.b("agent.allowDownloads")
 		cfg.Agent.AllowDownloads = &allowDownloads
+	case "notification":
+		cfg.Smtp.Enabled = g.b("smtp.enabled")
+		cfg.Smtp.Host = strings.TrimSpace(g.s("smtp.host"))
+		cfg.Smtp.Port = g.i("smtp.port")
+		cfg.Smtp.From = strings.TrimSpace(g.s("smtp.from"))
+		cfg.Smtp.Username = strings.TrimSpace(g.s("smtp.username"))
+		cfg.Smtp.Password = g.s("smtp.password")
+		cfg.Smtp.UseStartTls = g.b("smtp.useStartTls")
+		cfg.Notification.Email.Enabled = g.b("notification.email.enabled")
+		cfg.Notification.Email.To = strings.Join(splitList(g.s("notification.email.to")), ", ")
+		cfg.Notification.Email.SubjectPrefix = strings.TrimSpace(g.s("notification.email.subjectPrefix"))
+		cfg.Notification.Email.MinSeverity = strings.ToLower(strings.TrimSpace(g.s("notification.email.minSeverity")))
+		cfg.Notification.Email.Categories = strings.Join(splitList(g.s("notification.email.categories")), ",")
 	case "security":
 		cfg.Jwt.Secret = g.s("jwt.secret")
 		cfg.AllowOrigin = g.s("allowOrigins")

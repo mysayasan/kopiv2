@@ -41,6 +41,7 @@ func NewSettingsApi(router *mux.Router, auth middlewares.AuthMidware, session *m
 	g.HandleFunc("", h.requireSuper(h.getAll)).Methods("GET")
 	// Literal routes registered before the "/{section}" var routes so they aren't captured by them.
 	g.HandleFunc("/cache/test", h.requireSuper(h.testCache)).Methods("POST")
+	g.HandleFunc("/notification/test", h.requireSuper(h.testMail)).Methods("POST")
 	g.HandleFunc("/fs/browse", h.requireSuper(h.browseFilesystem)).Methods("GET")
 	g.HandleFunc("/{section}", h.requireSuper(h.getSection)).Methods("GET")
 	g.HandleFunc("/{section}", h.requireSuper(h.saveSection)).Methods("PUT")
@@ -114,6 +115,24 @@ func (a *settingsApi) testCache(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return
 	}
+	controllers.SendResult(w, map[string]any{"ok": true}, "succeed")
+}
+
+// testMail sends a real message through the relay in the request body (blank password
+// uses the stored one) so an operator can verify the mail path before an incident
+// depends on it. Superadmin-gated, and recorded: a test message is outbound traffic
+// leaving the control plane, and the audit trail is what says who caused it.
+func (a *settingsApi) testMail(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxSettingsBody))
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, "request body too large")
+		return
+	}
+	if err := a.settings.TestMail(r.Context(), body); err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	a.record(r, "settings.testMail", "notification")
 	controllers.SendResult(w, map[string]any{"ok": true}, "succeed")
 }
 

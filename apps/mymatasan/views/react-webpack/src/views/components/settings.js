@@ -5,7 +5,7 @@ import { DataTable } from '@shared/DataTable';
 import { useT } from '@shared/i18n';
 import { DeploymentPanel } from '@shared/Deployment';
 import { HelpButton } from '@shared/Manual';
-import { FormBusyOverlay, FieldTitle, AccordionList, AccordionItem } from './ui';
+import { FormBusyOverlay, FieldTitle, FormAlert, AccordionList, AccordionItem } from './ui';
 import { ConsoleLog } from './console';
 import { PasswordField } from './layout';
 import { defaultYoloConfig, bestYoloDefaults, defaultCaptureConfig, captureModeOptions, defaultAlertNotificationConfig, alertNotificationFields, alertFieldDataKeys, builtinPayloadKeys, notificationCategories, notificationTemplateTokens, defaultDestination, defaultNotificationSettings, defaultHealthSettings, defaultMachineHealthSettings } from '../lib/constants';
@@ -1658,6 +1658,7 @@ export function SettingsTab({
   onSaveDestination,
   onDeleteDestination,
   onSaveRetention,
+  onSaveSmtp,
   onTestNotification,
   onPurgeNotifications,
   healthSettings,
@@ -2548,6 +2549,7 @@ export function SettingsTab({
             onSaveDestination={onSaveDestination}
             onDeleteDestination={onDeleteDestination}
             onSaveRetention={onSaveRetention}
+            onSaveSmtp={onSaveSmtp}
             onTest={onTestNotification}
             onPurgeExpired={onPurgeNotifications}
           />
@@ -2607,15 +2609,19 @@ export const SEVERITY_OPTIONS = [
   { value: 'critical', label: 'Critical only' },
 ];
 
-export function NotificationSettingsPanel({ settings, savedSettings, busy, onChange, onSaveDestination, onDeleteDestination, onSaveRetention, onTest, onPurgeExpired }) {
+export function NotificationSettingsPanel({ settings, savedSettings, busy, onChange, onSaveDestination, onDeleteDestination, onSaveRetention, onSaveSmtp, onTest, onPurgeExpired }) {
   const t = useT();
   const retention = settings.retention || defaultNotificationSettings.retention;
+  // The mail relay is one per install, not per destination.
+  const smtp = settings.smtp || defaultNotificationSettings.smtp;
   const destinations = Array.isArray(settings.destinations) ? settings.destinations : [];
   // Last-saved snapshot, used to scope each section's own Save/Discard: a section's
   // buttons enable only when THAT section differs from what's persisted.
   const savedRetention = savedSettings?.retention || defaultNotificationSettings.retention;
   const savedDestinations = Array.isArray(savedSettings?.destinations) ? savedSettings.destinations : [];
+  const savedSmtp = savedSettings?.smtp || defaultNotificationSettings.smtp;
   const retentionChanged = JSON.stringify(retention) !== JSON.stringify(savedRetention);
+  const smtpChanged = JSON.stringify(smtp) !== JSON.stringify(savedSmtp);
   // A destination is "changed" when it has no saved counterpart yet (newly added)
   // or differs from its saved snapshot at the same position.
   const destChanged = (index) =>
@@ -2710,6 +2716,99 @@ export function NotificationSettingsPanel({ settings, savedSettings, busy, onCha
           </button>
           <button type="button" className="quiet" onClick={() => addDestination('mqtt')} disabled={busy}>
             <span className="btn-icon"><Ico n="wifi" /> {t('st.addMqtt')}</span>
+          </button>
+          <button type="button" className="quiet" onClick={() => addDestination('email')} disabled={busy}>
+            <span className="btn-icon"><Ico n="send" /> {t('st.addEmail')}</span>
+          </button>
+        </div>
+      </section>
+
+      <section className="settings-panel span-two">
+        <header>
+          <h2><span className="btn-icon"><Ico n="send" /> {t('st.mailRelay')}</span></h2>
+        </header>
+        <p className="settings-hint">{t('st.mailRelayHint')}</p>
+        <label className="check-row">
+          <input
+            type="checkbox"
+            checked={Boolean(smtp.enabled)}
+            onChange={(event) => patch('smtp', { enabled: event.target.checked })}
+            disabled={busy}
+          />
+          {t('st.enableMailRelay')}
+        </label>
+        <div className="settings-grid">
+          <label>
+            {t('st.smtpHost')}
+            <input
+              value={smtp.host || ''}
+              onChange={(event) => patch('smtp', { host: event.target.value })}
+              placeholder="smtp.example.com"
+              autoComplete="off"
+              disabled={busy || !smtp.enabled}
+            />
+          </label>
+          <label>
+            {t('st.smtpPort')}
+            <input
+              type="number"
+              min="1"
+              max="65535"
+              value={smtp.port ?? 587}
+              onChange={(event) => patch('smtp', { port: Number(event.target.value) })}
+              disabled={busy || !smtp.enabled}
+            />
+          </label>
+          <label>
+            <FieldTitle info="The From address on every alert email. Some relays only accept a sender they recognise.">
+              {t('st.smtpFrom')}
+            </FieldTitle>
+            <input
+              value={smtp.from || ''}
+              onChange={(event) => patch('smtp', { from: event.target.value })}
+              placeholder="nvr@example.com"
+              autoComplete="off"
+              disabled={busy || !smtp.enabled}
+            />
+          </label>
+          <label>
+            {t('common.username')}
+            <input
+              value={smtp.username || ''}
+              onChange={(event) => patch('smtp', { username: event.target.value })}
+              placeholder={t('st.smtpNoAuthPh')}
+              autoComplete="off"
+              disabled={busy || !smtp.enabled}
+            />
+          </label>
+          <label>
+            {t('common.password')}
+            <PasswordField
+              value={smtp.password || ''}
+              onChange={(password) => patch('smtp', { password })}
+              autoComplete="off"
+              disabled={busy || !smtp.enabled}
+            />
+          </label>
+        </div>
+        <label className="check-row">
+          <input
+            type="checkbox"
+            checked={Boolean(smtp.useStartTls)}
+            onChange={(event) => patch('smtp', { useStartTls: event.target.checked })}
+            disabled={busy || !smtp.enabled}
+          />
+          {t('st.useStartTls')}
+        </label>
+        {smtp.enabled && (smtp.username || '').trim() !== '' && !smtp.useStartTls ? (
+          <FormAlert message={t('st.startTlsRequired')} />
+        ) : null}
+        <div className="settings-actions">
+          <button type="button" onClick={() => onSaveSmtp(smtp)} disabled={busy || !smtpChanged}>
+            <span className="btn-icon"><Ico n="save" /> {t('st.saveMailRelay')}</span>
+          </button>
+          <button type="button" className="quiet" onClick={() => onChange({ ...settings, smtp: savedSmtp })} disabled={busy || !smtpChanged}>
+            <span className="btn-icon"><Ico n="undo" /> {t('st.discardChanges')}</span>
           </button>
         </div>
       </section>
@@ -2824,6 +2923,13 @@ function destinationTarget(dest, t) {
   if (dest.type === 'telegram') {
     return dest.chatId ? t('st.chatN', { id: dest.chatId }) : t('st.noChatSet');
   }
+  if (dest.type === 'email') {
+    const to = Array.isArray(dest.email?.to) ? dest.email.to : [];
+    if (to.length === 0) return t('st.noRecipientsSet');
+    // Show the first recipient and a count, so a long distribution list does not
+    // push the rest of the summary row off the screen.
+    return to.length === 1 ? to[0] : t('st.recipientAndMore', { first: to[0], count: to.length - 1 });
+  }
   return dest.url || t('st.noUrlSet');
 }
 
@@ -2871,10 +2977,66 @@ function DestinationItem({ dest, busy, changed, open, onToggleOpen, onChange, on
   );
 }
 
+// parseRecipients splits pasted text on newlines and commas, dropping blanks. It
+// deliberately does NOT de-duplicate or validate — the server does both on save,
+// and doing either on every keystroke would edit characters out from under
+// someone mid-type.
+function parseRecipients(text) {
+  return String(text || '')
+    .split(/[\n,]/)
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
+// EmailRecipientsField edits the recipient list as free text, one address per
+// line, and reports the parsed list upward.
+//
+// It holds the TEXT in local state rather than deriving it from the parsed list
+// on every render. A controlled textarea whose value is `to.join('\n')` cannot be
+// typed into: parsing drops the empty entry the moment you press Enter, the
+// re-render removes the newline you just typed, and adding a second recipient
+// becomes impossible. The list is the saved shape; the text is what is being
+// edited, and they are only the same thing between keystrokes.
+function EmailRecipientsField({ dest, disabled, onChange }) {
+  const t = useT();
+  const saved = Array.isArray(dest.email?.to) ? dest.email.to : [];
+  const [text, setText] = useState(saved.join('\n'));
+  // Re-seed only when the list changes underneath us (a different destination
+  // opened, or a save/discard replaced the row) — never in response to our own
+  // edit, which would fight the cursor.
+  const savedKey = saved.join('\n');
+  const [lastKey, setLastKey] = useState(savedKey);
+  if (savedKey !== lastKey && parseRecipients(text).join('\n') !== savedKey) {
+    setLastKey(savedKey);
+    setText(savedKey);
+  } else if (savedKey !== lastKey) {
+    setLastKey(savedKey);
+  }
+  return (
+    <label>
+      <FieldTitle info="One address per line, or comma-separated. The relay is configured once for the whole install under Mail relay — it is not per destination. If the relay rejects one address, the alert is still delivered to the others and the rejection is logged.">
+        {t('st.recipients')}
+      </FieldTitle>
+      <textarea
+        rows="3"
+        value={text}
+        onChange={(event) => {
+          setText(event.target.value);
+          onChange(parseRecipients(event.target.value));
+        }}
+        placeholder={'security@example.com\nnightshift@example.com'}
+        autoComplete="off"
+        disabled={disabled}
+      />
+    </label>
+  );
+}
+
 // titleizeType gives a readable fallback name for a destination with no name set.
 function titleizeType(type) {
   if (type === 'telegram') return 'Telegram';
   if (type === 'mqtt') return 'MQTT';
+  if (type === 'email') return 'Email';
   return 'Webhook';
 }
 
@@ -2887,6 +3049,8 @@ function DestinationCard({ dest, busy, onChange }) {
   const t = useT();
   const isMqtt = dest.type === 'mqtt';
   const isTelegram = dest.type === 'telegram';
+  const isEmail = dest.type === 'email';
+  const email = dest.email || { to: [], subjectPrefix: '' };
   const fields = dest.fields || defaultAlertNotificationConfig;
   const categories = Array.isArray(dest.categories) ? dest.categories : [];
   const customFields = Array.isArray(dest.customFields) ? dest.customFields : [];
@@ -2992,6 +3156,29 @@ function DestinationCard({ dest, busy, onChange }) {
             <summary>{t('st.samplePayload')}</summary>
             <pre className="install-output">{WEBHOOK_PAYLOAD_SAMPLE}</pre>
           </details>
+        </>
+      ) : isEmail ? (
+        <>
+          <EmailRecipientsField
+            dest={dest}
+            disabled={disabled}
+            onChange={(to) => onChange({ email: { ...email, to } })}
+          />
+          <div className="settings-grid">
+            <label>
+              <FieldTitle info="Prepended to every subject, e.g. “[Warehouse 3]”. Lets a recipient covering several sites tell them apart and filter on it.">
+                {t('st.subjectPrefix')}
+              </FieldTitle>
+              <input
+                value={email.subjectPrefix || ''}
+                onChange={(event) => onChange({ email: { ...email, subjectPrefix: event.target.value } })}
+                placeholder="[Warehouse 3]"
+                autoComplete="off"
+                disabled={disabled}
+              />
+            </label>
+          </div>
+          <p className="settings-hint">{t('st.emailRelayHint')}</p>
         </>
       ) : isTelegram ? (
         <div className="settings-grid">

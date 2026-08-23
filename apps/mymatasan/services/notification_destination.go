@@ -15,6 +15,7 @@ const (
 	DestinationTypeWebhook  = "webhook"
 	DestinationTypeTelegram = "telegram"
 	DestinationTypeMqtt     = "mqtt"
+	DestinationTypeEmail    = "email"
 )
 
 // Snapshot delivery modes — how a destination receives the alert image.
@@ -74,6 +75,30 @@ type NotificationDestination struct {
 	CustomFields []NotificationCustomField `json:"customFields,omitempty"`
 	// Mqtt holds the broker/publish settings when Type is "mqtt".
 	Mqtt NotificationMqttSettings `json:"mqtt,omitempty"`
+	// Email holds the recipients when Type is "email". The SMTP relay is NOT here
+	// — it is one per install, on NotificationSettings.Smtp. Adding a recipient is
+	// a routing decision an operator makes often; pointing the install at a
+	// different mail server is an infrastructure decision made once. Copying relay
+	// credentials onto every destination row would also multiply the secret that
+	// has to be rotated when it changes.
+	Email NotificationEmailSettings `json:"email,omitempty"`
+}
+
+// NotificationEmailSettings is one email destination's recipient configuration.
+//
+// Whether the alert image is attached is deliberately NOT a field here: that is
+// the destination-wide SnapshotMode ("inline" attaches, "link" sends the
+// reference only), the same control webhook and MQTT destinations already use. A
+// second, email-only toggle would let the two disagree, and an operator who set
+// SnapshotMode to inline and received no image would have no way to tell which
+// control had won.
+type NotificationEmailSettings struct {
+	// To is the recipient list. Entries may be comma-separated; they are split
+	// and de-duplicated on save.
+	To []string `json:"to,omitempty"`
+	// SubjectPrefix is prepended to every subject (e.g. "[Site A]"), so a
+	// recipient covering several sites can tell them apart and filter on it.
+	SubjectPrefix string `json:"subjectPrefix,omitempty"`
 }
 
 // NotificationMqttSettings configures an MQTT destination's broker connection,
@@ -173,6 +198,10 @@ func normalizeDestinations(in []NotificationDestination) []NotificationDestinati
 			d.SnapshotMode = SnapshotModeInline
 		}
 		d.CustomFields = normalizeCustomFields(d.CustomFields)
+		if d.Type == DestinationTypeEmail {
+			d.Email.To = normalizeEmailRecipients(d.Email.To)
+			d.Email.SubjectPrefix = strings.TrimSpace(d.Email.SubjectPrefix)
+		}
 		if d.Type == DestinationTypeMqtt {
 			d.Mqtt.BrokerURL = strings.TrimSpace(d.Mqtt.BrokerURL)
 			d.Mqtt.Topic = strings.TrimSpace(d.Mqtt.Topic)
@@ -249,8 +278,17 @@ func validateDestinations(in []NotificationDestination) error {
 			if d.Enabled && (d.Mqtt.ClientCert != "") != (d.Mqtt.ClientKey != "") {
 				return fmt.Errorf("destination %q: mqtt client certificate and key must be provided together", d.Name)
 			}
+		case DestinationTypeEmail:
+			if d.Enabled && len(d.Email.To) == 0 {
+				return fmt.Errorf("destination %q: at least one email recipient is required when enabled", d.Name)
+			}
+			for _, addr := range d.Email.To {
+				if !looksLikeEmail(addr) {
+					return fmt.Errorf("destination %q: %q is not a valid email address", d.Name, addr)
+				}
+			}
 		default:
-			return fmt.Errorf("destination %q: unknown type %q (want webhook, telegram, or mqtt)", d.Name, d.Type)
+			return fmt.Errorf("destination %q: unknown type %q (want webhook, telegram, mqtt, or email)", d.Name, d.Type)
 		}
 	}
 	return nil
@@ -265,4 +303,60 @@ func newDestinationID() string {
 		return "dst-0"
 	}
 	return "dst-" + hex.EncodeToString(b)
+}
+
+// normalizeEmailRecipients splits comma-separated entries, trims, drops blanks
+// and de-duplicates case-insensitively while preserving order. Operators paste
+// these from a directory or a spreadsheet, where one address appearing twice is
+// routine — and the same alert arriving twice reads as a bug in the alerting.
+func normalizeEmailRecipients(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(in))
+	seen := map[string]bool{}
+	for _, raw := range in {
+		for _, part := range strings.Split(raw, ",") {
+			addr := strings.TrimSpace(part)
+			if addr == "" {
+				continue
+			}
+			key := strings.ToLower(addr)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, addr)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// looksLikeEmail is a deliberately loose shape check: exactly one @, something
+// either side, a dot in the domain, and no whitespace or CR/LF. It is NOT an
+// RFC 5322 validator — rejecting an unusual but legitimate internal address
+// would be a worse failure than accepting one the relay later refuses, which the
+// delivery path already reports per recipient. The CR/LF part is the one that
+// must not be relaxed: it is what keeps a recipient field out of the headers.
+func looksLikeEmail(addr string) bool {
+	if addr == "" || strings.ContainsAny(addr, " \t\r\n,;<>") {
+		return false
+	}
+	local, domain, ok := strings.Cut(addr, "@")
+	if !ok || local == "" || domain == "" {
+		return false
+	}
+	if strings.Contains(domain, "@") {
+		return false
+	}
+	// The domain must contain a dot with a label either side of it: a leading or
+	// trailing dot is malformed, and a trailing one in particular is the shape a
+	// half-finished paste leaves behind.
+	if strings.HasPrefix(domain, ".") || strings.HasSuffix(domain, ".") {
+		return false
+	}
+	return strings.Contains(domain, ".")
 }
