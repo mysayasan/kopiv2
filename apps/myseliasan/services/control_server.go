@@ -60,6 +60,10 @@ type ControlServer struct {
 	// the node was gone (e.g. replay notifications published during the disconnect). Optional.
 	onConnect func(nodeID string)
 
+	// onDropReport, when set, is invoked (in its own goroutine) when a node's hello admits
+	// it failed to forward events while it was disconnected. Optional; nil-safe.
+	onDropReport func(nodeID string, dropped int64)
+
 	// onDisconnect, when set, is invoked (in its own goroutine) once a node's control
 	// connection has been torn down. Its counterpart to onConnect exists so ownership of
 	// the node can be withdrawn promptly — behind a load balancer another instance is
@@ -364,6 +368,16 @@ func (cs *ControlServer) dispatch(nodeID string, frame *control.Frame) {
 				}
 			}()
 		}
+		// The node is telling us how many events it could not forward while it was away.
+		// Those are exactly what the reconnect replay is about to go and fetch, so this is
+		// the number that makes the replay checkable instead of merely believed.
+		if frame.Dropped > 0 {
+			cs.logf("control: node %s reports %d event(s) dropped while disconnected", nodeID, frame.Dropped)
+			if cs.onDropReport != nil {
+				dropped := frame.Dropped
+				go cs.onDropReport(nodeID, dropped)
+			}
+		}
 	case control.FrameEvent:
 		cs.logf("control: node %s event %q", nodeID, frame.Kind)
 		if cs.onEvent != nil {
@@ -374,6 +388,12 @@ func (cs *ControlServer) dispatch(nodeID string, frame *control.Frame) {
 	default:
 		// Unknown frame types are ignored.
 	}
+}
+
+// SetDropReportHandler installs the callback for a node admitting it lost events while
+// disconnected. Set once at startup.
+func (cs *ControlServer) SetDropReportHandler(fn func(nodeID string, dropped int64)) {
+	cs.onDropReport = fn
 }
 
 // IsConnected reports whether nodeID currently holds a live control-channel

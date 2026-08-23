@@ -69,6 +69,10 @@ func buildFleet(
 	)
 	// Forward this node's notifications up the channel, so the control plane's unified feed
 	// receives them live in addition to local delivery.
+	// Count the events that could NOT be forwarded. Both failure paths inside
+	// ForwardEvent used to return silently, so a node whose events were vanishing and
+	// a node with nothing to say produced identical telemetry.
+	control.SetMetrics(deps.Metrics)
 	notificationService.Register(services.NewControlEventSink(control))
 
 	// A second node-dialed mTLS connection (separate port) that streams a camera's RTP up to

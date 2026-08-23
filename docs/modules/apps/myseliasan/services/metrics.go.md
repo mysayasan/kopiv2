@@ -33,6 +33,17 @@ surface.
   Flat at zero with retention configured means the purge loop is dead — and a dead purge loop is
   invisible until the disk fills. Part of the same rollup/retention analytics substrate mymatasan
   already had, now wired onto myseliasan (see `apis/notifications.go.md`).
+- `MetricReplayHorizonTotal` = `myseliasan_replay_horizon_total` ({state=approaching|lapsed}) —
+  nodes crossing into `ReplayHorizonMonitor`'s worse states against the reconnect-replay window
+  (W2-6, F-11). `lapsed` is the one that matters: past that point a disconnected node's missed
+  events can no longer be recovered at all, and nothing else in the system distinguishes a node
+  offline for two hours from one offline for four days. See `services/replay_horizon.go.md`.
+- `MetricNodeEventsDroppedTotal` = `myseliasan_node_events_dropped_total` (W2-6, F-11) — running
+  total of events nodes have admitted they could not forward while disconnected, reported on their
+  next hello (`control.Frame.Dropped`, `services/control_server.go.md`'s `onDropReport`). Pairs
+  with the node-side `kopiv2_control_events_dropped_total` (which has the per-kind/per-reason
+  detail); this one is the fleet-wide number an operator can alert on from the control plane
+  alone.
 
 ### Fleet AI agent
 
@@ -78,6 +89,13 @@ shim type.
 - `MetricFleetRuleFiredTotal` is incremented inside `Correlator.fire` via `Correlator.SetMetrics`
   (a setter, not a constructor argument — see `services/correlate.go.md`, "so the ten existing
   correlator tests don't all grow a nil").
+- `MetricReplayHorizonTotal` is incremented from the notify closure `app.go` passes to
+  `NewReplayHorizonMonitor` — once per state transition (never per sweep, see
+  `services/replay_horizon.go.md`'s `raise`), right after the corresponding notification is
+  published.
+- `MetricNodeEventsDroppedTotal` is incremented (`Add`, not `Inc` — the whole `frame.Dropped`
+  count lands in one call) from the `onDropReport` closure `app.go` wires via
+  `ControlServer.SetDropReportHandler`.
 
 Both are rare, discrete events (not a hot path), so a direct labelled `Inc` is fine — no sampling
 needed.

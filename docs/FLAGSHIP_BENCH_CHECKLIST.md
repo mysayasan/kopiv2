@@ -506,6 +506,50 @@ rings, still listed. **Ask what a plan CANNOT do before it starts, not by watchi
   and left the file permanently modified in git with an empty diff.
 - Python buffers stdout when it is not a tty, so a long bench looks hung. Run it with `-u`.
 
+## W2-6 · Dropped control-channel events + the replay horizon  ⟨ DONE (2026-08-23), 19/19
+
+`tools/fleetbench/bench_w26_dropped_events.py`. This item is entirely about making silent
+loss visible, so the bench's job is to make loss happen for real and prove it is no longer
+silent — not to prove a happy path.
+
+**Drops are caused, not simulated:** stop the control plane, raise real alerts on a node so
+its notification service tries to forward them up a channel that is down, scrape the node's
+own `/metrics`, then bring the control plane back and check the node ADMITS the count on its
+hello and the control plane records it in the operator's feed.
+
+**The horizon is SEEDED, not waited for.** Its state derives from `LastSeenAt`, which is a
+fact about the PAST — so seed the past and ask the endpoint, exactly as W1-3 did for the gap
+alert. No shipped threshold was weakened: the 72h window and the 2/3 warn fraction are the
+values that ship; only `LastSeenAt` moves, which is what a real outage moves too. Write it
+with the control plane STOPPED, and stop the node too, or it is judged connected on sight.
+
+What passed: a healthy node exports the counters at zero; an event raised while connected is
+counted as forwarded and not as a drop; four events raised while disconnected are counted,
+labelled with kind AND reason, and never also counted as forwarded; the node admits the exact
+number on reconnect; a node 80% through the window reads `approaching` and claims nothing is
+unrecoverable yet; past the window it reads `lapsed`, names when recovery stopped being
+possible, leaves its healthy neighbour alone, and raises a critical notification an operator
+will actually see.
+
+### Traps this bench added — all three of them the same shape
+
+**Every one was a check that could not tell "the thing did not happen" from "I failed to make
+it happen."** That is the same defect class the product work keeps finding, and benches
+deserve the same standard.
+
+- **A bare `requests.get(..., verify=False)` still honours `REQUESTS_CA_BUNDLE`.** The
+  README already recorded this for sessions; a bare call uses the default session and has
+  the same problem. The helper returned `""` on failure, so six drop assertions read zero
+  against metrics that were present and correct all along. Use a session with
+  `trust_env = False`, and **raise instead of returning empty** — an unreadable scrape is a
+  broken bench, not a node with no metrics.
+- **A trigger whose status you discard is not a trigger.** `POST /api/vision/alerts` needs
+  `ruleId`; without it every alert was refused with 400, no notification was ever published,
+  and the drop counters correctly stayed at zero. Check the status and fail loudly.
+- **An unsampled Prometheus counter is absent from the scrape**, so "no drops" and "no
+  instrumentation" are indistinguishable. This one was a REAL product gap the bench caught,
+  not a bench bug: the counters are now published at zero from boot.
+
 ---
 
 # The fleet harness — build it once, reuse it

@@ -32,6 +32,16 @@ const (
 	// cert_expiring). A burst of node_lost is a network partition or the control channel dying; a
 	// steady trickle of cert_expiring is enrollment quietly failing across the fleet.
 	MetricFleetEventsTotal = "myseliasan_fleet_events_total"
+	// MetricReplayHorizonTotal counts nodes crossing into "approaching" or "lapsed"
+	// against the reconnect replay window. Lapsed is the one that matters: past that
+	// point a node's missed events cannot be recovered at all, and nothing else in the
+	// system distinguishes a node offline for two hours from one offline for four days.
+	MetricReplayHorizonTotal = "myseliasan_replay_horizon_total"
+	// MetricNodeEventsDroppedTotal is the running total of events NODES have admitted
+	// they could not forward while disconnected, reported on their next hello. Paired
+	// with the node-side kopiv2_control_events_dropped_total, which has the per-kind
+	// detail; this one is the fleet-wide number an operator can alert on.
+	MetricNodeEventsDroppedTotal = "myseliasan_node_events_dropped_total"
 	// MetricFleetRuleFiredTotal counts cross-domain correlation rules firing. Low-volume by
 	// nature (an intrusion is rare); a SPIKE is either a real incident or a rule mistuned into
 	// crying wolf, and both are worth seeing.
@@ -73,6 +83,8 @@ func DescribeMyseliasanMetrics(m telemetry.Metrics) {
 	m.Describe(MetricNodesAdopted, "Nodes adopted in total. The gap to connected is the fleet that should be here and is not.")
 	m.Describe(MetricControlChannelUp, "1 while the control-channel listener is serving. 0 means no node can reach the control plane.")
 	m.Describe(MetricFleetEventsTotal, "Fleet-health transitions by kind (node_lost|node_recovered|cert_expiring).")
+	m.Describe(MetricReplayHorizonTotal, "Nodes crossing the reconnect-replay horizon (approaching|lapsed). Lapsed means their missed events can no longer be recovered.")
+	m.Describe(MetricNodeEventsDroppedTotal, "Events nodes admitted they could not forward while disconnected, reported on reconnect.")
 	m.Describe(MetricFleetRuleFiredTotal, "Cross-domain correlation rules firing. A spike is a real incident or a mistuned rule.")
 	m.Describe(MetricNotificationsPurgedTotal, "Notification feed rows removed by the retention purge.")
 	m.Describe(MetricAgentDigestRunsTotal, "Fleet digest generations by outcome and narrative source (llm|none).")

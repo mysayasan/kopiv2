@@ -1640,6 +1640,56 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 	apis.NewNodeProxyApi(api, *deps.Auth, nodeSender, accessService, controlSession, auditService)
 
+	// The replay horizon. A node's events are recovered on reconnect from the last
+	// notifReplayWindow of its own notifications — a promise with an expiry date that
+	// nothing was watching. This warns as a disconnect approaches that point, and again
+	// when it passes it, because a warning that arrives after the events are already
+	// unrecoverable is an obituary rather than an alert.
+	replayHorizon := services.NewReplayHorizonMonitor(registry, controlServer.IsConnected, notifReplayWindow,
+		func(nodeID, nodeName, state, detail string) {
+			severity := notification.Warning
+			title := "Node offline long enough to lose events"
+			if state == services.ReplayHorizonLapsed {
+				severity = notification.Critical
+				title = "Node events can no longer be recovered"
+			}
+			notificationService.Publish(context.Background(), notification.Notification{
+				Category: notification.CategoryHealthCheck,
+				Severity: severity,
+				Title:    title,
+				Body:     detail,
+				Source:   "node:" + nodeID,
+				Data:     map[string]any{"nodeId": nodeID, "replayHorizon": state},
+			})
+			if deps.Metrics != nil {
+				deps.Metrics.Inc(services.MetricReplayHorizonTotal, telemetry.Labels{"state": state})
+			}
+		})
+	leaderTicker(bgCtx, deps.Leader, 15*time.Minute, func(ctx context.Context) {
+		if _, err := replayHorizon.Sweep(ctx); err != nil {
+			deps.Logger.Warnf("myseliasan.replay-horizon", "sweep: %v", err)
+		}
+	})
+	apis.NewReplayHorizonApi(api, *deps.Auth, replayHorizon)
+
+	// A node admitting, on reconnect, that it could not forward events while it was away.
+	// The replay that follows is expected to recover exactly these, so recording the
+	// admission is what makes that expectation checkable rather than merely believed.
+	controlServer.SetDropReportHandler(func(nodeID string, dropped int64) {
+		if deps.Metrics != nil {
+			deps.Metrics.Add(services.MetricNodeEventsDroppedTotal, telemetry.Labels{}, float64(dropped))
+		}
+		notificationService.Publish(context.Background(), notification.Notification{
+			Category: notification.CategoryHealthCheck,
+			Severity: notification.Info,
+			Title:    "Node reconnected after dropping events",
+			Body: fmt.Sprintf("Node %s could not forward %d event(s) while it was disconnected. They are being replayed from the node's own record.",
+				nodeID, dropped),
+			Source: "node:" + nodeID,
+			Data:   map[string]any{"nodeId": nodeID, "dropped": dropped},
+		})
+	})
+
 	// Staged version rollout. Drives the node's own self-update primitive over the same
 	// tunnel everything else uses, and reads liveness from the control server so a ring's
 	// health gate is judged on the same signal the fleet screens show.
@@ -1863,7 +1913,10 @@ func replayNodeNotifications(sender services.ControlSender, svc *notification.Se
 	defer cancel()
 	cursor := time.Now().Add(-notifReplayWindow).Unix()
 	ingested := 0
-	for page := 0; page < 50; page++ { // hard cap 50*500 = 25k events/reconnect
+	const maxPages = 50 // hard cap 50*500 = 25k events/reconnect
+	pagesUsed := 0
+	for page := 0; page < maxPages; page++ {
+		pagesUsed = page + 1
 		req := control.Request{
 			Method: "GET",
 			Path:   fmt.Sprintf("/api/notifications?since=%d&limit=500", cursor),
@@ -1894,6 +1947,15 @@ func replayNodeNotifications(sender services.ControlSender, svc *notification.Se
 	}
 	if ingested > 0 && logf != nil {
 		logf("replayed %d missed notification(s) from node %s", ingested, nodeID)
+	}
+	// The page cap is a real ceiling, not a formality: a busy node offline for a couple of
+	// days can exceed 25k events, and the loop simply stopped — no error, no log, and a
+	// replay that recovered a prefix reported itself exactly like one that recovered
+	// everything. Say so, because the remainder is not coming back on a later reconnect
+	// either: the next replay starts from the same window, not from where this one stopped.
+	if pagesUsed >= maxPages && logf != nil {
+		logf("replay from node %s hit its %d-page ceiling after %d event(s) — older missed events were NOT recovered",
+			nodeID, maxPages, ingested)
 	}
 }
 

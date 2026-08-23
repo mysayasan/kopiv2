@@ -91,6 +91,11 @@ func buildFleet(
 		sharedapis.NewControlDispatcher(api, deps.AccessRoles),
 		func(format string, args ...any) { deps.Logger.Infof("mypintusan.control", format, args...) },
 	)
+	// Count the events that could NOT be forwarded. Both failure paths inside ForwardEvent
+	// used to return silently, so a node whose events were vanishing and a node with
+	// nothing to say produced identical telemetry. It matters most here: a door node's
+	// events are badge decisions and duress alarms.
+	control.SetMetrics(deps.Metrics)
 
 	// Every notification this node raises — a forced door, a duress alarm, a badge decision, a
 	// sign-in lockout — also flows up the channel into the control plane's unified feed.
