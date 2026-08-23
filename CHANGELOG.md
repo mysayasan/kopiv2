@@ -100,6 +100,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-23 — myiotsan 0.29.0, mymatasan 1.130.0, myseliasan 1.71.0, core 1.96.0 (3c67396)
+
+### Added
+
+- **core,mymatasan,myiotsan,myseliasan**: Events a node could not send to the control plane are now counted instead of vanishing. A node forwards every alert, health event and system notice up its control channel as it happens; when that channel is down the event is not queued, and the control plane recovers it on reconnect by replaying the node's own record. That recovery works — but until now nothing counted what was missed, so a node whose events were disappearing and a node with nothing to say produced exactly the same telemetry: none. Nodes now count what they could not send, separated by what was lost and by why (the channel was down, or the send itself failed), alongside what they did send, so the number can be judged against a total. A healthy node reports zero rather than reporting nothing at all. On reconnecting, a node tells the control plane how many events it could not send while it was away — which is precisely what the replay that follows is about to go and fetch, so the recovery can be checked rather than merely assumed, and it appears in the operator's feed. Separately, the control plane now watches the clock on that recovery. Missed events can only be replayed from the last 72 hours of a node's own record, so a long outage eventually passes the point where they are gone for good — and nothing marked that moment; a node offline for two hours and one offline for four days were described identically. Nodes are now flagged two-thirds of the way through that window, while there is still a day in which to act, and again once it has passed, saying exactly when recovery stopped being possible. A new fleet endpoint reports where every node stands. Finally, the reconnect replay had a ceiling of 25,000 events and stopped there without a word: a replay that recovered part of what was missed reported itself exactly like one that recovered all of it. It now says so.
 ## 2026-08-22 — mymatasan 1.129.0, myseliasan 1.70.0 (237a88f)
 
 ### Added
