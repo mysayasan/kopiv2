@@ -69,7 +69,7 @@ always-running worker, is individually documented).
   is not*): ImageNet features separate coarse appearance (clothing colour, shape, vehicle type)
   well and are markedly weaker at matching the same person across large changes in pose or
   lighting. Every vector is stamped with the model name that produced it (`APPEARANCE_MODEL =
-  "resnet18-imagenet-512"`) so a purpose-trained model can replace this later without old
+  "resnet18-hsv-560"`) so a stronger model can replace this later without old
   vectors being silently compared against new ones.
 - Enriches **existing** detections; never invents one. Eligible detections are filtered to
   `APPEARANCE_LABELS` (`person`, `car`, `truck`, `bus`, `motorcycle`, `bicycle`, `train`,
@@ -79,8 +79,15 @@ always-running worker, is individually documented).
   survivors are kept up to `APPEARANCE_MAX_PER_FRAME` (8) per frame, so a crowd scene runs a
   bounded number of forward passes rather than one per person in frame.
 - Crops are batched into **one** `torch.no_grad()` forward pass per frame (not one call per
-  crop), L2-normalised, and attached to each kept detection as `appearance: [float, ...]` (512-d)
-  + `appearanceModel: "resnet18-imagenet-512"`.
+  crop) concatenated with a two-band hue/lightness histogram, L2-normalised, and attached to each kept detection as `appearance: [float, ...]` (560-d: 512 shape + 48 colour)
+  + `appearanceModel: "resnet18-hsv-560"`.
+
+  The colour half is not an optimisation, it is the half that discriminates. Measured on the
+  real model the embedding alone separated two crops of the same subject (0.9825) from a red
+  figure against a blue one (0.9498) by just 0.033 — an ImageNet backbone is trained for
+  CLASS invariance and answers "person" whatever they are wearing. Colour alone separates the
+  same pair by 0.115. The weight between the two halves is held at 1.0 because the bench
+  scene flatters colour and penalises shape; tuning it needs real footage.
 - Runs **last**, on the merged detection list (after `_merge`, LPR, anomaly and face), inside the
   same `try` block that holds the temp JPEG open — after the earlier stages so a custom-model
   detection that replaced a stock one is the thing described, and inside the `try` so the file is

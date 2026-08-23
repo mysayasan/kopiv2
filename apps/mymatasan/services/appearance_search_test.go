@@ -137,7 +137,7 @@ func appearanceMatches(row *entities.ObjectAppearance, filters []sqldataenums.Fi
 }
 
 const apBase = int64(1755612000)
-const apModel = "resnet18-imagenet-512"
+const apModel = "resnet18-hsv-560"
 
 // unit builds a deterministic unit vector pointing mostly along one axis, with `tilt`
 // mixed in from the next axis — so two vectors' similarity can be reasoned about directly.
