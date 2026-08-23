@@ -103,6 +103,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-23 — mymatasan 1.133.0, myseliasan 1.73.0, core 1.98.0 (4e820d9)
+
+### Added
+
+- **core,mymatasan,myseliasan**: An operator can now pick a recorded person or vehicle and ask 'where else did this go?'. When appearance search is switched on for a camera (a new per-camera setting, separate from and requiring object metadata recording), the detector attaches a compact appearance descriptor to eligible person/vehicle detections. It combines a general-purpose image embedding, sharing the same backbone the taught-anomaly feature already loads, with a colour and lightness profile taken from the upper and lower halves of each figure — so a search for the person in the red jacket is answered by something that can actually see the jacket. No additional model is downloaded or shipped: a purpose-trained re-identification network would match better across very different camera angles, but the published ones are trained on research-only datasets, one of which was withdrawn by its own authors over consent concerns, and that is not something to build a sold product on. The metadata recorder keeps the descriptor from each sighting's clearest frame and stores it, encrypted at rest, alongside (not inside) the searchable object index. A new 'Find similar' action on any Object Search result ranks every other recorded sighting by how much it looks like the one picked, and myseliasan's control plane can now ask the same question across every reachable node in a fleet, fetching the query sighting's descriptor from the node that recorded it before fanning it out. The ranking is deliberately never shown as a match percentage: measured against the real model, two photos of the same person and two photos of different people score almost the same raw similarity, so the screen instead reports how far a result STANDS OUT from everything else compared for that search (a robust, self-calibrating score), and says plainly when there were too few sightings to compare against for that to mean anything. This is a ranked shortlist for a human to confirm by eye, never an identification. A second, unrelated gap this closed: the per-camera 'Purge now' action used to delete a camera's footage and AI-event snapshots but leave its searchable object index (and now, appearance descriptors) intact and pointing at nothing — it now purges all three together.
 ## 2026-08-23 — mymatasan 1.132.0 (e5493d5)
 
 ### Added
