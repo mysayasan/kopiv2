@@ -724,7 +724,50 @@ def _lpr_detect(
 # every sighting hot. One embedding per sighting is a few kilobytes; re-decoding video to
 # compare appearances at search time is not something an appliance can do across a month.
 
-APPEARANCE_MODEL = "resnet18-imagenet-512"
+APPEARANCE_MODEL = "resnet18-hsv-560"
+
+# COLOUR IS HALF THE DESCRIPTOR, and it is here because of a measurement.
+#
+# The resnet18 half alone scored two crops of the SAME subject at 0.9825 and a red figure
+# against a blue one at 0.9498 — a separation of 0.033. That is not the network failing: its
+# late layers are trained for CLASS invariance, to answer "person" whatever the person is
+# wearing, which is the exact opposite of what appearance search needs. Asking it to
+# distinguish two people by their clothes is asking it to undo its own training.
+#
+# So colour goes back in explicitly. It is also what an operator MEANS: nobody searches for
+# "the person with that torso texture", they search for the one in the red jacket.
+#
+# No model, no weights, no third-party artefact — just histograms over pixels. That matters
+# beyond simplicity: the obvious alternative, a purpose-trained re-identification network,
+# is a licensing minefield. The code for those is usually permissive but the published
+# checkpoints are trained on Market-1501, DukeMTMC-reID or MSMT17, all research-only, and
+# DukeMTMC was withdrawn by its own authors over consent concerns. Weights derived from
+# non-consensual surveillance footage are not something to ship in a product.
+
+# The layout: two horizontal bands (roughly torso and legs), each described by a hue
+# histogram and a lightness histogram. Two bands rather than one because "red top, dark
+# trousers" is a far stronger signal than the average of the two, which is muddy brown.
+APPEARANCE_COLOUR_BANDS = 2
+APPEARANCE_HUE_BINS = 16
+APPEARANCE_VALUE_BINS = 8
+APPEARANCE_COLOUR_DIMS = APPEARANCE_COLOUR_BANDS * (APPEARANCE_HUE_BINS + APPEARANCE_VALUE_BINS)
+
+# The colour block is normalised separately and then weighted against the shape block, so
+# the two contribute comparably to the cosine. At 1.0 a pure colour change and a pure shape
+# change move the score by the same amount, which is the balance that stopped a red figure
+# and a blue one reading as a 95% match.
+#
+# KEPT AT 1.0 EVEN THOUGH COLOUR MEASURES BETTER, and the reason is a limit of the
+# measurement rather than of colour. On the bench scene the colour half separates two
+# subjects by 0.115 against the shape half's 0.033 — but that scene is flat-coloured
+# rectangles under even light, which is the best case colour will ever have and the worst
+# case shape will ever have. On real footage colour histograms drift with lighting while
+# shape still carries build, pose and what somebody is carrying. Weighting colour up would
+# buy a better bench number and a worse night.
+#
+# Tune this once there is real footage of real people to measure against; that measurement
+# does not exist yet and is recorded as not-claimed in the bench checklist.
+APPEARANCE_COLOUR_WEIGHT = 1.0
 
 # Which labels are worth describing. A chair does not get an appearance vector: nobody
 # searches for one, and embedding every detection on every sampled frame is how a stage that
@@ -744,6 +787,60 @@ APPEARANCE_MAX_PER_FRAME = 8
 # figure twelve pixels tall embeds to something that matches everything, which is worse than
 # no result — it fills a ranked list with confident nonsense.
 APPEARANCE_MIN_BOX_FRACTION = 0.015
+
+
+def _appearance_colour(crop: Any) -> list[float] | None:
+    """Two-band hue + lightness histogram for one crop, L2-normalised.
+
+    Returns None if the colour stack is unavailable, and the caller then stores NO
+    descriptor at all rather than a shape-only one under a name that claims colour. A vector
+    must be what its model stamp says it is, or two half-comparable things end up in one
+    index and every similarity between them is quietly wrong.
+    """
+    try:
+        import numpy as np  # type: ignore
+    except Exception:
+        return None
+    try:
+        # The middle of the box only. A person's bounding box is mostly background at the
+        # shoulders and between the legs, and background is the one thing that must NOT
+        # drive the match — otherwise two people filmed against the same wall look alike.
+        w, h = crop.size
+        if w < 8 or h < 8:
+            return None
+        inset = int(w * 0.2)
+        crop = crop.crop((inset, 0, max(inset + 1, w - inset), h))
+
+        hsv = np.asarray(crop.convert("HSV"), dtype=np.float32)
+        hue = hsv[:, :, 0] / 255.0
+        sat = hsv[:, :, 1] / 255.0
+        val = hsv[:, :, 2] / 255.0
+
+        out: list[float] = []
+        rows = hsv.shape[0]
+        for band in range(APPEARANCE_COLOUR_BANDS):
+            y0 = (rows * band) // APPEARANCE_COLOUR_BANDS
+            y1 = (rows * (band + 1)) // APPEARANCE_COLOUR_BANDS
+            bh, bs, bv = hue[y0:y1], sat[y0:y1], val[y0:y1]
+            # Hue is weighted by saturation AND value. An unsaturated or near-black pixel
+            # has a hue, but it is numerically meaningless — letting dark clothing vote for
+            # a random hue is how a black coat and a navy one end up in different bins on
+            # one frame and the same bin on the next.
+            weight = (bs * bv).ravel()
+            hist, _ = np.histogram(bh.ravel(), bins=APPEARANCE_HUE_BINS, range=(0.0, 1.0), weights=weight)
+            out.extend(float(x) for x in hist)
+            # Lightness carries what hue cannot: black, white and grey clothing, which is
+            # most clothing, and which is invisible to a hue histogram.
+            vhist, _ = np.histogram(bv.ravel(), bins=APPEARANCE_VALUE_BINS, range=(0.0, 1.0))
+            out.extend(float(x) for x in vhist)
+
+        norm = sum(x * x for x in out) ** 0.5
+        if norm <= 0:
+            return [0.0] * APPEARANCE_COLOUR_DIMS
+        return [x / norm for x in out]
+    except Exception as exc:  # noqa: BLE001
+        print(f"appearance: colour histogram failed: {exc}", file=sys.stderr, flush=True)
+        return None
 
 
 def _appearance_embed(tmp_path: str, detections: list[dict[str, Any]]) -> int:
@@ -774,6 +871,7 @@ def _appearance_embed(tmp_path: str, detections: list[dict[str, Any]]) -> int:
         width, height = image.size
         tensors = []
         kept = []
+        colours = []
         for d in eligible:
             b = d["box"]
             x1 = max(0, int(float(b["x"]) * width))
@@ -782,7 +880,13 @@ def _appearance_embed(tmp_path: str, detections: list[dict[str, Any]]) -> int:
             y2 = min(height, int((float(b["y"]) + float(b["h"])) * height))
             if x2 - x1 < 8 or y2 - y1 < 8:
                 continue
-            tensors.append(prep(image.crop((x1, y1, x2, y2))))
+            crop = image.crop((x1, y1, x2, y2))
+            colour = _appearance_colour(crop)
+            if colour is None:
+                # No colour means no descriptor. See _appearance_colour.
+                continue
+            tensors.append(prep(crop))
+            colours.append(colour)
             kept.append(d)
         if not tensors:
             return 0
@@ -795,8 +899,17 @@ def _appearance_embed(tmp_path: str, detections: list[dict[str, Any]]) -> int:
             if _HAS_CUDA:
                 batch = batch.to("cuda")
             feats = torch.nn.functional.normalize(backbone(batch), dim=1).cpu()
-        for d, feat in zip(kept, feats):
-            d["appearance"] = [round(float(v), 6) for v in feat.tolist()]
+        for d, feat, colour in zip(kept, feats, colours):
+            # Both halves arrive unit length, so weighting the colour block and
+            # re-normalising the whole gives each a predictable share of the cosine:
+            # (shape . shape' + w^2 * colour . colour') / (1 + w^2).
+            shape = [float(v) for v in feat.tolist()]
+            weighted = [v * APPEARANCE_COLOUR_WEIGHT for v in colour]
+            combined = shape + weighted
+            norm = sum(v * v for v in combined) ** 0.5
+            if norm <= 0:
+                continue
+            d["appearance"] = [round(v / norm, 6) for v in combined]
             d["appearanceModel"] = APPEARANCE_MODEL
         return len(kept)
     except Exception as exc:  # noqa: BLE001

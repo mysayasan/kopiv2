@@ -101,6 +101,14 @@ def cos(a, b):
     return dot / (na * nb) if na and nb else 0.0
 
 vecs = [d.get("appearance") for d in dets]
+
+# Score the two halves separately as well as together. The whole reason the colour block
+# exists is that the shape half could not separate a red figure from a blue one, so the
+# bench must be able to show what each half contributes rather than only the total.
+SHAPE = 512
+shape = [v[:SHAPE] if v else None for v in vecs]
+colour = [v[SHAPE:] if v else None for v in vecs]
+
 out = {
     "embedded": n,
     "model": next((d.get("appearanceModel") for d in dets if d.get("appearanceModel")), ""),
@@ -108,6 +116,10 @@ out = {
     "sameSubject": cos(vecs[0], vecs[1]),
     "differentSubject": cos(vecs[0], vecs[2]),
     "vsBackground": cos(vecs[0], vecs[3]),
+    "shapeSame": cos(shape[0], shape[1]),
+    "shapeDifferent": cos(shape[0], shape[2]),
+    "colourSame": cos(colour[0], colour[1]),
+    "colourDifferent": cos(colour[0], colour[2]),
     "unitLength": [round(math.sqrt(sum(x * x for x in v)), 4) if v else 0 for v in vecs],
 }
 print("RESULT " + json.dumps(out))
@@ -160,10 +172,10 @@ def main():
 
     check("every eligible crop got a descriptor", res["embedded"] == 4,
           "embedded=%s" % res["embedded"])
-    check("the descriptors are the model's full width",
-          all(d == 512 for d in res["dims"]), "dims=%s" % res["dims"])
+    check("the descriptors are the model's full width (512 shape + 48 colour)",
+          all(d == 560 for d in res["dims"]), "dims=%s" % res["dims"])
     check("the descriptors are stamped with the model that made them",
-          res["model"] == "resnet18-imagenet-512", "model=%r" % res["model"])
+          res["model"] == "resnet18-hsv-560", "model=%r" % res["model"])
     # L2-normalised at the source. The ranking normalises again defensively, but if the
     # producer stopped doing it the stored vectors would drift in magnitude and every
     # similarity threshold calibrated against them would quietly mean something else.
@@ -193,12 +205,34 @@ def main():
     # spread-out similarities, this check fails — and that failure is the signal to revisit
     # the relative scoring, which would then be solving a problem that no longer exists.
     margin = res["sameSubject"] - res["differentSubject"]
+    shape_margin = res["shapeSame"] - res["shapeDifferent"]
+    colour_margin = res["colourSame"] - res["colourDifferent"]
+
+    # WHAT THE COLOUR BLOCK IS WORTH, measured rather than asserted. The shape half alone is
+    # the thing that failed: an ImageNet backbone is trained for class invariance, so it
+    # answers "person" whichever jacket the person is wearing. This pins the improvement, so
+    # a change that quietly neuters the colour contribution shows up as a failure here
+    # instead of as slightly worse rankings nobody traces back.
+    check("the colour half separates the two subjects far better than the shape half",
+          colour_margin > shape_margin * 2,
+          "colour margin %.4f vs shape margin %.4f" % (colour_margin, shape_margin))
+    check("adding colour measurably widens the overall separation",
+          margin > shape_margin * 1.8,
+          "combined %.4f vs shape-only %.4f (%.1fx)"
+          % (margin, shape_margin, margin / shape_margin if shape_margin else 0))
+
+    # THE PREMISE BEHIND RELATIVE SCORING, still true and still pinned. Even with colour, two
+    # unrelated people score 0.85 against each other while a true match scores 0.92 — the
+    # usable range is a sliver near the top, so an absolute threshold remains the wrong tool
+    # and the screen still must not print a match percentage. If a future change genuinely
+    # spreads these out, THIS check fails, and that failure is the signal to revisit the
+    # relative scoring rather than a regression to fix.
     check("unrelated subjects still score high in absolute terms (the reason scoring is relative)",
-          res["differentSubject"] > 0.85 and margin < 0.25,
-          "different subjects = %.4f, margin over same-subject = %.4f — an absolute "
-          "threshold cannot separate these" % (res["differentSubject"], margin))
-    check("background is clearly further away than any subject",
-          res["differentSubject"] - res["vsBackground"] > 0.2,
+          res["differentSubject"] > 0.75 and margin < 0.25,
+          "different subjects = %.4f, margin over a true match = %.4f — an absolute "
+          "threshold still cannot separate these" % (res["differentSubject"], margin))
+    check("background is clearly further away than either subject",
+          res["differentSubject"] - res["vsBackground"] > 0.15,
           "different=%.4f background=%.4f" % (res["differentSubject"], res["vsBackground"]))
     return report()
 

@@ -25,20 +25,28 @@ import (
 // how much they LOOK like one the operator picked.
 //
 // WHAT THIS IS AND IS NOT, because the difference decides whether the feature helps or
-// misleads. The descriptor is a general-purpose ImageNet embedding of the crop, produced by
-// the resnet18 the anomaly feature already installs (see yolo_worker.py's _crop_backbone).
-// It separates coarse appearance well — a person in a red jacket from a person in a black
-// one, a white van from a blue hatchback — and it is markedly weaker than a purpose-trained
+// misleads. The descriptor has two halves: a general-purpose ImageNet embedding of the crop
+// from the resnet18 the anomaly feature already installs, and a two-band hue/lightness
+// histogram (see yolo_worker.py). It is markedly weaker than a purpose-trained
 // re-identification network at matching the SAME person across large changes in pose,
-// lighting or camera. So this returns a RANKED SHORTLIST for a human to confirm, and it
-// never asserts that two sightings are the same individual. The screen says so too. Every
-// row records the model that produced it so a better one can replace this without old
-// vectors being silently compared against new.
+// lighting or camera. So this returns a RANKED SHORTLIST for a human to confirm, and never
+// asserts that two sightings are the same individual. The screen says so too.
 //
-// The alternative — requiring a re-ID model download — was rejected because this product is
-// deployed into networks with no egress, and a differentiating feature that only works on
-// installations that can reach the internet is not a differentiator on the sites that most
-// need it.
+// THE COLOUR HALF IS NOT AN OPTIMISATION, it is the half that works. Measured on the real
+// model, the embedding alone scored two crops of the same subject at 0.9825 and a red figure
+// against a blue one at 0.9498 — a separation of 0.033. An ImageNet backbone is trained for
+// CLASS invariance: it answers "person" whatever the person is wearing, which is the exact
+// opposite of what this needs. With colour the same comparison separates by 0.115, and the
+// combined descriptor by 0.074.
+//
+// A PURPOSE-TRAINED RE-ID MODEL WAS REJECTED ON LICENSING, not capability. The code for
+// those is usually permissive, but the published checkpoints are trained on Market-1501,
+// DukeMTMC-reID or MSMT17 — all research-only, and DukeMTMC was withdrawn by its own authors
+// over consent concerns. Weights derived from non-consensual surveillance footage are not
+// something to ship in a product that is sold. Histograms over pixels have no such problem.
+//
+// Every row records the model that produced it, so a better one can replace this later
+// without old vectors being silently compared against new.
 
 // AppearanceHit is one ranked sighting.
 type AppearanceHit struct {

@@ -22,8 +22,8 @@ import urllib3
 
 urllib3.disable_warnings()
 CHECKS = []
-MODEL = "resnet18-imagenet-512"
-DIM = 512
+MODEL = "resnet18-hsv-560"
+DIM = 560
 
 
 def check(name, ok, detail=""):

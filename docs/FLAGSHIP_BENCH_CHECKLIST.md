@@ -752,12 +752,27 @@ feature already requires and no bench image carries; installing a multi-gigabyte
 into a throwaway image to test a function that runs on the host anyway would bench a
 different deployment from the one that ships.
 
-**IT MEASURED THE THING THAT REDESIGNED THE FEATURE.** Same subject twice: **0.9825**.
-A red figure against a blue one: **0.9498**. So the bench now asserts the PREMISE — that
-unrelated subjects still score above 0.85 and within 0.25 of a true match — rather than a
-margin. If a future model produces genuinely spread-out similarities that check FAILS, and
-the failure is the signal to revisit relative scoring rather than a regression to fix.
-**Before trusting any similarity threshold, measure the metric's real range.**
+**IT MEASURED THE THING THAT REDESIGNED THE FEATURE — twice.** First: the embedding alone
+scored the same subject at **0.9825** and a red figure against a blue one at **0.9498**, a
+separation of 0.033, which is what forced relative scoring. Then, after a colour histogram
+was added to the descriptor, it measured what that was worth: colour alone separates the two
+subjects by **0.115** (3.5x the embedding's 0.033) and the combined descriptor by 0.074.
+
+So the bench scores **each half separately** and asserts the colour block's contribution,
+not just the total. A change that quietly neuters colour then shows up as a failure here
+rather than as slightly worse rankings nobody traces back. It still pins the PREMISE behind
+relative scoring — unrelated subjects at 0.85 against a true match at 0.92 is a sliver near
+the top, so an absolute threshold remains the wrong tool. If a future model genuinely spreads
+these out, that check FAILS, and the failure is the signal to revisit relative scoring rather
+than a regression to fix.
+
+**Before trusting any similarity threshold, measure the metric's real range. And when you
+add a component to a descriptor, measure the component, not only the sum.**
+
+**Not measured, and it gates a real decision:** the colour weight is 1.0 because the bench
+scene is flat-coloured rectangles under even light — the best case colour will ever have and
+the worst case shape will ever have. Tuning it needs footage of real people under real
+lighting, which this harness does not have.
 
 **Part two SEEDS descriptors rather than filming them**, and says so. The harness points
 synthetic patterns at its cameras, so the detector finds no person or vehicle and the stage

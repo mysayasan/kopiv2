@@ -1058,14 +1058,33 @@ An operator picks a recorded sighting and asks where else it went. `GET
 /api/observations/appearance` ranks that node's sightings; `GET /api/nodes/search/appearance`
 asks the whole fleet. A "Find similar" action sits on every object-search row.
 
-**NO NEW MODEL, AND THAT WAS THE DECIDING CONSTRAINT.** The descriptor is a 512-d ImageNet
-resnet18 embedding of the detection crop, produced by the backbone the ANOMALY feature
-already installs — renamed `_crop_backbone` because it now serves two stages. A
-purpose-trained re-identification network would match better, and was rejected: this product
-deploys into networks with no egress, and a differentiating feature that only works where
-the internet is reachable is not a differentiator on the sites that most need it. Every row
-stamps its model, and vectors from different models are never compared — a swap degrades to
-"no older matches" rather than to confident nonsense.
+**NO THIRD-PARTY MODEL, AND THE DECIDING CONSTRAINT TURNED OUT TO BE LICENSING.** The
+descriptor is 560-d: a 512-d ImageNet embedding from the resnet18 the ANOMALY feature already
+installs (renamed `_crop_backbone`, since it now serves two stages) plus a 48-d two-band
+hue/lightness histogram.
+
+The first instinct was air-gap — no download. That reasoning was **wrong and worth
+correcting**: `yolo11n.pt` is 5.6 MB, tracked in git and shipped by goreleaser, so the
+constraint forbids runtime egress, not bundling weights. The real blocker is licensing.
+Re-identification code is usually permissive, but the published checkpoints are trained on
+Market-1501, DukeMTMC-reID or MSMT17 — all research-only, and **DukeMTMC was withdrawn by its
+own authors over consent concerns.** Weights derived from non-consensual surveillance footage
+are not shippable in a product that is sold, and that is a sharper objection than any
+technical one. Histograms over pixels carry no such freight.
+
+**THE COLOUR HALF IS THE HALF THAT WORKS.** The embedding alone separated a red figure from a
+blue one by 0.033; colour alone separates them by 0.115, and the combined descriptor by
+0.074. An ImageNet backbone is trained for CLASS invariance — it answers "person" whatever
+they are wearing — which is precisely the opposite of what appearance search needs, and it is
+also the opposite of what an operator means, since nobody searches for a torso texture.
+Weight held at 1.0 rather than favouring colour: the bench scene is flat-coloured rectangles
+under even light, the best case colour will ever see and the worst case shape will ever see.
+
+Every row stamps its model, and vectors from different models are never compared — a swap
+degrades to "no older matches" rather than to confident nonsense. **If you ever want more:
+CLIP image embeddings are MIT-licensed and far more attribute-sensitive than an ImageNet
+classifier; the cost is ~150 MB and heavier inference on an appliance already running
+detection.**
 
 **THE BENCH KILLED THE CALIBRATION, AND THE FIX IS THE MOST REUSABLE THING HERE.** Measured
 on the real model: two crops of the SAME subject score **0.9825**; a red figure against a
