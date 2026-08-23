@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mysayasan/kopiv2/infra/control"
+	"github.com/mysayasan/kopiv2/infra/telemetry"
 	"github.com/mysayasan/kopiv2/infra/fleetca"
 )
 
@@ -42,29 +43,126 @@ type ControlChannelManager struct {
 	logf        func(format string, args ...any)
 
 	connMu sync.Mutex
-	active *control.Conn // the live connection, for pushing events upstream
+	// active is the live connection, for pushing events upstream. Held as the narrow
+	// writer interface rather than *control.Conn so the forwarding paths — including the
+	// two failure paths, which are the whole point of this file — can be exercised without
+	// standing up a websocket.
+	active frameWriter
+
+	// dropMu guards the forwarding counters. ForwardEvent is called from notification
+	// delivery, which runs on whatever goroutine published the notification.
+	dropMu sync.Mutex
+	// droppedSinceConnect counts events this node failed to forward since its last
+	// successful hello. It is reported ON the next hello and then reset, so the control
+	// plane learns what was lost during the gap it is about to replay.
+	droppedSinceConnect int64
+	// metrics is optional; nil means the node simply does not export these counters.
+	metrics telemetry.Metrics
 }
 
-// ForwardEvent pushes a node event (e.g. a notification or going-offline notice)
-// up the control channel to the control plane. It is a no-op when the channel is
-// not currently connected — events are delivered live, not queued.
+// Metric names for control-channel event forwarding. kopiv2_* because this is shared
+// infra: every node app that dials a control plane emits the same counters.
+const (
+	// MetricControlEventsForwarded counts events successfully pushed up the channel.
+	// Only useful next to the drop counter — a drop count with no total is a number
+	// nobody can size.
+	MetricControlEventsForwarded = "kopiv2_control_events_forwarded_total"
+	// MetricControlEventsDropped counts events that could NOT be pushed, labelled by
+	// kind and reason (disconnected | write_failed).
+	//
+	// This is the whole point of the metric: ForwardEvent is a no-op when the channel is
+	// down, and its write error was discarded, so a node whose events were vanishing and
+	// a node with nothing to say produced identical telemetry — silence.
+	MetricControlEventsDropped = "kopiv2_control_events_dropped_total"
+)
+
+// SetMetrics attaches a metrics recorder. Optional and nil-safe: a node without one
+// behaves exactly as before. Call once at startup, before Run.
+func (m *ControlChannelManager) SetMetrics(metrics telemetry.Metrics) {
+	m.metrics = metrics
+	if metrics == nil {
+		return
+	}
+	metrics.Describe(MetricControlEventsForwarded, "Node events successfully pushed up the control channel.")
+	metrics.Describe(MetricControlEventsDropped, "Node events that could not be pushed up the control channel, by kind and reason.")
+
+	// Publish both counters at ZERO for the kinds this node actually forwards, so a healthy
+	// node exports "0 drops" rather than exporting nothing at all.
+	//
+	// That distinction is the entire subject of this file. A counter with no samples is
+	// absent from the scrape, so a node that has never dropped an event and a node with no
+	// instrumentation at all look identical — which is the exact confusion the drop counter
+	// was added to end, reproduced one level up. It also means a dashboard reads "0"
+	// instead of "no data", and an alert rule has a series to evaluate from boot.
+	for _, kind := range []string{"notification", "going-offline"} {
+		metrics.Add(MetricControlEventsForwarded, telemetry.Labels{"kind": kind}, 0)
+		for _, reason := range []string{"disconnected", "write_failed"} {
+			metrics.Add(MetricControlEventsDropped, telemetry.Labels{"kind": kind, "reason": reason}, 0)
+		}
+	}
+}
+
+// DroppedSinceConnect reports how many events failed to forward since the last
+// successful hello. Exposed for tests and for the node's own diagnostics.
+func (m *ControlChannelManager) DroppedSinceConnect() int64 {
+	m.dropMu.Lock()
+	defer m.dropMu.Unlock()
+	return m.droppedSinceConnect
+}
+
+// noteDrop records one un-forwardable event.
+func (m *ControlChannelManager) noteDrop(kind, reason string) {
+	m.dropMu.Lock()
+	m.droppedSinceConnect++
+	m.dropMu.Unlock()
+	if m.metrics != nil {
+		m.metrics.Inc(MetricControlEventsDropped, telemetry.Labels{"kind": kind, "reason": reason})
+	}
+}
+
+// ForwardEvent pushes a node event (e.g. a notification or going-offline notice) up the
+// control channel. Events are delivered LIVE, not queued: when the channel is down the
+// event does not go up, and the control plane recovers it on reconnect by replaying the
+// node's stored notifications.
+//
+// That recovery is sound, and it used to be entirely unmeasured. Both failure paths here
+// returned silently — no counter, no log, and the write error discarded — so a node whose
+// events were vanishing and a node with nothing to say looked exactly alike. Counting them
+// is what turns "the replay covers it" from an assumption into something checkable: the
+// count rides up on the next hello, and the control plane can compare it against what the
+// replay actually recovered.
 func (m *ControlChannelManager) ForwardEvent(kind string, body []byte) {
 	m.connMu.Lock()
 	conn := m.active
 	m.connMu.Unlock()
 	if conn == nil {
+		m.noteDrop(kind, "disconnected")
 		return
 	}
-	_ = conn.WriteFrame(&control.Frame{Type: control.FrameEvent, Kind: kind, Body: body, TS: time.Now().Unix()})
+	if err := conn.WriteFrame(&control.Frame{Type: control.FrameEvent, Kind: kind, Body: body, TS: time.Now().Unix()}); err != nil {
+		// The channel looked up but the write failed — the connection is going away and
+		// this event is lost with it. Counted separately from "disconnected" because it
+		// means something different: the node believed it was connected.
+		m.noteDrop(kind, "write_failed")
+		return
+	}
+	if m.metrics != nil {
+		m.metrics.Inc(MetricControlEventsForwarded, telemetry.Labels{"kind": kind})
+	}
 }
 
-func (m *ControlChannelManager) setActive(c *control.Conn) {
+// frameWriter is the only thing ForwardEvent needs from a connection.
+type frameWriter interface {
+	WriteFrame(*control.Frame) error
+}
+
+func (m *ControlChannelManager) setActive(c frameWriter) {
 	m.connMu.Lock()
 	m.active = c
 	m.connMu.Unlock()
 }
 
-func (m *ControlChannelManager) clearActive(c *control.Conn) {
+func (m *ControlChannelManager) clearActive(c frameWriter) {
 	m.connMu.Lock()
 	if m.active == c {
 		m.active = nil
@@ -148,10 +246,21 @@ func (m *ControlChannelManager) connectAndServe(ctx context.Context, st PairingS
 	defer conn.Close()
 
 	nodeID, _ := m.svc.NodeID(ctx)
+	// Tell the control plane what was lost during the gap it is about to replay. Read
+	// before the write and cleared only after it succeeds, so a failed hello does not
+	// discard the very number that says events went missing.
+	dropped := m.DroppedSinceConnect()
 	if err := conn.WriteFrame(&control.Frame{
-		Type: control.FrameHello, NodeID: nodeID, Name: st.Name, Version: m.version, TS: time.Now().Unix(),
+		Type: control.FrameHello, NodeID: nodeID, Name: st.Name, Version: m.version,
+		Dropped: dropped, TS: time.Now().Unix(),
 	}); err != nil {
 		return fmt.Errorf("hello: %w", err)
+	}
+	if dropped > 0 {
+		m.logf("control channel: %d event(s) could not be forwarded while disconnected", dropped)
+		m.dropMu.Lock()
+		m.droppedSinceConnect -= dropped
+		m.dropMu.Unlock()
 	}
 	m.logf("control channel connected to %s", wsURL)
 	m.setActive(conn)

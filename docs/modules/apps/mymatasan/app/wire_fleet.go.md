@@ -30,6 +30,12 @@ out of `app.go` (Tier 2 phase D2).
   - Registers `notificationService.Register(services.NewControlEventSink(control))` so this
     node's notifications are forwarded up the control channel to the control plane's
     unified feed, in addition to local delivery.
+  - Calls `control.SetMetrics(deps.Metrics)` (W2-6, F-11) — `ForwardEvent`'s two silent-loss
+    paths (channel down / write failed) are now counted as `kopiv2_control_events_dropped_total{kind,reason}`,
+    with successful forwards counted too (`kopiv2_control_events_forwarded_total{kind}`), and the
+    running drop count rides upstream on the node's next control-channel hello
+    (`control.Frame.Dropped`). See `docs/modules/domain/shared/fleetnode/doc.go.md`'s
+    `control_channel.go` row.
   - Builds `media` (`services.NewMediaChannelManager`) — a second node-dialed mTLS
     connection (separate port) that streams a camera's RTP up to the control plane on
     request, so myseliasan can re-broadcast full-frame-rate live view over WebRTC.

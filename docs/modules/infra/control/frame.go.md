@@ -9,6 +9,7 @@ Defines the `control` package and the wire vocabulary for the persistent, node-i
 - Document the channel as a thin transport: one long-lived WebSocket over the fleet-CA mTLS trust established at adoption, multiplexing JSON frames both ways.
 - Declare `FrameType` and its values: `hello` (node identity + version), `event` (unsolicited node→parent push), `req` / `res` (parent→node tunneled HTTP request and its correlated reply).
 - Define `Frame`, the single message struct, with fields grouped by frame type and `omitempty` so unused fields stay off the wire.
+- **`Dropped int64` (W2-6, F-11)** — new field on the Hello group: how many events the node failed to forward while DISCONNECTED, counted since its *last successful hello* (not since boot). It is the node's own admission of loss on reconnect, letting the control plane check the reconnect notification replay against what was actually lost rather than merely assume the replay covers it (`domain/shared/fleetnode/control_channel.go.md`'s `ForwardEvent`/`DroppedSinceConnect`; consumed by `apps/myseliasan/services/control_server.go.md`'s `dispatch`). Zero (and so omitted) on a normal reconnect that lost nothing.
 
 ## Notes
 

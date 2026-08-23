@@ -599,6 +599,8 @@ raise an error a human sees; these metrics instrument exactly those silent failu
 | `myiotsan_ingest_series` | gauge | — | Distinct `(device, key)` series the deadband gate is tracking. |
 | `myiotsan_devices_online` / `myiotsan_devices_offline` | gauge | — | Fleet health at a glance. Offline is the one to alert on — a sensor gone silent is a monitoring blind spot, and a smoke detector gone silent is worse. |
 | `myiotsan_commands_total` | counter | `outcome` (`confirmed`/`failed`/`refused`) | Actuation command outcomes. A rising `failed` is devices not acting; a rising `refused` is somebody repeatedly trying something they aren't allowed to. |
+| `kopiv2_control_events_forwarded_total` | counter | `kind` | Node events (notifications, going-offline) successfully pushed up the fleet control channel to `myseliasan`. Only meaningful next to the drop counter below — a drop count with no total is a number nobody can size. |
+| `kopiv2_control_events_dropped_total` | counter | `kind`, `reason` (`disconnected`/`write_failed`) | Node events that could **not** be forwarded — the control channel was down, or the write itself failed mid-flight. Both paths used to return silently with no record. The running count since the last successful hello also rides upstream on the node's next control-channel hello, so `myseliasan` sees it too (`myseliasan_node_events_dropped_total`). |
 | `myiotsan_task_panics_total` | counter | `task` | Recovered panics in `infra/safego`-supervised background tasks. A supervised task is restarted automatically on panic, but that alone leaves no other trace than one log line. |
 
 The ingest gauges are **sampled** off ingest's own atomic counters every 10 seconds, not
@@ -610,6 +612,7 @@ What's worth alerting on:
 - `myiotsan_ingest_queue_depth` climbing toward its configured cap — act before drops start.
 - `myiotsan_devices_offline > 0` sustained for a device that should be reporting.
 - A rising `myiotsan_task_panics_total` for any `task`.
+- Any increase in `kopiv2_control_events_dropped_total` while this node is adopted into a fleet — a rule alert or health event that never reached `myseliasan`'s unified feed live.
 
 ## Install & release
 

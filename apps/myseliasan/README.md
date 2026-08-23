@@ -685,6 +685,15 @@ The control plane no longer just tracks liveness passively — every heartbeat s
 
 `GET /api/nodes/fleet-status` returns a rollup (`{total, online, lost, selfDropped, unknown, certsExpiring, certsExpired, certWarnDays}`) that backs the Dashboard's **Certs expiring** KPI card.
 
+### Replay horizon & control-channel drop reporting
+
+A node's events are delivered live up the control channel; when it is down they are not queued — they are recovered on reconnect from the last 72 hours of the node's own stored notifications (see "Command tunnel" above). That recovery has an expiry date, and until now nothing watched the clock on it:
+
+- **The node's own admission.** A node that could not forward events while disconnected (the control channel was down, or a write failed mid-flight) now counts those losses and reports the running total on its next reconnect hello. `myseliasan` logs the admission, increments `myseliasan_node_events_dropped_total`, and publishes an info-level "Node reconnected after dropping events" notification into the unified feed — the reconnect replay above is expected to recover exactly these, so this is what makes that expectation checkable rather than merely believed.
+- **The replay horizon.** `GET /api/nodes/replay-horizon` reports, per node, where its current disconnect stands against the 72h replay window: `ok`, `approaching` (past two-thirds of the window — on 72h that's a full day of notice), or `lapsed` (past it — whatever the node raised before that point can never be recovered, and the response includes the exact `unrecoverableBefore` timestamp). A background sweep every 15 minutes raises a `Warning` notification on the first transition into `approaching` and a `Critical` one on the first transition into `lapsed` — once per transition, not once per sweep, so a node down for a week doesn't spam the feed. A node that comes back and later goes away again is warned about afresh.
+
+See `docs/modules/apps/myseliasan/services/replay_horizon.go.md` and the two new metrics below.
+
 ## Runtime Metrics
 
 Prometheus is enabled by default (see root `README.md` → Telemetry) and scraped from `/metrics`.
@@ -701,6 +710,8 @@ released on purpose, and a certificate creeping toward expiry has no symptom unt
 | `myseliasan_fleet_events_total` | counter | `kind` (`node_lost`/`node_recovered`/`cert_expiring`) | Fleet-health transitions (see "Fleet-health alerting" above). A burst of `node_lost` is a network partition or the control channel dying; a steady trickle of `cert_expiring` is enrollment quietly failing across the fleet. |
 | `myseliasan_fleet_rule_fired_total` | counter | `severity` | Cross-domain correlation rules firing (see "Fleet rules" above). Low-volume by nature; a spike is either a real incident or a rule mistuned into crying wolf. |
 | `myseliasan_notifications_purged_total` | counter | — | Feed rows removed by the retention purge. Flat at zero with retention configured means the purge loop is dead — invisible until the disk fills. |
+| `myseliasan_replay_horizon_total` | counter | `state` (`approaching`\|`lapsed`) | Nodes crossing into a worse state against the 72h reconnect-replay window (see "Replay horizon" above). `lapsed` is the one that matters — past that point a disconnected node's missed events can no longer be recovered at all. |
+| `myseliasan_node_events_dropped_total` | counter | — | Running total of events nodes have admitted they could not forward while disconnected, reported on their next hello. Pairs with the node-side `kopiv2_control_events_dropped_total` (which has the per-kind/per-reason detail); this is the fleet-wide number to alert on from the control plane alone. |
 | `myseliasan_agent_digest_runs_total` | counter | `outcome`, `narrative` (`llm`\|`none`) | Fleet digest generations (see "AI Agent" above). `outcome=ok` with `narrative=none` while a model is configured means the LLM is quietly failing — the digest degrades silently by design, and this is where it shows. |
 | `myseliasan_agent_digest_duration_ms` | gauge | — | The last digest generation's wall time, including any LLM polish call. |
 | `myseliasan_agent_chat_requests_total` | counter | `outcome` | Ask-the-fleet requests by outcome (`ok`/`llm_unavailable`/`llm_error`/`timeout`/`bad_request`). |
@@ -722,6 +733,8 @@ What's worth alerting on:
 - A rising `myseliasan_task_panics_total` for any `task`.
 - `myseliasan_agent_digest_runs_total{outcome="ok",narrative="none"}` climbing while `agent.llm.mode` is not `off` — the LLM layer is enabled but silently never contributing.
 - A rising `myseliasan_agent_sidecar_restarts_total` — the managed model process is crash-looping.
+- Any increase in `myseliasan_replay_horizon_total{state="lapsed"}` — a node was disconnected long enough that some of its events can never be recovered.
+- A rising `myseliasan_node_events_dropped_total` — nodes are losing events while disconnected faster than usual (check which node via the per-node "Node reconnected after dropping events" notifications).
 
 ## Networking / operations
 

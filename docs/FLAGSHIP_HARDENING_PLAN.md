@@ -26,7 +26,7 @@ lands the work.
 | W2-3 | Critical-clip archive to control plane | F-09 | `feat/fleet-clip-archive` | ✅ shipped, benched 2026-08-21 (22/22 — footage verified surviving a destroyed node) |
 | W2-4 | Federated cross-node search | F-10 | `feat/fleet-federated-search` | ✅ shipped, benched 2026-08-22 (36/36 on a real two-node fleet) |
 | W2-5 | Staged version rollout | F-07 | `feat/fleet-staged-rollout` | ✅ shipped, benched 2026-08-22 (22/22 on a real two-node fleet) |
-| W2-6 | Instrument dropped control-channel events | F-11 | — | ☐ not started |
+| W2-6 | Instrument dropped control-channel events | F-11 | `feat/control-channel-drop-metrics` | ✅ shipped, benched 2026-08-23 (19/19 on a real two-node fleet) |
 | W2-7 | Email notification channel | F-20a | — | ☐ not started |
 | **Phase 3 — Win the bake-off** |
 | W3-1 | Timeline playback | F-12 | — | ☐ not started |
@@ -833,10 +833,44 @@ success over a fleet it never touched. A plan where nothing is updatable is refu
 UNREACHABLE node is deliberately treated as capable: excluding it would quietly shrink the
 rollout to whichever appliances were awake when an operator happened to press plan.
 
-**W2-6 · Instrument dropped events** (F-11).
-`domain/shared/fleetnode/control_channel.go:51-59` returns silently when the channel is
-down. The 72h replay covers this well, but nothing is counted. Add a drop metric and
-alert as a node's disconnect approaches `notifReplayWindow`.
+**W2-6 · Instrument dropped events** (F-11). **Shipped — benched against a real two-node
+fleet (2026-08-23), 19/19.**
+
+**THERE WERE THREE SILENT LOSSES, NOT ONE.** The finding named the first; the other two came
+out of reading the path end to end.
+
+1. `ForwardEvent` returned with no record when the channel was down — AND discarded the
+   write error when it was up but failing. Both now counted, by kind and by reason
+   (`disconnected` / `write_failed`), with successful forwards counted alongside, because a
+   drop count with no total is a number nobody can size.
+2. **Nothing watched the replay window's clock.** Missed events are recovered on reconnect
+   from the last 72h of the node's own notifications — a sound design, and a promise with an
+   expiry date. The fleet screens said "lost" in the same tone at hour 2 and hour 90.
+   `ReplayHorizonMonitor` warns at two-thirds of the window and escalates when it lapses,
+   naming the moment recovery stopped being possible rather than leaving the reader to do
+   arithmetic. Served by `GET /api/nodes/replay-horizon`, which sweeps on demand.
+3. `replayNodeNotifications` hit its 50-page (25k event) ceiling and `break`ed **silently**,
+   so a replay that recovered a prefix reported itself exactly like one that recovered
+   everything — and the remainder never comes back, because the next reconnect starts from
+   the same window rather than where this one stopped. It says so now.
+
+**THE PART WORTH REUSING: THE NODE ADMITS ITS OWN LOSSES.** The drop count rides up on the
+next hello (`control.Frame.Dropped`), counted since the last successful hello rather than
+since boot, so the control plane learns exactly what went missing during the gap it is about
+to replay. **That turns "the replay covers it" from an assumption into something checkable.**
+Whenever one side silently compensates for another, ask whether the compensating side can be
+told what it is compensating for.
+
+**A HEALTHY NODE MUST EXPORT ZERO, NOT NOTHING.** The bench's last failure looked like a bad
+assertion and was not: a Prometheus counter with no samples is absent from the scrape, so a
+node that has never dropped an event and a node with no instrumentation at all looked
+identical — the exact confusion this item exists to end, reproduced one level up. Both
+counters are now published at zero for the kinds a node forwards.
+
+**Testability note:** the manager's live connection is now held as a one-method
+`frameWriter` rather than `*control.Conn`. Both failure paths — which are the entire point
+of the file — could not otherwise be exercised without standing up a websocket, and two
+mutations survived until they could be.
 
 **W2-7 · Email notification channel** (F-20a). `infra/mailer` exists and is used only by
 myidsan password reset. A `mail_channel.go` alongside the existing six channels in

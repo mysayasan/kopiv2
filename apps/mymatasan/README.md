@@ -1310,6 +1310,8 @@ Prometheus is enabled by default (`telemetry.prometheus.enabled`, see root `READ
 | `kopiv2_recording_ffmpeg_restarts_total` | counter | `camera` | Capture-ffmpeg restarts. Thrashing here means a camera is failing to hold its RTSP connection — the earliest signal of a flapping stream. |
 | `kopiv2_recording_segment_finalize_total` | counter | `camera`, `outcome` (`saved`/`discarded`/`failed`/`unsaved`/`quarantined`) | Segment finalize attempts by outcome. Anything but `saved` accumulating means footage isn't reaching the recordings list. |
 | `kopiv2_notification_delivery_total` | counter | `channel`, `outcome` (`ok`/`failed`/`panic`) | Outbound notification delivery attempts (webhook/telegram/MQTT/etc). Delivery is at-most-once — a drop here used to be invisible outside a log line. |
+| `kopiv2_control_events_forwarded_total` | counter | `kind` | Node events (notifications, going-offline) successfully pushed up the fleet control channel to `myseliasan`. Only meaningful next to the drop counter below — a drop count with no total is a number nobody can size. |
+| `kopiv2_control_events_dropped_total` | counter | `kind`, `reason` (`disconnected`/`write_failed`) | Node events that could **not** be forwarded — the control channel was down, or the write itself failed mid-flight. Both paths used to return silently with no record. The running count since the last successful hello also rides upstream on the node's next control-channel hello, so `myseliasan` sees it too (`myseliasan_node_events_dropped_total`). |
 | `mymatasan_task_panics_total` | counter | `task` | Recovered panics in `infra/safego`-supervised background tasks (camera samplers, monitors, etc). A supervised task that panics is restarted automatically — that's the whole point — but otherwise leaves no other trace than one log line, so a task crash-looping every couple of minutes looks like a healthy process from the outside without this counter. |
 
 What's worth alerting on:
@@ -1318,6 +1320,7 @@ What's worth alerting on:
 - Any increase in `kopiv2_recording_segment_finalize_total{outcome="quarantined"}` — footage is on disk but will never appear in the recordings list; page on this one.
 - A rising `kopiv2_notification_delivery_total{outcome="failed"}` on one `channel` — the difference between "alerts stopped" and "alerts are still firing, that one destination is down".
 - `mymatasan_disk_used_percent` approaching the configured mitigation threshold, or a rising `kopiv2_recording_ffmpeg_restarts_total` for one camera (a flapping stream).
+- Any increase in `kopiv2_control_events_dropped_total` while this node is adopted into a fleet — an AI alert or health event that never reached `myseliasan`'s unified feed live (the reconnect replay is expected to recover it, but only inside `myseliasan`'s 72h replay window).
 - A rising `mymatasan_task_panics_total` for any `task` — a background subsystem is crash-looping while the process stays up and the API keeps answering.
 - `mymatasan_recording_gap_cameras > 0` sustained — a camera the continuity monitor believes has stopped writing footage.
 - Any increase in `mymatasan_audit_write_failures_total` — the security/evidence trail has a gap.

@@ -353,6 +353,21 @@ covers (`docs/TECHNICAL_SPEC.md`'s "Application Metrics Principle"). Every app (
 <app>_task_panics_total{task}     # e.g. mymatasan_task_panics_total, myiotsan_task_panics_total
 ```
 
+Every node app in the fleet (`mymatasan`, `myiotsan`, `mypintusan`) also exposes, via the shared
+`domain/shared/fleetnode.ControlChannelManager`:
+
+```text
+kopiv2_control_events_forwarded_total{kind}
+kopiv2_control_events_dropped_total{kind,reason}  # reason: disconnected | write_failed
+```
+
+Both silent-loss paths inside `ForwardEvent` (channel down, and a write that failed mid-flight)
+used to return with no record at all — a node whose events were vanishing and a node with
+nothing to say produced identical telemetry. `kopiv2_control_events_dropped_total` is published
+at zero for the known kinds at startup so "never dropped anything" and "not instrumented" don't
+look the same on the scrape, and the running drop count also rides upstream on the node's next
+control-channel hello, so `myseliasan` sees it too (`myseliasan_node_events_dropped_total` below).
+
 `myiotsan`:
 
 ```text
@@ -408,6 +423,8 @@ myseliasan_nodes_adopted
 myseliasan_control_channel_up
 myseliasan_fleet_events_total{kind}      # node_lost | node_recovered | cert_expiring
 myseliasan_fleet_rule_fired_total{severity}
+myseliasan_replay_horizon_total{state}   # approaching | lapsed — alert on any "lapsed" increase
+myseliasan_node_events_dropped_total     # events nodes admitted losing while disconnected
 ```
 
 Use Redis transaction locking for multi-instance deployments:

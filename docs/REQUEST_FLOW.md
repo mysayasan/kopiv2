@@ -157,7 +157,11 @@ control channel, can correlate across them.
 
 1. A node (camera or sensor) raises a notification locally and forwards it up its control
    channel (`fleetnode.NewControlEventSink` → `ControlChannelManager.ForwardEvent`, see
-   `docs/modules/domain/shared/fleetnode/doc.go.md`).
+   `docs/modules/domain/shared/fleetnode/doc.go.md`). If the channel is down, or the write
+   itself fails, the event is NOT queued — it is counted instead (`noteDrop`, W2-6/F-11):
+   `kopiv2_control_events_dropped_total{kind,reason=disconnected|write_failed}` on the node, and
+   the running count since the last successful hello rides upstream on the next hello
+   (`control.Frame.Dropped`) for the control plane to log and act on (step 2a below).
 2. `myseliasan`'s `ControlServer` receives the event frame and invokes `onNodeEvent` (`app.go`),
    which does two things with it: `ingestNodeEvent` publishes it into the unified notification
    feed via `republishNodeNotification` (unchanged from before P6, now deduped on the node's
@@ -174,7 +178,17 @@ control channel, can correlate across them.
     `apps/myseliasan/services.RelayDedup` (a `relayed_notif` ledger keyed
     `"<nodeId>|<originId>"`), so an event delivered live is never re-published by a later replay
     and vice versa; the `originId` is the node's engine id, round-tripped through the persisted
-    row's `metadata.__oid` (`domain/notification.OriginIDKey`) so it survives the pull.
+    row's `metadata.__oid` (`domain/notification.OriginIDKey`) so it survives the pull. **W2-6/F-11**:
+    the same reconnect hello that triggers this pull now also carries `Dropped`, the node's own
+    admission of how many events it could not forward while disconnected
+    (`ControlServer.dispatch`'s `FrameHello` case, `SetDropReportHandler`) — logged and published
+    as an info-level notification, and counted in `myseliasan_node_events_dropped_total`, so the
+    replay this step performs is checkable against what was actually lost rather than merely
+    assumed to cover it. Separately, a background 15-minute sweep
+    (`services.ReplayHorizonMonitor`) watches how long each disconnected node has been away
+    against the same 72h window this replay pulls, and warns (`approaching`, then `lapsed`,
+    `myseliasan_replay_horizon_total{state}`) before and after the point where this replay can no
+    longer reach far enough back to recover everything — see `GET /api/nodes/replay-horizon`.
 3. `Correlator.Observe` resolves the event's node kind from the **adopted node's own record**
    (`ManagedNode.Kind`, via a `registry.List` closure), matches it against every enabled
    `FleetRule`'s clauses, and records which `"required"` clauses it satisfies.

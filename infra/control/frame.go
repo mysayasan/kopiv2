@@ -38,6 +38,13 @@ type Frame struct {
 	NodeID  string `json:"nodeId,omitempty"`
 	Name    string `json:"name,omitempty"`
 	Version string `json:"version,omitempty"`
+	// Dropped is how many events the node failed to forward while it was DISCONNECTED —
+	// counted since its last successful hello, not since boot, because "what did I lose
+	// while I was away" is the number the control plane can act on. It is the node's own
+	// admission of loss: the reconnect replay is expected to recover these from the node's
+	// stored notifications, and this is what makes that expectation checkable rather than
+	// assumed. Zero (and so omitted) on a normal reconnect that lost nothing.
+	Dropped int64 `json:"dropped,omitempty"`
 
 	// Event (node→parent).
 	Kind string `json:"kind,omitempty"`
