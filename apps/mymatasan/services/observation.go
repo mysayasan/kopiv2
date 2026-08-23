@@ -221,6 +221,65 @@ func (s *ObservationService) resolveCoveringSegments(ctx context.Context, rows [
 	return out, newestEnd
 }
 
+// FootagePoint is one (camera, moment) to resolve to footage.
+type FootagePoint struct {
+	CameraId int64
+	At       int64
+}
+
+// FootageRef is where a moment lives, or zeroes when nothing covers it.
+type FootageRef struct {
+	SegmentId int64 `json:"segmentId"`
+	Seek      int64 `json:"seek"`
+}
+
+// ResolveFootageFor batches a set of moments to their covering segments.
+//
+// Appearance search needs this: a ranked hit an operator cannot open is a hit they cannot
+// act on. It goes through the SAME pickCovering the object search uses — including the
+// preference for continuous footage over a short event clip — so a sighting found by
+// ranking opens the same file the Objects grid would open for it.
+//
+// Batched per camera because the naive version is one segment page-walk per hit, and a
+// shortlist is up to two hundred of them.
+func (s *ObservationService) ResolveFootageFor(ctx context.Context, points []FootagePoint) []FootageRef {
+	out := make([]FootageRef, len(points))
+	if s == nil || s.recording == nil || len(points) == 0 {
+		return out
+	}
+	type camSpan struct {
+		min, max int64
+		idxs     []int
+	}
+	byCam := map[int64]*camSpan{}
+	for i, p := range points {
+		if p.CameraId <= 0 || p.At <= 0 {
+			continue
+		}
+		sp := byCam[p.CameraId]
+		if sp == nil {
+			sp = &camSpan{min: p.At, max: p.At}
+			byCam[p.CameraId] = sp
+		}
+		if p.At < sp.min {
+			sp.min = p.At
+		}
+		if p.At > sp.max {
+			sp.max = p.At
+		}
+		sp.idxs = append(sp.idxs, i)
+	}
+	for cam, sp := range byCam {
+		candidates := coveringSegmentCandidates(ctx, s.recording, cam, sp.min, sp.max)
+		for _, i := range sp.idxs {
+			if seg := pickCovering(candidates, points[i].At); seg != nil {
+				out[i] = FootageRef{SegmentId: seg.Id, Seek: points[i].At - seg.StartedAt}
+			}
+		}
+	}
+	return out
+}
+
 // fetchCoveringCandidates loads a camera's segments that could cover any moment in
 // [minAt, maxAt], newest-first.
 func (s *ObservationService) fetchCoveringCandidates(ctx context.Context, cameraId, minAt, maxAt int64) []*entities.RecordingSegment {

@@ -175,7 +175,7 @@ func TestAppearanceRanksTheMostSimilarFirst(t *testing.T) {
 		apRow(3, 1, apBase+2, "person", unit(8, 0, 0.5), apModel),
 	)
 	res, err := svc.Search(context.Background(), AppearanceQuery{
-		Vector: query, Model: apModel, Label: "person", MinSimilarity: 0.01,
+		Vector: query, Model: apModel, Label: "person",
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
@@ -205,7 +205,7 @@ func TestAppearanceNeverRanksAcrossModels(t *testing.T) {
 		apRow(2, 1, apBase+1, "person", unit(8, 0, 0.8), apModel),
 	)
 	res, err := svc.Search(context.Background(), AppearanceQuery{
-		Vector: query, Model: apModel, Label: "person", MinSimilarity: 0.01,
+		Vector: query, Model: apModel, Label: "person",
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
@@ -224,7 +224,7 @@ func TestAppearanceNeverRanksAcrossDimensions(t *testing.T) {
 		apRow(2, 1, apBase+1, "person", unit(8, 0, 0.8), apModel),
 	)
 	res, err := svc.Search(context.Background(), AppearanceQuery{
-		Vector: query, Model: apModel, Label: "person", MinSimilarity: 0.01,
+		Vector: query, Model: apModel, Label: "person",
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
@@ -246,7 +246,7 @@ func TestAppearanceScopesToOneLabel(t *testing.T) {
 		apRow(2, 1, apBase+1, "person", unit(8, 0, 0.7), apModel),
 	)
 	res, err := svc.Search(context.Background(), AppearanceQuery{
-		Vector: query, Model: apModel, Label: "person", MinSimilarity: 0.01,
+		Vector: query, Model: apModel, Label: "person",
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
@@ -265,7 +265,7 @@ func TestAppearanceExcludesTheSightingBeingSearchedFor(t *testing.T) {
 		apRow(8, 1, apBase+1, "person", unit(8, 0, 0.3), apModel),
 	)
 	res, err := svc.Search(context.Background(), AppearanceQuery{
-		Vector: query, Model: apModel, Label: "person", MinSimilarity: 0.01,
+		Vector: query, Model: apModel, Label: "person",
 		ExcludeObservationId: 7,
 	})
 	if err != nil {
@@ -276,26 +276,124 @@ func TestAppearanceExcludesTheSightingBeingSearchedFor(t *testing.T) {
 	}
 }
 
-func TestAppearanceAppliesTheSimilarityFloor(t *testing.T) {
-	// An unbounded ranking always returns SOMETHING at the top. A weak best hit presented
-	// without qualification reads as "we found them".
+// crowd builds `n` mutually-similar candidates — the everyday population of a busy site,
+// where every crop of a person resembles every other one.
+func crowd(n int, startId int64) []*entities.ObjectAppearance {
+	rows := make([]*entities.ObjectAppearance, 0, n)
+	for i := 0; i < n; i++ {
+		// Small, varied tilts: alike, but not identical to each other.
+		tilt := 0.55 + float64(i%7)*0.01
+		rows = append(rows, apRow(startId+int64(i), 1, apBase+int64(i), "person", unit(8, 0, tilt), apModel))
+	}
+	return rows
+}
+
+func TestAppearanceScoresHowFarASightingStandsOutFromTheCrowd(t *testing.T) {
+	// THE MEASUREMENT THAT FORCED THIS DESIGN. On the real model, two crops of the same
+	// subject score 0.9825 and two crops of obviously different subjects score 0.9498. An
+	// absolute cosine floor therefore filters nothing and an absolute band marks everything
+	// "strong". What is meaningful is standing out from the others that were compared.
 	query := unit(8, 0, 0)
-	svc, _ := newAppearanceSvc(
-		apRow(1, 1, apBase, "person", unit(8, 0, 1.4), apModel), // cos(1.4) ~= 0.17
-	)
+	rows := crowd(30, 100)
+	// One genuine match, much closer to the query than the crowd is.
+	rows = append(rows, apRow(999, 2, apBase+500, "person", unit(8, 0, 0.05), apModel))
+	svc, _ := newAppearanceSvc(rows...)
+
 	res, err := svc.Search(context.Background(), AppearanceQuery{
-		Vector: query, Model: apModel, Label: "person", MinSimilarity: 0.5,
+		Vector: query, Model: apModel, Label: "person",
 	})
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	if len(res.Hits) != 0 {
-		t.Fatalf("hits = %+v, want none above the floor", res.Hits)
+	if !res.Calibrated {
+		t.Fatalf("a %d-candidate search should be calibrated", res.Scanned)
 	}
-	// But it must still say it looked. "No matches out of 1" and "no matches out of
-	// 40,000" are different answers and a bare empty list tells them apart for nobody.
-	if res.Scanned != 1 {
-		t.Fatalf("scanned = %d, want 1", res.Scanned)
+	if len(res.Hits) != 1 || res.Hits[0].ObservationId != 999 {
+		t.Fatalf("hits = %+v, want only the sighting that stands out", res.Hits)
+	}
+	if res.Hits[0].Standout < 2.0 {
+		t.Fatalf("standout = %v, want at least the default floor", res.Hits[0].Standout)
+	}
+	// The crowd IS similar to the query in absolute terms — which is the whole point. If
+	// this stops being true the scene no longer reproduces the condition being defended
+	// against, and the test would pass for the wrong reason.
+	if res.Median < 0.8 {
+		t.Fatalf("median similarity = %v; the crowd is meant to be absolutely similar", res.Median)
+	}
+}
+
+func TestAppearanceSaysWhenThereWasTooLittleToCalibrateAgainst(t *testing.T) {
+	// "Stands out from the crowd" describes nothing when there is no crowd. Three results
+	// dressed up as a statistical finding is a confident answer built on nothing, so the
+	// search ranks them by raw similarity and reports that it could not calibrate.
+	query := unit(8, 0, 0)
+	svc, _ := newAppearanceSvc(
+		apRow(1, 1, apBase, "person", unit(8, 0, 0.9), apModel),
+		apRow(2, 1, apBase+1, "person", unit(8, 0, 0.1), apModel),
+	)
+	res, err := svc.Search(context.Background(), AppearanceQuery{
+		Vector: query, Model: apModel, Label: "person",
+	})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if res.Calibrated {
+		t.Fatalf("two candidates must not be reported as calibrated")
+	}
+	// Still ranked, still ordered, nothing dropped — an uncalibrated answer is worth less
+	// than a calibrated one but far more than none.
+	if len(res.Hits) != 2 || res.Hits[0].ObservationId != 2 {
+		t.Fatalf("hits = %+v, want both, best first", res.Hits)
+	}
+	if res.Hits[0].Standout != 0 {
+		t.Fatalf("standout = %v, want 0 when uncalibrated rather than a made-up figure", res.Hits[0].Standout)
+	}
+}
+
+func TestAppearanceCalibrationIsNotDraggedUpByNearDuplicates(t *testing.T) {
+	// THE REASON IT IS MEDIAN AND MAD RATHER THAN MEAN AND STANDARD DEVIATION. If somebody
+	// walked past six cameras, six near-duplicates of the query are in the candidate set. A
+	// mean would climb towards them and a standard deviation would widen, so the very
+	// matches the search exists to surface would be the ones it flattened out of the
+	// results.
+	query := unit(8, 0, 0)
+	// Twelve of them, against a crowd of thirty. That ratio is what makes this test
+	// discriminate: with only a handful of duplicates a mean and a standard deviation are
+	// dragged but not far enough to matter, and the test would pass against the very
+	// statistics it exists to reject. Twelve is also the realistic number — somebody
+	// crossing a site is picked up again and again, which is exactly when this must work.
+	rows := crowd(30, 100)
+	for i := 0; i < 12; i++ {
+		rows = append(rows, apRow(900+int64(i), 2, apBase+600+int64(i), "person", unit(8, 0, 0.05), apModel))
+	}
+	svc, _ := newAppearanceSvc(rows...)
+	res, err := svc.Search(context.Background(), AppearanceQuery{
+		Vector: query, Model: apModel, Label: "person",
+	})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(res.Hits) != 12 {
+		t.Fatalf("hits = %d, want all twelve near-duplicates surfaced, not flattened", len(res.Hits))
+	}
+	for _, h := range res.Hits {
+		if h.ObservationId < 900 || h.ObservationId > 911 {
+			t.Fatalf("unexpected hit %+v", h)
+		}
+	}
+}
+
+func TestAppearanceMedianIgnoresTheCallersOrdering(t *testing.T) {
+	// medianOf sorts a COPY. Sorting the caller's slice in place would reorder the
+	// candidates by similarity before the confidence and recency tie-breaks are applied,
+	// so two searches over the same data could return the same rows in a different order.
+	values := []float64{0.9, 0.1, 0.5}
+	got := medianOf(values)
+	if got != 0.5 {
+		t.Fatalf("median = %v, want 0.5", got)
+	}
+	if values[0] != 0.9 || values[1] != 0.1 || values[2] != 0.5 {
+		t.Fatalf("medianOf reordered its input: %+v", values)
 	}
 }
 
@@ -308,7 +406,7 @@ func TestAppearanceHonoursTheWindowAndCameraFilters(t *testing.T) {
 		apRow(4, 1, apBase+9000, "person", query, apModel), // after the window
 	)
 	res, err := svc.Search(context.Background(), AppearanceQuery{
-		Vector: query, Model: apModel, Label: "person", MinSimilarity: 0.01,
+		Vector: query, Model: apModel, Label: "person",
 		From: apBase, To: apBase + 3600, CameraIds: []int64{1},
 	})
 	if err != nil {

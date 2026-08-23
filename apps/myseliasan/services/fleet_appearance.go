@@ -51,6 +51,7 @@ type FleetAppearanceHit struct {
 	SeenAt        int64   `json:"seenAt"`
 	Label         string  `json:"label"`
 	Similarity    float64 `json:"similarity"`
+	Standout      float64 `json:"standout"`
 	Confidence    float64 `json:"confidence"`
 }
 
@@ -69,7 +70,7 @@ type FleetAppearanceResult struct {
 	// have contributed nothing, rather than merely appearing to have found no matches.
 	Model         string  `json:"model"`
 	Label         string  `json:"label"`
-	MinSimilarity float64 `json:"minSimilarity"`
+	MinStandout float64 `json:"minStandout"`
 }
 
 // FleetAppearanceQuery is one federated appearance search.
@@ -82,13 +83,17 @@ type FleetAppearanceQuery struct {
 	// SiteId / NodeId narrow which nodes are asked, exactly as an object search does.
 	SiteId        int64
 	NodeId        string
-	MinSimilarity float64
-	Limit         int
+	// MinStandout is the relative floor, in robust deviations above the median similarity
+	// of everything compared. Each node calibrates against ITS OWN candidate set, which is
+	// the right unit: "stands out at this site" is the question, and a fleet-wide
+	// distribution would let a busy site's spread decide what a quiet one may report.
+	MinStandout float64
+	Limit       int
 }
 
 // AppearanceSearch runs a fleet-wide appearance search on behalf of roleId.
 func (s *FleetSearchService) AppearanceSearch(ctx context.Context, roleId int64, q FleetAppearanceQuery) (FleetAppearanceResult, error) {
-	out := FleetAppearanceResult{Items: []FleetAppearanceHit{}, MinSimilarity: q.MinSimilarity}
+	out := FleetAppearanceResult{Items: []FleetAppearanceHit{}, MinStandout: q.MinStandout}
 	if strings.TrimSpace(q.SourceNodeId) == "" || q.SourceObservationId <= 0 {
 		return out, fmt.Errorf("a source node and sighting are required")
 	}
@@ -171,8 +176,11 @@ func (s *FleetSearchService) AppearanceSearch(ctx context.Context, roleId int64,
 	// the last tie-break because an investigator comparing two runs of the same search must
 	// not see rows shuffle.
 	sort.SliceStable(merged, func(a, b int) bool {
-		if merged[a].Similarity != merged[b].Similarity {
-			return merged[a].Similarity > merged[b].Similarity
+		// Ordered by STANDOUT, not raw similarity. Each node calibrates against its own
+		// candidate set, so "0.97 at the depot" and "0.97 at the gate" are not comparable
+		// quantities — how far each stands out from its own crowd is.
+		if merged[a].Standout != merged[b].Standout {
+			return merged[a].Standout > merged[b].Standout
 		}
 		if merged[a].Confidence != merged[b].Confidence {
 			return merged[a].Confidence > merged[b].Confidence
@@ -244,8 +252,8 @@ func appearanceNodeQuery(vector []float32URL, model, label string, q FleetAppear
 	if q.To > 0 {
 		v.Set("to", strconv.FormatInt(q.To, 10))
 	}
-	if q.MinSimilarity > 0 {
-		v.Set("minSimilarity", strconv.FormatFloat(q.MinSimilarity, 'f', 4, 64))
+	if q.MinStandout > 0 {
+		v.Set("minStandout", strconv.FormatFloat(q.MinStandout, 'f', 4, 64))
 	}
 	if q.Limit > 0 {
 		v.Set("limit", strconv.Itoa(q.Limit))
@@ -267,6 +275,7 @@ func (s *FleetSearchService) askNodeAppearance(ctx context.Context, target searc
 			SeenAt        int64   `json:"seenAt"`
 			Label         string  `json:"label"`
 			Similarity    float64 `json:"similarity"`
+			Standout      float64 `json:"standout"`
 			Confidence    float64 `json:"confidence"`
 		} `json:"hits"`
 		Scanned int `json:"scanned"`
@@ -288,6 +297,7 @@ func (s *FleetSearchService) askNodeAppearance(ctx context.Context, target searc
 			SeenAt:        h.SeenAt,
 			Label:         h.Label,
 			Similarity:    h.Similarity,
+			Standout:      h.Standout,
 			Confidence:    h.Confidence,
 		})
 	}

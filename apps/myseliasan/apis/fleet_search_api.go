@@ -78,7 +78,7 @@ func (a *fleetSearchApi) appearanceSearch(w http.ResponseWriter, r *http.Request
 		To:                  parseFleetInt64(r, "to"),
 		SiteId:              parseFleetInt64(r, "siteId"),
 		NodeId:              strings.TrimSpace(r.URL.Query().Get("scopeNodeId")),
-		MinSimilarity:       parseFleetFloat(r, "minSimilarity"),
+		MinStandout:         parseFleetFloat(r, "minStandout"),
 		Limit:               int(parseFleetInt64(r, "limit")),
 	}
 	result, err := a.search.AppearanceSearch(r.Context(), a.roleId(r), q)

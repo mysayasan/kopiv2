@@ -101,7 +101,7 @@ func (a *observationApi) appearanceSearch(w http.ResponseWriter, r *http.Request
 		To:            parseInt64Query(r, "to"),
 		Label:         strings.TrimSpace(r.URL.Query().Get("label")),
 		Model:         strings.TrimSpace(r.URL.Query().Get("model")),
-		MinSimilarity: parseFloatQuery(r, "minSimilarity"),
+		MinStandout:   parseFloatQuery(r, "minStandout"),
 		Limit:         int(parseInt64Query(r, "limit")),
 	}
 	for _, raw := range r.URL.Query()["cameraId"] {
@@ -160,6 +160,23 @@ func (a *observationApi) appearanceSearch(w http.ResponseWriter, r *http.Request
 	}
 
 	res, err := a.appearance.Search(r.Context(), q)
+	if err == nil && a.serv != nil && len(res.Hits) > 0 {
+		// Resolve each hit to the footage that covers it. A ranked shortlist an operator
+		// cannot open is a shortlist they cannot act on — and it goes through the same
+		// resolver the Objects grid uses, so a sighting found by ranking opens the same
+		// file it would open from there.
+		points := make([]services.FootagePoint, 0, len(res.Hits))
+		for _, h := range res.Hits {
+			points = append(points, services.FootagePoint{CameraId: h.CameraId, At: h.SeenAt})
+		}
+		refs := a.serv.ResolveFootageFor(r.Context(), points)
+		for i := range res.Hits {
+			if i < len(refs) {
+				res.Hits[i].SegmentId = refs[i].SegmentId
+				res.Hits[i].Seek = refs[i].Seek
+			}
+		}
+	}
 	if err != nil {
 		// A window the caller can narrow is a 400, not a 500 — the request is answerable,
 		// just not this wide.

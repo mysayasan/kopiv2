@@ -45,12 +45,22 @@ type AppearanceHit struct {
 	ObservationId int64   `json:"observationId"`
 	CameraId      int64   `json:"cameraId"`
 	SeenAt        int64   `json:"seenAt"`
-	Label         string  `json:"label"`
-	Similarity    float64 `json:"similarity"`
-	Confidence    float64 `json:"confidence"`
-	// SegmentId and Offset are filled in by the caller that has the recording service, so a
-	// hit can be played. Left zero here to keep this service free of a footage dependency.
+	Label string `json:"label"`
+	// Similarity is the raw cosine. It is REPORTED but never presented as a match
+	// percentage, because on this feature space it is not one — see the scoring note above
+	// AppearanceResult.
+	Similarity float64 `json:"similarity"`
+	// Standout is how far this sighting's similarity sits above the middle of everything
+	// compared, in robust deviations. THIS is the number that means something, and it is
+	// what the screen bands on.
+	Standout   float64 `json:"standout"`
+	Confidence float64 `json:"confidence"`
+	// SegmentId and Seek are filled in by the API layer, which holds the observation
+	// service, so a hit can be opened. Left out of this service so ranking has no footage
+	// dependency — and zero when nothing covers the moment, which the screen shows as
+	// "footage expired" rather than as a broken play button.
 	SegmentId int64 `json:"segmentId,omitempty"`
+	Seek      int64 `json:"seek,omitempty"`
 }
 
 // AppearanceQuery is one ranked search.
@@ -65,10 +75,12 @@ type AppearanceQuery struct {
 	// From/To bound the window. CameraIds optionally restricts which cameras are searched.
 	From, To  int64
 	CameraIds []int64
-	// MinSimilarity drops weak matches. The default floor exists because an unbounded
-	// ranking always returns SOMETHING at the top, and a top hit at 0.31 presented without
-	// qualification reads as "we found them".
-	MinSimilarity float64
+	// MinStandout drops matches that do not stand out from the crowd, measured in robust
+	// deviations above the median similarity of everything compared. An ABSOLUTE cosine
+	// floor was tried first and is useless here — see the scoring note above
+	// AppearanceResult — because every crop of a person scores above 0.94 against every
+	// other one.
+	MinStandout float64
 	Limit         int
 	// ExcludeObservationId is the sighting the query came from, so the search does not
 	// helpfully rank a thing against itself at 1.00 and call it the best match.
@@ -82,13 +94,53 @@ type AppearanceResult struct {
 	// out of 40,000" and "no matches out of 3" are completely different answers, and a
 	// ranked list gives an operator no way to tell them apart.
 	Scanned int `json:"scanned"`
-	// Model and MinSimilarity echo what the ranking actually used.
-	Model         string  `json:"model"`
-	MinSimilarity float64 `json:"minSimilarity"`
-	From          int64   `json:"from"`
-	To            int64   `json:"to"`
-	Label         string  `json:"label"`
+	// Model and MinStandout echo what the ranking actually used.
+	Model       string  `json:"model"`
+	MinStandout float64 `json:"minStandout"`
+	// Median and Spread describe the similarity distribution this search ranked against —
+	// the numbers Standout is measured in. Reported so a result can be audited rather than
+	// taken on trust, and so an operator comparing two searches can see when one had far
+	// less to go on than the other.
+	Median float64 `json:"median"`
+	Spread float64 `json:"spread"`
+	// Calibrated is false when there were too few candidates for "stands out from the
+	// crowd" to mean anything. The hits are then ordered by raw similarity and the screen
+	// says the ranking is uncalibrated, rather than dressing three results up as a
+	// statistical finding.
+	Calibrated bool  `json:"calibrated"`
+	From       int64 `json:"from"`
+	To         int64 `json:"to"`
+	Label      string `json:"label"`
 }
+
+// HOW THIS IS SCORED, AND WHY IT IS NOT A PERCENTAGE.
+//
+// Cosine similarity over these embeddings does not span a usable range. Measured on the
+// real model: two crops of the SAME subject score 0.9825, and two crops of OBVIOUSLY
+// DIFFERENT subjects — a red figure and a blue one — score 0.9498. ImageNet features are
+// dominated by structure (a person-shaped thing against a dark background) and discard most
+// of what an operator actually means by "the man in the red jacket".
+//
+// So the raw number is fine for ORDERING and worthless as a VERDICT. An absolute floor of
+// 0.45 filters nothing; a band at "strong ≥ 0.75" marks every result strong; and a screen
+// reporting "95% match" between two unrelated people is not a weak feature, it is a wrong
+// answer delivered confidently.
+//
+// What is meaningful is how far a candidate stands out from the OTHERS THAT WERE COMPARED.
+// That is self-calibrating: it adapts to the site, the camera and the object class without
+// anybody tuning a threshold. Standout is a robust z-score — deviations above the MEDIAN,
+// scaled by the median absolute deviation — because a handful of near-duplicates of the
+// query would drag a mean and a standard deviation up and flatten everything else. The same
+// median/MAD shape the dashboard's baseline analytics already use.
+const (
+	// madToSigma converts a median absolute deviation into a standard-deviation-equivalent
+	// for normally distributed data, so "3 deviations" means the usual thing.
+	madToSigma = 1.4826
+	// appearanceMinCalibrationSample is how many comparisons are needed before "stands out
+	// from the crowd" describes anything. Below it the search still ranks, by raw
+	// similarity, and says it is uncalibrated.
+	appearanceMinCalibrationSample = 12
+)
 
 // ErrAppearanceRangeTooWide is returned when the window holds more descriptors than one
 // ranked search may compare.
@@ -108,9 +160,18 @@ const (
 	// list past a few dozen is not something a person reviews; it is something they scroll.
 	appearanceDefaultLimit = 50
 	appearanceMaxLimit     = 200
-	// appearanceDefaultMinSimilarity is the floor when a caller does not set one.
-	appearanceDefaultMinSimilarity = 0.45
+	// appearanceDefaultMinStandout is the floor when a caller does not set one, in robust
+	// deviations above the median. Two is deliberately permissive: this produces a
+	// shortlist for a person to confirm, and hiding a real match to keep the list tidy is
+	// the more expensive mistake.
+	appearanceDefaultMinStandout = 2.0
 )
+
+// scoredCandidate is one stored descriptor with its similarity to the query.
+type scoredCandidate struct {
+	row *entities.ObjectAppearance
+	sim float64
+}
 
 // AppearanceService stores and ranks appearance descriptors.
 type AppearanceService struct {
@@ -187,9 +248,9 @@ func (s *AppearanceService) VectorFor(ctx context.Context, observationId int64) 
 func (s *AppearanceService) Search(ctx context.Context, q AppearanceQuery) (AppearanceResult, error) {
 	label := strings.ToLower(strings.TrimSpace(q.Label))
 	model := strings.TrimSpace(q.Model)
-	minSim := q.MinSimilarity
-	if minSim <= 0 {
-		minSim = appearanceDefaultMinSimilarity
+	minStandout := q.MinStandout
+	if minStandout <= 0 {
+		minStandout = appearanceDefaultMinStandout
 	}
 	limit := q.Limit
 	if limit <= 0 {
@@ -199,7 +260,7 @@ func (s *AppearanceService) Search(ctx context.Context, q AppearanceQuery) (Appe
 		limit = appearanceMaxLimit
 	}
 	out := AppearanceResult{
-		Hits: []AppearanceHit{}, Model: model, MinSimilarity: minSim,
+		Hits: []AppearanceHit{}, Model: model, MinStandout: minStandout,
 		From: q.From, To: q.To, Label: label,
 	}
 	if s == nil || s.repo == nil || len(q.Vector) == 0 || label == "" || model == "" {
@@ -239,7 +300,10 @@ func (s *AppearanceService) Search(ctx context.Context, q AppearanceQuery) (Appe
 			ErrAppearanceRangeTooWide, total, label, appearanceMaxScan)
 	}
 
-	hits := make([]AppearanceHit, 0, limit)
+	// Every candidate is scored BEFORE anything is dropped: the threshold is expressed
+	// relative to the distribution, so the distribution has to be known first. Filtering
+	// as it goes would calibrate against the survivors, which is circular.
+	all := make([]scoredCandidate, 0, len(rows))
 	scanned := 0
 	for _, row := range rows {
 		if row == nil || row.ObservationId == q.ExcludeObservationId {
@@ -259,17 +323,31 @@ func (s *AppearanceService) Search(ctx context.Context, q AppearanceQuery) (Appe
 			continue
 		}
 		scanned++
-		sim := cosineSimilarity(q.Vector, vec)
-		if sim < minSim {
-			continue
+		all = append(all, scoredCandidate{row: row, sim: cosineSimilarity(q.Vector, vec)})
+	}
+
+	median, spread := similarityCentreAndSpread(all)
+	out.Median = round4(median)
+	out.Spread = round4(spread)
+	out.Calibrated = scanned >= appearanceMinCalibrationSample && spread > 0
+
+	hits := make([]AppearanceHit, 0, limit)
+	for _, c := range all {
+		standout := 0.0
+		if out.Calibrated {
+			standout = (c.sim - median) / (madToSigma * spread)
+			if standout < minStandout {
+				continue
+			}
 		}
 		hits = append(hits, AppearanceHit{
-			ObservationId: row.ObservationId,
-			CameraId:      row.CameraId,
-			SeenAt:        row.SeenAt,
-			Label:         row.Label,
-			Similarity:    round4(sim),
-			Confidence:    row.Confidence,
+			ObservationId: c.row.ObservationId,
+			CameraId:      c.row.CameraId,
+			SeenAt:        c.row.SeenAt,
+			Label:         c.row.Label,
+			Similarity:    round4(c.sim),
+			Standout:      round4(standout),
+			Confidence:    c.row.Confidence,
 		})
 	}
 
@@ -291,6 +369,46 @@ func (s *AppearanceService) Search(ctx context.Context, q AppearanceQuery) (Appe
 	out.Hits = hits
 	out.Scanned = scanned
 	return out, nil
+}
+
+// similarityCentreAndSpread returns the median similarity and its median absolute
+// deviation.
+//
+// Median and MAD rather than mean and standard deviation because the thing being looked for
+// is an OUTLIER, and a mean is dragged towards whatever outliers exist. If a person walked
+// past six cameras, six near-duplicates of the query are in the set; a mean would climb
+// towards them and a standard deviation would widen, so the very matches the search exists
+// to surface would be the ones it flattened.
+func similarityCentreAndSpread(items []scoredCandidate) (float64, float64) {
+	if len(items) == 0 {
+		return 0, 0
+	}
+	sims := make([]float64, len(items))
+	for i, c := range items {
+		sims[i] = c.sim
+	}
+	median := medianOf(sims)
+	devs := make([]float64, len(sims))
+	for i, v := range sims {
+		devs[i] = math.Abs(v - median)
+	}
+	return median, medianOf(devs)
+}
+
+// medianOf sorts a COPY and returns the middle value. The copy matters: the caller's slice
+// order is the ranking order further down, and sorting it here would silently reorder the
+// results by similarity before the tie-breaks have been applied.
+func medianOf(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	cp := append([]float64(nil), values...)
+	sort.Float64s(cp)
+	mid := len(cp) / 2
+	if len(cp)%2 == 1 {
+		return cp[mid]
+	}
+	return (cp[mid-1] + cp[mid]) / 2
 }
 
 // DeleteForObservations removes descriptors whose sighting has been purged.

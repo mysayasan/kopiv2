@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Ico } from './icons';
 import { FormAlert } from './ui';
+import { AppearanceSearchDialog } from './appearance';
 import { useT } from '@shared/i18n';
 import { DataTable } from '@shared/DataTable';
 import { HelpButton } from '@shared/Manual';
@@ -1045,6 +1046,8 @@ export function CameraObjectSearchPanel({ camera, busy, authHeader, canManage = 
     return !c || !(c.metadataEnabled ?? c.enabled);
   }, [configs]);
 
+  // The sighting the operator asked "where else did this go?" about. Null = dialog closed.
+  const [similarTo, setSimilarTo] = useState(null);
   const [camFilter, setCamFilter] = useState(currentCameraId);
   const [searchedCam, setSearchedCam] = useState(currentCameraId);
   const [fromDate, setFromDate] = useState(defaultSearchFrom);
@@ -1340,6 +1343,22 @@ export function CameraObjectSearchPanel({ camera, busy, authHeader, canManage = 
         )
       ),
     },
+    {
+      // "Where else did this go?" belongs on the row an operator is already looking at,
+      // not behind a separate search screen — the question is always asked ABOUT a
+      // sighting, so it starts from one.
+      key: 'similar', label: t('ap.thSimilar'), filterable: false,
+      render: (_v, row) => (
+        <button
+          type="button"
+          className="quiet ap-find-btn"
+          onClick={() => setSimilarTo(row)}
+          title={t('ap.findSimilarHint')}
+        >
+          <span className="btn-icon"><Ico n="search" /> {t('ap.findSimilar')}</span>
+        </button>
+      ),
+    },
   ];
 
   return (
@@ -1432,6 +1451,28 @@ export function CameraObjectSearchPanel({ camera, busy, authHeader, canManage = 
         emptyText={t('meta.noResults')}
       />
       </section>
+
+      {similarTo && (
+        <AppearanceSearchDialog
+          observation={similarTo}
+          authHeader={authHeader}
+          cameraName={cameraName}
+          onClose={() => setSimilarTo(null)}
+          onPlay={(hit) => {
+            // Open the hit in the same player the grid uses, at the moment it was seen.
+            setSimilarTo(null);
+            playFootage({
+              id: hit.observationId,
+              cameraId: hit.cameraId,
+              label: hit.label,
+              segmentId: hit.segmentId,
+              seekSeconds: hit.seek,
+              startedAt: hit.seenAt,
+              peakAt: hit.seenAt,
+            });
+          }}
+        />
+      )}
 
       {playing && (
         <div className="video-overlay" onClick={closeVideo}>
