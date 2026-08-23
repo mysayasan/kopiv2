@@ -29,7 +29,7 @@ lands the work.
 | W2-6 | Instrument dropped control-channel events | F-11 | `feat/control-channel-drop-metrics` | ✅ shipped, benched 2026-08-23 (19/19 on a real two-node fleet) |
 | W2-7 | Email notification channel | F-20a | `feat/email-notification-channel` | ✅ shipped, benched 2026-08-23 (34/34 on a real two-node fleet + 3 screen passes) |
 | **Phase 3 — Win the bake-off** |
-| W3-1 | Timeline playback | F-12 | `feat/timeline-playback` | ✅ shipped, benched 2026-08-23 (29/29 on real recorded footage + 25/25 en and 26/26 ar screen passes; the screen pass found 3 defects the API bench could not) |
+| W3-1 | Timeline playback | F-12 | `feat/timeline-playback` | ✅ shipped, benched 2026-08-23 (29/29 on real recorded footage + 25/25 en and 26/26 ar screen passes; the screen pass found 4 defects the API bench could not) |
 | W3-2 | Appearance search across cameras/nodes | F-16 | `feat/appearance-search` | ✅ shipped, benched 2026-08-23 (11/11 on the real model, 34/34 on a real two-node fleet, 17/17 en and 18/18 ar screen passes) |
 | W3-3 | Cases + video wall | F-17, F-18 | — | ☐ not started |
 | W3-4 | Loitering / left-behind / directional rules | F-15 | — | ☐ not started |
@@ -995,9 +995,10 @@ truncated by an ffmpeg crash reports the length it actually contains. Had that n
 every scrub would have been silently off by however long the stream stalled, and the player
 would have looked like it was working.
 
-**THE SCREEN PASS FOUND THREE DEFECTS. THE API BENCH PASSED 29/29 THROUGH ALL OF THEM.**
-Every one is invisible from the API side, and two of them make the feature wrong rather
-than merely ugly. This is now the strongest evidence in the programme for the rule that an
+**THE SCREEN PASS FOUND FOUR DEFECTS. THE API BENCH PASSED 29/29 THROUGH ALL OF THEM.**
+Three are set out below and the fourth, which only appeared in Arabic, follows them. Every
+one is invisible from the API side, and two of them make the feature wrong rather than
+merely ugly. This is now the strongest evidence in the programme for the rule that an
 item touching a screen owes a browser pass.
 
 **1 · Every scrub landed later than the click.** The bar hit-tested the pointer against the
