@@ -339,12 +339,24 @@ func (m *VisionMonitor) sampleCamera(ctx context.Context, cameraID int64, camera
 	// Faces, like plates, need real pixels — a face on the low-res object frame is unrecognizable —
 	// so a face rule also forces the high-resolution grab and gates the worker's face stage.
 	wantFace := rulesContainFace(cameraRules)
+	// Appearance is a per-CAMERA setting rather than a per-rule one: it describes every
+	// person and vehicle the camera records so they can be searched later, which is not
+	// something any single alert rule asks for.
+	//
+	// It deliberately does NOT force the high-resolution grab that LPR and faces do. Those
+	// are targeted stages that run only while a rule is active; this one runs on every
+	// sampled frame of an enabled camera, so making it raise the capture resolution would
+	// quietly multiply the baseline cost of the whole sampling loop. The worker's minimum
+	// crop size already discards figures too small to describe, so the effect of a modest
+	// capture resolution is fewer descriptors, not bad ones.
+	wantAppearance := m.metadata != nil && m.metadata.IsAppearanceEnabled(cameraID)
 	frameCtx, cancel := context.WithTimeout(ctx, m.timeout)
 	frame, err := m.captureFrame(frameCtx, cameraID, wantLPR || wantFace)
 	cancel()
 	frame.Inference = inference
 	frame.WantLPR = wantLPR
 	frame.WantFace = wantFace
+	frame.WantAppearance = wantAppearance
 	if err != nil {
 		// A camera that silently fails every capture looks identical to a quiet camera in
 		// the alert log. This counter is what tells them apart.

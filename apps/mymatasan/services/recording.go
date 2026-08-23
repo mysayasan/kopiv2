@@ -141,7 +141,12 @@ func (s *recordingService) SaveConfig(ctx context.Context, req SaveRecordingConf
 		// rather than being a separate toggle. Enable recording → object search works.
 		MetadataEnabled:    req.Enabled,
 		MetadataGapSeconds: req.MetadataGapSeconds,
-		UpdatedAt:          now,
+		// Appearance is NOT paired with recording the way metadata is. Metadata is free
+		// (it reuses an inference the detector already ran); appearance is a neural-network
+		// forward pass per person or vehicle in every sampled frame, so switching recording
+		// on must not switch it on too. It stays exactly where the operator left it.
+		AppearanceEnabled: req.AppearanceEnabled && req.Enabled,
+		UpdatedAt:         now,
 	}
 
 	if existing != nil {

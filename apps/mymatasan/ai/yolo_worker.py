@@ -302,9 +302,9 @@ def _merge(stock_dets: list[dict[str, Any]], custom_dets: list[dict[str, Any]]) 
 # rule/alert pipeline needs no special casing.
 
 _ANOMALY_ENTRIES: list[dict[str, Any]] | None = None
-_ANOMALY_BACKBONE: Any = None
-_ANOMALY_PREP: Any = None
-_ANOMALY_DISABLED = False
+_CROP_BACKBONE: Any = None
+_CROP_PREP: Any = None
+_CROP_BACKBONE_DISABLED = False
 
 
 def _anomaly_entries() -> list[dict[str, Any]]:
@@ -323,13 +323,27 @@ def _anomaly_entries() -> list[dict[str, Any]]:
     return _ANOMALY_ENTRIES
 
 
-def _anomaly_backbone():
-    """Shared resnet18 embedder, loaded once on first use."""
-    global _ANOMALY_BACKBONE, _ANOMALY_PREP, _ANOMALY_DISABLED
-    if _ANOMALY_DISABLED:
+def _crop_backbone():
+    """Shared ImageNet resnet18 embedder (fc stripped -> 512-d), loaded once on first use.
+
+    Used by TWO stages: taught-anomaly scoring, which compares a ROI against a memory bank
+    of normal embeddings, and appearance search, which embeds person/vehicle crops so an
+    operator can ask "find more like this". They share it deliberately — it is already a
+    dependency of the anomaly feature, so appearance search needs no additional model
+    download, which matters because this product is deployed into networks with no egress.
+
+    It is NOT a person re-identification network, and appearance search says so rather than
+    implying otherwise: ImageNet features separate coarse appearance (clothing colour, shape,
+    vehicle type) well and are markedly weaker at matching the same person across large
+    changes in pose or lighting. The vectors are stamped with the model name that produced
+    them so a purpose-trained model can replace this later without old vectors being
+    silently compared against new ones.
+    """
+    global _CROP_BACKBONE, _CROP_PREP, _CROP_BACKBONE_DISABLED
+    if _CROP_BACKBONE_DISABLED:
         return None, None
-    if _ANOMALY_BACKBONE is not None:
-        return _ANOMALY_BACKBONE, _ANOMALY_PREP
+    if _CROP_BACKBONE is not None:
+        return _CROP_BACKBONE, _CROP_PREP
     try:
         import torch
         import torchvision
@@ -341,17 +355,17 @@ def _anomaly_backbone():
         backbone.eval()
         if _HAS_CUDA:
             backbone = backbone.to("cuda")
-        _ANOMALY_BACKBONE = backbone
-        _ANOMALY_PREP = transforms.Compose([
+        _CROP_BACKBONE = backbone
+        _CROP_PREP = transforms.Compose([
             transforms.Resize((224, 224)),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
     except Exception as exc:  # noqa: BLE001
         print(f"anomaly: backbone unavailable, disabled: {exc}", file=sys.stderr, flush=True)
-        _ANOMALY_DISABLED = True
+        _CROP_BACKBONE_DISABLED = True
         return None, None
-    return _ANOMALY_BACKBONE, _ANOMALY_PREP
+    return _CROP_BACKBONE, _CROP_PREP
 
 
 def _anomaly_model(entry: dict[str, Any]) -> dict[str, Any] | None:
@@ -376,7 +390,7 @@ def _anomaly_detect(camera_id: int, tmp_path: str) -> list[dict[str, Any]]:
     entries = [e for e in _anomaly_entries() if int(e.get("cameraId") or 0) == camera_id]
     if not entries:
         return []
-    backbone, prep = _anomaly_backbone()
+    backbone, prep = _crop_backbone()
     if backbone is None:
         return []
     detections: list[dict[str, Any]] = []
@@ -700,6 +714,95 @@ def _lpr_detect(
     return out
 
 
+# --- Appearance stage (crop -> shared resnet18 -> L2-normalised 512-d vector) ------------------
+#
+# Enriches EXISTING person/vehicle detections with an appearance vector; it never invents a
+# detection. That is what keeps it cheap and what keeps it honest: the objects were already
+# found and boxed by the detector, and this only describes what they looked like.
+#
+# The vector is what makes "find more like this" possible without keeping the footage of
+# every sighting hot. One embedding per sighting is a few kilobytes; re-decoding video to
+# compare appearances at search time is not something an appliance can do across a month.
+
+APPEARANCE_MODEL = "resnet18-imagenet-512"
+
+# Which labels are worth describing. A chair does not get an appearance vector: nobody
+# searches for one, and embedding every detection on every sampled frame is how a stage that
+# should be nearly free becomes the reason a camera drops frames.
+APPEARANCE_LABELS = {
+    "person",
+    "car", "truck", "bus", "motorcycle", "bicycle", "train", "boat",
+}
+
+# Confidence floor and per-frame cap. A crop the detector is unsure about produces a vector
+# that pollutes every future ranking, and a frame full of people would otherwise run dozens
+# of forward passes on a machine that also has to keep recording.
+APPEARANCE_MIN_CONFIDENCE = 0.45
+APPEARANCE_MAX_PER_FRAME = 8
+
+# Crops smaller than this fraction of the frame carry too few pixels to describe. A distant
+# figure twelve pixels tall embeds to something that matches everything, which is worse than
+# no result — it fills a ranked list with confident nonsense.
+APPEARANCE_MIN_BOX_FRACTION = 0.015
+
+
+def _appearance_embed(tmp_path: str, detections: list[dict[str, Any]]) -> int:
+    """Attach an appearance vector to eligible detections, in place. Returns how many."""
+    backbone, prep = _crop_backbone()
+    if backbone is None:
+        return 0
+
+    eligible = [
+        d for d in detections
+        if str(d.get("label") or "").lower() in APPEARANCE_LABELS
+        and float(d.get("confidence") or 0.0) >= APPEARANCE_MIN_CONFIDENCE
+        and float((d.get("box") or {}).get("w") or 0.0) * float((d.get("box") or {}).get("h") or 0.0)
+        >= APPEARANCE_MIN_BOX_FRACTION
+    ]
+    if not eligible:
+        return 0
+    # Biggest first, so when the cap bites it keeps the crops with the most pixels in them
+    # rather than whichever the detector happened to list first.
+    eligible.sort(key=lambda d: -(float(d["box"]["w"]) * float(d["box"]["h"])))
+    eligible = eligible[:APPEARANCE_MAX_PER_FRAME]
+
+    try:
+        import torch
+        from PIL import Image
+
+        image = Image.open(tmp_path).convert("RGB")
+        width, height = image.size
+        tensors = []
+        kept = []
+        for d in eligible:
+            b = d["box"]
+            x1 = max(0, int(float(b["x"]) * width))
+            y1 = max(0, int(float(b["y"]) * height))
+            x2 = min(width, int((float(b["x"]) + float(b["w"])) * width))
+            y2 = min(height, int((float(b["y"]) + float(b["h"])) * height))
+            if x2 - x1 < 8 or y2 - y1 < 8:
+                continue
+            tensors.append(prep(image.crop((x1, y1, x2, y2))))
+            kept.append(d)
+        if not tensors:
+            return 0
+
+        # ONE batched forward pass for the whole frame. Per-crop calls cost the same
+        # arithmetic but pay the launch overhead once per person in shot, which on a busy
+        # camera is the difference between a stage that is free and one that is not.
+        with torch.no_grad():
+            batch = torch.stack(tensors)
+            if _HAS_CUDA:
+                batch = batch.to("cuda")
+            feats = torch.nn.functional.normalize(backbone(batch), dim=1).cpu()
+        for d, feat in zip(kept, feats):
+            d["appearance"] = [round(float(v), 6) for v in feat.tolist()]
+            d["appearanceModel"] = APPEARANCE_MODEL
+        return len(kept)
+    except Exception as exc:  # noqa: BLE001
+        print(f"appearance: embedding failed: {exc}", file=sys.stderr, flush=True)
+        return 0
+
 def _detect(stock_model: Any, custom_model: Any, plate_model: Any, request: dict[str, Any]) -> list[dict[str, Any]]:
     camera_id = int(request.get("cameraId") or 0)
     image_b64 = str(request.get("image") or "")
@@ -710,6 +813,7 @@ def _detect(stock_model: Any, custom_model: Any, plate_model: Any, request: dict
     kwargs = _build_kwargs(request)
     want_lpr = bool(request.get("lpr")) and plate_model is not None
     want_face = bool(request.get("face")) and bool(FACE_GALLERY_PATH) and bool(FACE_YUNET_PATH)
+    want_appearance = bool(request.get("appearance"))
     tmp_path = ""
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
@@ -725,14 +829,22 @@ def _detect(stock_model: Any, custom_model: Any, plate_model: Any, request: dict
         # The face stage reuses the SAME captured frame (no second grab) — enabling it adds only the
         # detect+embed compute, and only on cameras whose rule set requested it (want_face gate).
         face_dets = _faces_detect(tmp_path) if want_face else []
+
+        detections = _merge(stock_dets, custom_dets) if custom_dets else list(stock_dets)
+        detections += lpr_dets
+        detections += anomaly_dets
+        detections += face_dets
+
+        # Appearance runs LAST, on the merged list, so a custom-model detection that
+        # replaced a stock one is the thing described — and so one object is never embedded
+        # twice. It is INSIDE the try because it needs the frame: moving the unlink out to
+        # keep the file alive for it leaks a JPEG per frame the moment any earlier stage
+        # raises, which on a camera that is failing repeatedly fills the temp directory.
+        if want_appearance:
+            _appearance_embed(tmp_path, detections)
     finally:
         if tmp_path:
             Path(tmp_path).unlink(missing_ok=True)
-
-    detections = _merge(stock_dets, custom_dets) if custom_dets else list(stock_dets)
-    detections += lpr_dets
-    detections += anomaly_dets
-    detections += face_dets
 
     if DEBUG:
         if detections:

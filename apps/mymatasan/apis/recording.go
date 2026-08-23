@@ -807,3 +807,12 @@ func parseInt64Query(r *http.Request, key string) int64 {
 	v, _ := strconv.ParseInt(r.URL.Query().Get(key), 10, 64)
 	return v
 }
+
+// parseFloatQuery reads a float query parameter, returning 0 when absent or unparseable so
+// the caller's own default applies. Unparseable and absent are deliberately the same
+// answer: a threshold typed as "0.6x" must fall back to the documented default rather than
+// silently becoming 0, which on a similarity floor means "return everything".
+func parseFloatQuery(r *http.Request, key string) float64 {
+	v, _ := strconv.ParseFloat(strings.TrimSpace(r.URL.Query().Get(key)), 64)
+	return v
+}

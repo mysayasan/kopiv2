@@ -462,6 +462,11 @@ type SaveRecordingConfigRequest struct {
 	// MetadataGapSeconds overrides the presence-interval close window (0 = default).
 	MetadataEnabled    bool `json:"metadataEnabled"`
 	MetadataGapSeconds int  `json:"metadataGapSeconds"`
+	// AppearanceEnabled turns on appearance descriptors for this camera's sightings, so
+	// they can be ranked by "find more like this". Unlike MetadataEnabled it is a real
+	// choice rather than a consequence of recording: it costs a forward pass per person
+	// or vehicle per sampled frame. See entities.RecordingConfig.
+	AppearanceEnabled bool `json:"appearanceEnabled"`
 }
 
 // IRecordingService manages per-camera recording configs and saved video segments.

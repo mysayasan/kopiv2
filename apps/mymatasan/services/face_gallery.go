@@ -3,11 +3,9 @@ package services
 import (
 	"context"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -52,10 +50,10 @@ type FaceEmbedder interface {
 
 // DetectedFace is one face found in an enrollment image.
 type DetectedFace struct {
-	Vector    []float32 `json:"vector"`
+	Vector    []float32  `json:"vector"`
 	Box       [4]float64 `json:"box"` // x,y,w,h normalized 0..1
-	Quality   float64   `json:"quality"`
-	ThumbJPEG []byte    `json:"-"` // a small cropped face, for the person thumbnail (optional)
+	Quality   float64    `json:"quality"`
+	ThumbJPEG []byte     `json:"-"` // a small cropped face, for the person thumbnail (optional)
 }
 
 var (
@@ -309,42 +307,17 @@ func (s *FaceGalleryService) deleteEmbeddingsFor(ctx context.Context, personId i
 	return nil
 }
 
-// encodeVector: float32 little-endian bytes -> encrypt-at-rest -> base64 (portable TEXT).
+// encodeVector / decodeVector delegate to the shared at-rest vector codec (vector_codec.go),
+// which appearance search also uses. One implementation on purpose: these two features store
+// the same kind of data with the same portability and encryption requirements, and a second
+// copy of the byte order or the envelope is a second thing that can drift into unreadable
+// vectors nobody notices until a match silently stops working.
 func (s *FaceGalleryService) encodeVector(vec []float32) (string, error) {
-	buf := make([]byte, len(vec)*4)
-	for i, f := range vec {
-		binary.LittleEndian.PutUint32(buf[i*4:], math.Float32bits(f))
-	}
-	if s.cipher != nil {
-		enc, err := s.cipher.EncryptBytes(buf)
-		if err != nil {
-			return "", err
-		}
-		buf = enc
-	}
-	return base64.StdEncoding.EncodeToString(buf), nil
+	return encodeVectorAtRest(s.cipher, vec)
 }
 
 func (s *FaceGalleryService) decodeVector(enc string) ([]float32, error) {
-	buf, err := base64.StdEncoding.DecodeString(enc)
-	if err != nil {
-		return nil, err
-	}
-	if s.cipher != nil {
-		dec, err := s.cipher.DecryptBytes(buf)
-		if err != nil {
-			return nil, err
-		}
-		buf = dec
-	}
-	if len(buf)%4 != 0 {
-		return nil, fmt.Errorf("corrupt embedding length %d", len(buf))
-	}
-	vec := make([]float32, len(buf)/4)
-	for i := range vec {
-		vec[i] = math.Float32frombits(binary.LittleEndian.Uint32(buf[i*4:]))
-	}
-	return vec, nil
+	return decodeVectorAtRest(s.cipher, enc)
 }
 
 func defaultStr(v, fallback string) string {

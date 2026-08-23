@@ -111,6 +111,7 @@ func (d *PersistentObjectDetector) detect(ctx context.Context, frame Frame, time
 		MaxDet   int     `json:"inferMaxDet,omitempty"`
 		LPR      bool    `json:"lpr,omitempty"`
 		Face     bool    `json:"face,omitempty"`
+		Appear   bool    `json:"appearance,omitempty"`
 	}{
 		CameraID: frame.CameraId,
 		Format:   nonEmpty(frame.Format, "jpeg"),
@@ -123,6 +124,7 @@ func (d *PersistentObjectDetector) detect(ctx context.Context, frame Frame, time
 		MaxDet:   frame.Inference.MaxDet,
 		LPR:      frame.WantLPR,
 		Face:     frame.WantFace,
+		Appear:   frame.WantAppearance,
 	}
 	data, err := json.Marshal(request)
 	if err != nil {

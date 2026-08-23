@@ -31,13 +31,30 @@ type ObservationResult struct {
 
 // ObservationService is the read/maintenance side of the metadata recorder: it
 // searches recorded observations and resolves each to the footage covering it.
+// AppearanceReaper is the slice of appearance storage the observation retention paths
+// need. A descriptor MUST NOT outlive the sighting it describes: the footage and the index
+// are gone, and what is left behind is a searchable record of a person the retention policy
+// says has been forgotten. Nil disables the leg (installs without appearance search).
+type AppearanceReaper interface {
+	DeleteForObservations(ctx context.Context, observationIds []int64) (int, error)
+	DeleteForCamera(ctx context.Context, cameraId int64) (int, error)
+}
+
 type ObservationService struct {
 	repo      dbsql.IGenericRepo[entities.ObjectObservation]
 	recording IRecordingService
+	// appearance purges descriptors alongside the sightings they describe. Nil = off.
+	appearance AppearanceReaper
 }
 
 // NewObservationService builds the query service. recording is used to resolve the
 // footage segment covering each observation and to align retention with recordings.
+// SetAppearanceReaper wires appearance purging. Set after construction because the
+// appearance service needs the at-rest cipher, which is built later in the wiring.
+func (s *ObservationService) SetAppearanceReaper(r AppearanceReaper) {
+	s.appearance = r
+}
+
 func NewObservationService(repo dbsql.IGenericRepo[entities.ObjectObservation], recording IRecordingService) *ObservationService {
 	return &ObservationService{repo: repo, recording: recording}
 }
@@ -319,6 +336,14 @@ func (s *ObservationService) PurgeAllForCamera(ctx context.Context, cameraId int
 	filters := []sqldataenums.Filter{
 		{FieldName: "CameraId", Compare: sqldataenums.Equal, Value: cameraId},
 	}
+	// Descriptors go FIRST, by camera, in one statement. Deleting them per observation id
+	// as the loop below progresses would leave every descriptor whose row-delete failed
+	// stranded with no owner to find it by, and a camera-wide delete cannot miss any.
+	if s.appearance != nil {
+		if _, err := s.appearance.DeleteForCamera(ctx, cameraId); err != nil {
+			return 0, err
+		}
+	}
 	deleted := 0
 	for {
 		batch, _, err := s.repo.Get(ctx, "", 500, 0, filters, nil)
@@ -372,6 +397,20 @@ func (s *ObservationService) PurgeOldObservations(ctx context.Context) (int, err
 			}
 			if len(batch) == 0 {
 				break
+			}
+			// Descriptors before rows, for the same reason as above: once an observation
+			// row is gone, nothing points at its descriptor and no later sweep can find
+			// it. Retention would then quietly stop applying to the appearance index.
+			if s.appearance != nil {
+				ids := make([]int64, 0, len(batch))
+				for _, row := range batch {
+					if row != nil {
+						ids = append(ids, row.Id)
+					}
+				}
+				if _, err := s.appearance.DeleteForObservations(ctx, ids); err != nil {
+					return deleted, err
+				}
 			}
 			for _, row := range batch {
 				if _, err := s.repo.DeleteById(ctx, "", uint64(row.Id)); err == nil {
