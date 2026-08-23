@@ -474,6 +474,14 @@ type IRecordingService interface {
 	// hourly or daily. It is the read model behind the coverage screen and the
 	// continuity monitor — see recording_coverage.go.
 	Coverage(ctx context.Context, cameraId, from, to int64, bucket string) (CoverageReport, error)
+	// Timeline returns each camera's playable segment index and merged footage spans
+	// over a window — the read model behind continuous scrub-bar playback. It shares
+	// its span arithmetic with Coverage so the bar and the percentages agree.
+	Timeline(ctx context.Context, cameraIds []int64, from, to int64) (TimelineReport, error)
+	// SeekAt resolves one wall-clock moment to a playable (segment, offset) per camera,
+	// snapping forward when the moment lands in a gap. See recording_timeline.go for
+	// why this is a server call rather than browser arithmetic.
+	SeekAt(ctx context.Context, cameraIds []int64, at int64) ([]TimelineSeek, error)
 	SaveSegment(ctx context.Context, seg recording.SegmentResult) error
 	DeleteSegment(ctx context.Context, id uint64) error
 	GetConfig(ctx context.Context, cameraId int64) (*entities.RecordingConfig, error)

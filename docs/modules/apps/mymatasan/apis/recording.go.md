@@ -20,6 +20,8 @@ Exposes HTTP endpoints for managing per-camera recording configs, downloading or
 | `GET`    | `/api/recording/status`                    | Return a `[]CameraStatus` snapshot for all configured recorders. |
 | `GET`    | `/api/recording/storage/status`            | Report whether the configured at-rest storage codec can actually be produced on this host (see below). |
 | `GET`    | `/api/recording/coverage?cameraId=&from=&to=&bucket=hour\|day` | Was there actually footage for a camera over a range, bucketed hourly or daily (see below). |
+| `GET`    | `/api/recording/timeline?cameraId=&from=&to=` | The Timeline screen's scrub bar: each camera's playable segment index and merged footage spans over a window (see below). |
+| `GET`    | `/api/recording/timeline/seek?cameraId=&at=` | Resolve one wall-clock moment to a playable `(segment, offset)` per camera, snapping forward over a gap (see below). |
 | `GET`    | `/api/recording/streams/{cameraId}`        | List all ONVIF media stream profiles for a camera using stored credentials. |
 | `POST`   | `/api/recording/streams/{cameraId}/live`   | Update the camera's configured live-view RTSP URI from a selected profile or explicit URL. |
 
@@ -119,6 +121,17 @@ Body: `{"rtspUrl": "rtsp://..."}`. Updates the camera's configured live-view RTS
 ### GET /api/recording/coverage
 
 The read model behind the coverage strip UI — and the same one `RecordingContinuityMonitor` scores against, so the screen and the alert can never disagree (see `services/recording_coverage.go.md`). `cameraId` is required; `to` defaults to now, `from` defaults to the last day (hour buckets) or last month (day buckets) when omitted. Bounded to `coverageMaxBuckets` (768) buckets per request — a month of days, or roughly a month of hours — and returns a `400` naming the cap rather than silently truncating the response, since a silently shortened coverage report reads as "the footage is missing" when it only means "you asked for too much".
+
+### GET /api/recording/timeline and /api/recording/timeline/seek
+
+Deliberately under `/api/recording` rather than a new top-level prefix: the Recordings page grant is `canRead("/api/recording")` (`services/pages.go.md`), so every role that can already browse footage gets the Timeline screen on upgrade with no separate grant to add — a new prefix would have shipped ungranted on every existing role. Backed by `IRecordingService.Timeline`/`SeekAt` (`services/recording_timeline.go.md`), which share their span arithmetic with `Coverage` (`services/recording_coverage.go.md`) so the scrub bar, the coverage strip, and the continuity monitor can never disagree about the same hour.
+
+**Detection marks are deliberately NOT served here.** They come from `/api/vision/alerts`, a different page grant — an operator granted Recordings but not Alerts must not learn what the AI recognised by scrubbing a bar; the frontend fetches marks separately and simply omits them (`tl.marksDenied`) when that read is refused.
+
+`timelineCameraIds(r)` reads `?cameraId=` in either repeated (`cameraId=1&cameraId=2`) or comma-separated (`cameraId=1,2`) form, de-duplicating while preserving the caller's order (the tile order on screen). Both routes cap at `timelineMaxCameras` (8) and require at least one camera id, `400`ing otherwise.
+
+- `GET /api/recording/timeline?cameraId=&from=&to=` — `to` defaults to (and is clamped to) now, since an in-progress segment has no `EndedAt` and is credited to the end of the window; `from` defaults to `to - 86400`. The span is capped at `timelineMaxSpan` (31 days), `400`ing with the cap rather than truncating silently, same reasoning as `/coverage`. A camera with more than `timelineMaxSegments` (12000) rows in the window also `400`s (`services.ErrTimelineTooManySegments`) rather than returning a truncated, newest-first list — a truncated read would silently drop the *oldest* segments and render the left half of the bar as an empty gap, which reads as "no footage" rather than "ask for a narrower window".
+- `GET /api/recording/timeline/seek?cameraId=&at=` — `at` (unix seconds) is required. Response is `{"at": <requested>, "cameras": [TimelineSeek, ...]}`; each `TimelineSeek` reports whether that camera has footage at or after `at`, and — this is deliberately a server call rather than browser-side arithmetic over the cached index — resolves against the live segment table, so a segment the browser's index still names can already have been evicted by disk-pressure purge.
 
 ## Auditing
 

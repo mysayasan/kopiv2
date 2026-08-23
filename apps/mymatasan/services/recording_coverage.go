@@ -87,11 +87,38 @@ func mergeIntervals(in []interval) []interval {
 // coveredSeconds returns how much of [from, to) the segments cover, clipping each to the
 // window and merging overlaps.
 func coveredSeconds(segs []*entities.RecordingSegment, from, to int64) (int64, int) {
+	_, total := coveredSpans(segs, from, to)
+	return total, countedInWindow(segs, from, to)
+}
+
+// coveredSpans returns the merged runs of footage within [from, to) and their total
+// length. It is the shared arithmetic behind BOTH the coverage percentages and the
+// timeline's scrub-bar shading, so a bar can never draw footage in an hour the coverage
+// report calls empty, or vice versa.
+func coveredSpans(segs []*entities.RecordingSegment, from, to int64) ([]interval, int64) {
 	if to <= from {
-		return 0, 0
+		return nil, 0
+	}
+	spans := mergeIntervals(clipToWindow(segs, from, to))
+	var total int64
+	for _, sp := range spans {
+		total += sp.end - sp.start
+	}
+	return spans, total
+}
+
+// countedInWindow reports how many segment rows contributed any time to the window.
+func countedInWindow(segs []*entities.RecordingSegment, from, to int64) int {
+	return len(clipToWindow(segs, from, to))
+}
+
+// clipToWindow turns segments into [start, end) spans clipped to the window, dropping
+// those that contribute nothing.
+func clipToWindow(segs []*entities.RecordingSegment, from, to int64) []interval {
+	if to <= from {
+		return nil
 	}
 	spans := make([]interval, 0, len(segs))
-	counted := 0
 	for _, s := range segs {
 		if s == nil {
 			continue
@@ -114,13 +141,8 @@ func coveredSeconds(segs []*entities.RecordingSegment, from, to int64) (int64, i
 			continue
 		}
 		spans = append(spans, interval{start: start, end: end})
-		counted++
 	}
-	var total int64
-	for _, sp := range mergeIntervals(spans) {
-		total += sp.end - sp.start
-	}
-	return total, counted
+	return spans
 }
 
 // CoverageBucketSize maps a bucket name to its length.

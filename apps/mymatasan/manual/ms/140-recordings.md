@@ -23,6 +23,24 @@ Jurang pada garis masa bersifat memberitahu dan bukan rosak. Jurang bermakna rak
 kamera luar talian, rakaman dimatikan, atau peranti tidak beroperasi. Berbaloi mengetahui yang mana
 satu, dan [Kebolehpercayaan kamera](dashboard#reliability) biasanya menjawabnya.
 
+## Main semula garis masa {#timeline}
+
+**Garis Masa**, di sebelah Paparan Langsung pada bar navigasi, memainkan rakaman mengikut jam dan
+bukan mengikut fail: luncur di mana-mana pada bar luncur dan main semula merentas sempadan segmen
+dengan sendirinya — tanpa perlu mencari dan membuka klip seterusnya secara manual. Lorekan pada bar
+itu ialah rakaman yang sama yang dilaporkan oleh jalur liputan di atas, jadi kedua-duanya tidak
+akan berbeza.
+
+Tonton sehingga **8 kamera** pada detik yang sama, diselaraskan, pada kelajuan antara **0.25x**
+hingga **8x**. Jika sesuatu peraturan tercetus dalam tempoh itu, peristiwanya dipetakan pada bar
+sebagai tanda yang boleh diklik — klik satu untuk melompat terus kepadanya, jalan pintas yang sama
+seperti yang diterangkan dalam [Melompat daripada amaran](#from-alert) dari sisi pemberitahuan.
+Tanda memerlukan halaman Amaran selain Rakaman; tanpanya bar masih boleh diluncur, cuma tanpa tanda.
+
+Meluncur ke detik yang tiada rakaman tidak meneka secara senyap: main semula memberitahu anda dan
+melangkau ke hadapan ke detik seterusnya yang mempunyai rakaman, serta memberitahu berapa banyak
+yang dilangkau untuk sampai ke sana.
+
 ## Melompat daripada amaran {#from-alert}
 
 Laluan yang jauh lebih biasa ialah arah bertentangan: anda ada amaran dan mahukan rakamannya. Gunakan

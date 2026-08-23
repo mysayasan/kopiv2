@@ -30,7 +30,18 @@ node   tools/fleetbench/uicheck.js .artifacts/fleetbench objects   # drive a SCR
 node   tools/fleetbench/uicheck_settings.js  .artifacts/fleetbench en   # myseliasan settings
 node   tools/fleetbench/uicheck_settings.js  .artifacts/fleetbench ar   # ...and in RTL
 node   tools/fleetbench/uicheck_mail_dest.js .artifacts/fleetbench      # mymatasan, TYPES
+KOPIV2_NODE_IMAGE=debian-ffmpeg:bench python tools/fleetbench/bench_w31_timeline.py
+node   tools/fleetbench/uicheck_timeline.js .artifacts/fleetbench en  # mymatasan, PLAYS
+node   tools/fleetbench/uicheck_timeline.js .artifacts/fleetbench ar  # ...and in RTL
 ```
+
+`bench_w31_timeline.py` (W3-1, timeline playback) needs the **ffmpeg node image** and runs
+for about eight minutes: it stands two mediamtx sources up, records both, then `docker
+pause`s one for 150 seconds to punch a real hole in its footage. It writes
+`w31_context.json` into the bench dir; `uicheck_timeline.js` reads that, so run the two in
+that order. The screen check PLAYS rather than looks — it clicks the bar, presses play,
+changes speed and reads `currentTime`/`playbackRate` back out of the live `<video>`
+elements, because those are the four things that can only fail in a browser.
 
 `bench_w27_email.py` brings its own dependency: `smtp_sink.py`, a real recording SMTP server
 run as a container on `benchnet`. **Remove it before re-running the harness** —

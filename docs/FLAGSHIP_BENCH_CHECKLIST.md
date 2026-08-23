@@ -632,6 +632,105 @@ label — a green API and a label that lies look identical from the API side.
 
 ---
 
+# Phase 3 bench checklist
+
+## W3-1 · Timeline playback  ⟨ DONE (2026-08-23), 29/29 + 25/25 en and 26/26 ar screen passes
+
+`tools/fleetbench/bench_w31_timeline.py` (API) and `tools/fleetbench/uicheck_timeline.js`
+(the screen). Needs the ffmpeg node image:
+
+```
+KOPIV2_NODE_IMAGE=debian-ffmpeg:bench python tools/fleetbench/fleet_harness.py
+KOPIV2_NODE_IMAGE=debian-ffmpeg:bench python tools/fleetbench/bench_w31_timeline.py
+node tools/fleetbench/uicheck_timeline.js .artifacts/fleetbench en
+node tools/fleetbench/uicheck_timeline.js .artifacts/fleetbench ar
+```
+
+**The bench makes a REAL hole.** Two mediamtx sources on `benchnet`, one recording
+throughout and one `docker pause`d for 150 seconds mid-run. Pausing the SOURCE rather than
+the node is the point: the recorder keeps running and simply has nothing to write, which is
+the failure an operator actually meets. It runs ~8 minutes, most of it waiting for footage.
+The API bench writes `w31_context.json` (camera ids, window, the hole) for the screen check
+to read — run them in that order.
+
+**The assertion worth copying into any playback item: ffprobe the footage.** Every seek in
+the product is `at - startedAt`, which is only a real offset if the file holds as many
+seconds as its row claims to span. The bench downloads a segment and compares ffprobe's
+duration to `endedAt - startedAt` (60.00s vs 60s). Nothing above the storage layer can
+notice that being wrong — the player just shows the wrong moment, confidently. It holds
+because `infra/recording.segmentEndedAt` stores the PROBED duration, not the close time.
+
+Also asserted on real data: a Range request answers **206** with exactly the bytes asked for
+(playback that can only fetch whole clips is a download queue with a scrub bar drawn on it);
+the timeline's percentage equals `/api/recording/coverage`'s for the same window to 0.01%;
+the shaded width equals the covered seconds claimed; the drawn hole lines up with the real
+outage in both position and length; a moment in the hole snaps forward and reports the skip;
+a moment past all footage returns `found: false` rather than reaching backwards; one seek
+answers for every camera on the wall, and at one instant the working camera plays while the
+failed one reports its hole.
+
+**The screen pass found THREE defects the API bench passed straight through**, which is why
+the three assertions below exist. (1) Every scrub landed a constant ~5.6% of the window late,
+because the bar hit-tested against the surrounding panel while the marks are positioned
+inside the inset track — caught only by comparing where the cursor came to rest with where
+the click was. (2) The "ending at" control was inert: an unconditional keep-the-cursor-visible
+effect snapped the window back to the playhead, so an operator could not navigate to last
+night at all — caught by reading the control's value BACK after setting it, rather than
+trusting that it took. (3) Changing the zoom and the end time in one tick discarded one of
+them, each handler having read the other's pre-change value out of its closure.
+
+**And one more, only in Arabic.** The tile that skipped a hole
+rendered "تم التخطي 0 دقيقة" — *skipped 0 minutes* — for a 43-second gap, because the note
+rounded to whole minutes. That note's only job is to distinguish "this camera missed the
+incident" from "the player mis-seeked", and zero states that nothing was skipped. Fixed with
+a magnitude-following formatter; `uicheck_timeline.js` now asserts the figure is never zero
+in any of the four languages, and the fix was mutation-checked by restoring the rounding and
+watching the check fail with the original wording.
+
+### The traps this one added
+
+- **The screen check must PLAY, not look.** Four things can only fail in a browser: the
+  `<video>` src authenticating (the tiles ride the session cookie, not the Basic credentials
+  the SPA holds in memory), `currentTime` actually applying (setting it before
+  `loadedmetadata` is silently discarded, landing playback at the START of the segment — a
+  scrub to 14:52 that plays 14:45 and looks entirely plausible), `playbackRate` surviving a
+  source change (the element resets it to 1 on every swap, so a 4× review quietly drops to
+  real time at the first segment boundary), and the cursor advancing as frames decode. All
+  four are asserted by reading numbers back out of the live elements.
+- **Aim clicks at drawn FOOTAGE, not at a fraction of the window.** A fixed fraction lands in
+  dead air whenever the footage does not fill the window, and then the check measures the
+  gap-snap while claiming to measure the seek. Measure a `.tl-span` rect and click its middle.
+- **Read a control's value BACK after setting it.** The gap step sets the zoom and the
+  window end before clicking; asserting only that the click happened would have reported a
+  broken bar when the truth was that the window never moved. Proving the scene was set is
+  what turned "no gap drawn" into a product bug rather than a bench mystery.
+- **Set one control per step, with a settle between.** Driving two controlled inputs in a
+  single synchronous batch is not what a person does, and it made a real closure-staleness
+  bug look like a harness artefact — worth separating so the two are distinguishable.
+- **Pause before moving the window.** Leaving playback running means the follow behaviour is
+  live while the control is being exercised, and the check races the player.
+- **A tile that crosses a segment boundary restarts near zero, and that is playback WORKING.**
+  Assert the wall-clock readout advances, not that `currentTime` rose.
+- **Pin the window before clicking the gap.** The default window ends at "now", so it slides
+  while the bench runs and the drawn hole drifts out from under a click computed a moment
+  earlier — producing "no note", which is indistinguishable from a broken note.
+- **`[].every(...)` is true.** The zero-gap assertion passed on a run that never reached the
+  hole. Any assertion over a collection needs a non-empty guard, or it reports success for
+  having tested nothing. Fourth sighting of this pattern in the programme.
+- **Assert on failing request URLs, not console text.** "404" with no URL names nothing.
+  `Network.responseReceived` with `status >= 400` gives the path. Expect exactly one:
+  `/api/system/recovery/gate`, which the app shell probes before login and which is
+  deliberately not mounted outside recovery mode. Name it rather than filtering by status, so
+  a new failure cannot hide behind it.
+- **`--autoplay-policy=no-user-gesture-required`** or the play assertion measures Chrome's
+  autoplay block rather than the player.
+- **Chrome needs an ABSOLUTE `--user-data-dir`** (already in the other uicheck scripts) and a
+  distinct devtools port per script — `uicheck_timeline.js` uses 9225.
+- **The docker CLI's `--format` is mangled by bash on Windows**; drive it from PowerShell or
+  from Python's subprocess, which is what the benches do.
+
+---
+
 # The fleet harness — build it once, reuse it
 
 **It is now built: `tools/fleetbench/` (see its README).** `fleet_harness.py` does everything

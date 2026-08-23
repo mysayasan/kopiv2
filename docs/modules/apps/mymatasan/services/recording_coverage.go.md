@@ -2,12 +2,14 @@
 
 ## Purpose
 
-How much of a window actually has footage on disk. The read model behind both the coverage strip on the Recordings page and the continuity monitor (`services/recording_continuity.go.md`) — deliberately one implementation, so the screen an operator reads and the alert that wakes them can never disagree.
+How much of a window actually has footage on disk. The read model behind the coverage strip on the Recordings page, the continuity monitor (`services/recording_continuity.go.md`), and — via the shared span helpers below — the Timeline screen's scrub-bar shading (`services/recording_timeline.go.md`). Deliberately one implementation, so the screen an operator reads, the alert that wakes them, and the bar they scrub can never disagree.
 
 ## Responsibilities
 
 - `Coverage(ctx, cameraId, from, to, bucket)` on `IRecordingService` → `CoverageReport{Buckets[], OverallPercent}`, bucketed `hour` or `day`.
-- `coveredSeconds(segs, from, to)` — the maths: clip each segment to the window, merge overlaps, sum.
+- `coveredSeconds(segs, from, to)` — total covered seconds + row count, built on `coveredSpans`.
+- `coveredSpans(segs, from, to)` — the merged `[]interval` runs of footage within the window plus their total length; factored out so `Timeline`/`SeekAt` (`recording_timeline.go`) shade the scrub bar from the exact same merge `Coverage` sums, rather than a second implementation that could drift out of step.
+- `clipToWindow(segs, from, to)` — turns segments into window-clipped `[]interval`, dropping rows that contribute nothing; the piece both `coveredSpans` and the row-count helper `countedInWindow` share.
 - `mergeIntervals` — sorts and coalesces spans.
 - Served by `GET /api/recording/coverage?cameraId&from&to&bucket` (see `apis/recording.go`), which caps a request at `coverageMaxBuckets` and says so rather than truncating silently — a shortened coverage report reads as "the footage is missing" when it only means "you asked for too much".
 

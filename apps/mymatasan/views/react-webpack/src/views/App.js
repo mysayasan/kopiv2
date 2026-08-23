@@ -15,6 +15,7 @@ import { ViewsTab, CamerasTab } from './components/cameras';
 import { TeachTab } from './components/teach';
 import { FacesTab } from './components/faces';
 import { ObjectsPage } from './components/objects';
+import { TimelinePlayback } from './components/timeline';
 import { SettingsTab } from './components/settings';
 import { NotificationsTab } from './components/notifications';
 import { SecureWipeCountdown, ResetProgressOverlay } from './components/securewipe';
@@ -2667,6 +2668,10 @@ function AppInner({ lang, onLangChange }) {
           onPTZStop={stopPTZ}
           onOpenAlerts={openCameraAlerts}
         />
+      ) : null}
+
+      {activeTab === 'timeline' ? (
+        <TimelinePlayback cameras={saved} authHeader={authHeader} />
       ) : null}
 
       {activeTab === 'cameras' ? (
