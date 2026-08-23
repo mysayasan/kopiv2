@@ -6908,16 +6908,59 @@ input.input-error:focus,
   gap: 8px;
 }
 
+/* THE PILL IS THE CONTROL, and it has to be, because the sheet's global `input` rule sets
+   width:100% and min-height:38px on every input in the app. A bare checkbox in here
+   rendered 47x38 — larger than the name beside it — which forced the pill to 63px tall and
+   wrapped "w32-cam-2" onto three lines.
+   Two other places in this file work around that rule by shrinking the box back down. A
+   pill reads better with no box at all: it already shows its own state, so a checkbox glued
+   to it is saying the same thing twice.
+   The input stays in the DOM, stays focusable and keeps carrying the checked state for
+   assistive technology and the keyboard — only its painting is removed. Not display:none,
+   which would drop it out of the tab order and the accessibility tree entirely. */
 .tl-camera-chip {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 10px;
+  padding: 5px 12px;
   border: 1px solid var(--border-panel);
   border-radius: 999px;
   font-size: 13px;
+  line-height: 1.4;
+  white-space: nowrap;
   cursor: pointer;
   background: var(--bg-surface);
+  user-select: none;
+}
+
+.tl-camera-chip input[type="checkbox"] {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* A GLYPH AS WELL AS A COLOUR. Selected-ness must survive a monochrome screenshot in an
+   incident report and a reader who cannot separate the two fills — the same rule the
+   appearance-search bands follow. The slot is reserved while hidden (visibility, not
+   display) so toggling a camera does not resize the pill and shuffle the row. */
+.tl-camera-chip::before {
+  content: '✓';
+  inline-size: 0.85em;
+  font-weight: 700;
+  visibility: hidden;
+  flex: none;
+}
+
+.tl-camera-chip.is-on::before {
+  visibility: visible;
+  color: var(--accent);
 }
 
 .tl-camera-chip.is-on {
@@ -6929,6 +6972,15 @@ input.input-error:focus,
 .tl-camera-chip.is-full {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* Keyboard focus has to remain visible now that the box it used to land on is invisible.
+   Driven off the sibling span rather than :has(), which this sheet does not use anywhere
+   else — the ring is offset outwards so it reads as surrounding the pill. */
+.tl-camera-chip input[type="checkbox"]:focus-visible ~ span {
+  outline: 2px solid var(--accent);
+  outline-offset: 6px;
+  border-radius: 999px;
 }
 
 .tl-transport {
