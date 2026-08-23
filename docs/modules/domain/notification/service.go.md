@@ -5,7 +5,7 @@
 `Service` is the reusable, database-backed notification facade every app publishes through
 and reads history from: it owns the hub (`infra/notification.Hub`), the always-on channels
 (persistence, log, SSE), a reloadable set of outbound delivery channels
-(webhook/telegram/per-destination), and re-exports the engine's core types
+(webhook/telegram/mqtt/email, per destination), and re-exports the engine's core types
 (`Notification`, `Attachment`, `Severity`, `Channel`, `Filter`, the `Info`/`Warning`/
 `Critical` severities, and the `Category*` constants) so apps depend on this one package
 rather than reaching into `infra/notification` directly.
@@ -15,6 +15,25 @@ first so the row exists before any delivery side effect), a `LogChannel`, an `SS
 (`opts.SSEClientBuffer`, `infra/notification/sse_channel.go.md`), and a `ReloadableChannel`
 for outbound delivery, all pre-registered. `Publish(ctx, n)` sends through the hub, which
 invokes every registered channel.
+
+## `Configure(cfg ChannelConfig)` and the destination switch
+
+`Configure` rebuilds the outbound set: one filtered channel per `DestinationConfig` (its own
+severity floor + category subscription), addressable by `Id` for tailored per-destination
+delivery via `DeliverTo`. `buildDestinationChannel` is the single dispatch point every app
+shares — `"webhook"`, `"telegram"`, `"mqtt"`, `"email"` — so a new transport is added in one
+place rather than once per app.
+
+**The mail relay is a PARAMETER, not a field on the `Service`.** `ChannelConfig.Smtp` carries
+one `SmtpConfig` for the whole install and is passed down to `buildDestinationChannel`
+alongside each destination. Stashing it on the receiver would let one `Configure` call read it
+while a concurrent one overwrote it — a data race the nightly `-race` job would eventually
+catch, and until then a channel built against half of one relay and half of another.
+
+`EmailDestinationConfig` carries only `To`, `SubjectPrefix` and `IncludeSnapshot`: recipients
+are routing, the relay is infrastructure, and keeping credentials off every destination row
+means one secret to rotate rather than one per recipient list. See
+`infra/notification/mail_channel.go.md`.
 
 ## `RelayToStream` (Phase 3 — cross-instance event bus)
 

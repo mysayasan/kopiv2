@@ -130,6 +130,34 @@ const SECTIONS = [
     ],
   },
   {
+    // The relay and the recipients are edited together even though they live in
+    // different config blocks (`smtp` is shared suite-wide, `notification.email`
+    // is this app's routing). Neither is any use without the other, and splitting
+    // them across two screens would let an operator save a half-configured mail
+    // path and find out at the one moment nobody is watching a settings screen.
+    id: 'notification', icon: 'send', tone: 'teal',
+    fields: [
+      { type: 'group', g: 'mailRelay' },
+      { path: 'smtp.enabled', k: 'smtpEnabled', type: 'checkbox' },
+      { path: 'smtp.host', k: 'smtpHost', type: 'text' },
+      { path: 'smtp.port', k: 'smtpPort', type: 'number', suggest: [587, 25, 2525] },
+      { path: 'smtp.from', k: 'smtpFrom', type: 'text' },
+      { path: 'smtp.username', k: 'smtpUsername', type: 'text' },
+      { path: 'smtp.password', k: 'smtpPassword', type: 'password' },
+      { path: 'smtp.useStartTls', k: 'smtpUseStartTls', type: 'checkbox' },
+      { type: 'group', g: 'emailDelivery', action: 'testMail' },
+      { path: 'notification.email.enabled', k: 'emailEnabled', type: 'checkbox' },
+      { path: 'notification.email.to', k: 'emailTo', type: 'text' },
+      { path: 'notification.email.subjectPrefix', k: 'emailSubjectPrefix', type: 'text' },
+      { path: 'notification.email.minSeverity', k: 'emailMinSeverity', type: 'select', options: [
+        { v: 'info', labelKey: 'settings.opt.severity.info' },
+        { v: 'warning', labelKey: 'settings.opt.severity.warning' },
+        { v: 'critical', labelKey: 'settings.opt.severity.critical' },
+      ] },
+      { path: 'notification.email.categories', k: 'emailCategories', type: 'text' },
+    ],
+  },
+  {
     id: 'security', icon: 'shield', tone: 'amber',
     fields: [
       { path: 'jwt.secret', k: 'jwtSecret', type: 'password' },
@@ -348,12 +376,14 @@ export function SettingsPage({ session, onToast }) {
           <div className="settings-cards">
             {toGroups(activeSection.fields, t).filter((g) => !g.when || g.when(form)).map((g, i) => (
               <section key={g.title || `g${i}`} className="settings-card">
-                {g.action === 'testCache' || g.action === 'testLlm' ? (
+                {g.action === 'testCache' || g.action === 'testLlm' || g.action === 'testMail' ? (
                   <div className="settings-card-head">
                     <h3 className="settings-card-title settings-card-title--flush">{g.title}</h3>
                     {g.action === 'testCache'
                       ? <CacheTestButton form={form} t={t} onToast={onToast} />
-                      : <LlmTestButton form={form} t={t} onToast={onToast} />}
+                      : g.action === 'testMail'
+                        ? <MailTestButton form={form} t={t} onToast={onToast} />
+                        : <LlmTestButton form={form} t={t} onToast={onToast} />}
                   </div>
                 ) : g.title ? <h3 className="settings-card-title">{g.title}</h3> : null}
                 <div className="settings-grid">
@@ -470,6 +500,52 @@ function SsoImportButton({ form, setForm, t, onToast }) {
 // CacheTestButton pings Redis with the values currently in the form (a blank password
 // falls back to the stored one, resolved server-side). It shows an inline result pill and
 // toasts, so an operator can verify connectivity before saving.
+// MailTestButton sends a real message through the relay currently in the form —
+// not merely a socket probe. A relay that accepts a connection and then refuses
+// the sender, the credential or the recipient is the common failure, and a
+// connectivity check calls all three a success. It posts the UNSAVED values so an
+// operator can get the settings right before committing them.
+function MailTestButton({ form, t, onToast }) {
+  const [state, setState] = useState({ status: 'idle', msg: '' });
+  const run = useCallback(async () => {
+    setState({ status: 'testing', msg: '' });
+    const body = {
+      host: getAt(form, 'smtp.host') || '',
+      port: Number(getAt(form, 'smtp.port') || 0),
+      from: getAt(form, 'smtp.from') || '',
+      username: getAt(form, 'smtp.username') || '',
+      password: getAt(form, 'smtp.password') || '',
+      useStartTls: Boolean(getAt(form, 'smtp.useStartTls')),
+      to: getAt(form, 'notification.email.to') || '',
+    };
+    const r = await api('/api/settings/notification/test', { method: 'POST', body: JSON.stringify(body), noRedirect: true })
+      .catch(() => ({ ok: false }));
+    if (r.ok) {
+      setState({ status: 'ok', msg: '' });
+      onToast && onToast(t('settings.mailTest.okToast'), 'success');
+    } else {
+      const msg = r.message || t('settings.mailTest.fail');
+      setState({ status: 'fail', msg });
+      onToast && onToast(t('settings.mailTest.failToast', { msg }), 'error');
+    }
+  }, [form, onToast, t]);
+
+  return (
+    <div className="settings-cache-test">
+      {state.status === 'ok' ? (
+        <span className="settings-status-pill ok"><span className="settings-status-dot" />{t('settings.mailTest.ok')}</span>
+      ) : null}
+      {state.status === 'fail' ? (
+        <span className="settings-status-pill bad" title={state.msg}><span className="settings-status-dot" />{t('settings.mailTest.fail')}</span>
+      ) : null}
+      <button type="button" className="settings-btn settings-btn-quiet" onClick={run} disabled={state.status === 'testing'}>
+        <Ico n={state.status === 'testing' ? 'reload' : 'zap'} sz={14} />
+        <span>{state.status === 'testing' ? t('settings.mailTest.testing') : t('settings.mailTest.test')}</span>
+      </button>
+    </div>
+  );
+}
+
 function CacheTestButton({ form, t, onToast }) {
   const [state, setState] = useState({ status: 'idle', msg: '' });
   const run = useCallback(async () => {

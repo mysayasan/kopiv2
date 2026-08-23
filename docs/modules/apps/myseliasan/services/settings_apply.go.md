@@ -23,6 +23,17 @@ bad value would break boot or security:
   be `0..6` (Sunday..Saturday); `digest.language` (when set) must be `en`/`ms`/`zh`/`ar`.
   `llm.timeoutSeconds` must be `0..600`; `llm.maxTokens` cannot be negative; `llm.sidecar.port`
   must be `0` (unset) or `1..65535`.
+- `notification` — an SMTP host is required when the relay is enabled; the port must be `0`
+  (unset) or `1..65535`; **a username requires `useStartTls`** — the sender will not put a
+  credential on a cleartext link, so that combination produces a relay that silently never
+  delivers, and refusing it at save time is the difference between a corrected setting and an
+  alerting path nobody knows is dead. When email delivery is enabled it additionally requires at
+  least one recipient, the relay to be enabled, and a sender address (`from`, or `username` as
+  the fallback). Every recipient must pass `looksLikeEmailAddress`
+  (`notification_channels.go.md`) — the CR/LF part of that check is what keeps a recipient field
+  out of the mail headers. `minSeverity`, when set, must be `info`/`warning`/`critical`.
+  A **disabled** email block skips the relay checks entirely, so a half-built configuration is
+  still savable while it is switched off.
 - `security` — `jwt.secret` must be at least 16 characters; `allowOrigins` cannot be empty;
   `tls.certPath`/`tls.keyPath` are required; every rate-limit tier's `requests`/`windowSeconds`
   must be non-negative.

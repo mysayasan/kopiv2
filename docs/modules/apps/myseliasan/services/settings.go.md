@@ -33,8 +33,8 @@ clearing it.
 
 ## Sections
 
-`sectionOrder` (also the display/tab order): `localAuth`, `sso`, `pairing`, `agent`, `security`,
-`storage`, `logging`. `read(section)` builds each section's root-relative nested map straight
+`sectionOrder` (also the display/tab order): `localAuth`, `sso`, `pairing`, `agent`,
+`notification`, `security`, `storage`, `logging`. `read(section)` builds each section's root-relative nested map straight
 from `*config.AppConfigModel` — see the switch in `settings.go` for the exact field list per
 section (mirrors `infra/config`'s `LocalAuth`/`SSO`/`Pairing`/`AgentConfigModel`/`Jwt`/`Tls`/
 `SecurityHeaders`/`RateLimit`/`FileStorage`/`Cache`/`Logging`/`ApiLog`/`Telemetry` models).
@@ -56,6 +56,32 @@ three are pointers. `digest.weeklyEnabled` resolves the same way (`boolValue(...
 false)` — the weekly cadence is opt-in) and `digest.weekday` is a plain int (`0`=Sunday…`6`
 =Saturday, default `1`/Monday resolved at read time by the scheduler, not here). `llm.apiKey` is
 the section's one secret leaf (`sectionSecrets["agent"]`).
+
+The `notification` section (new, W2-7) is the only one that spans two config blocks: the shared
+top-level `smtp` relay (`enabled`, `host`, `port` — read through `orDefault(..., 587)`, `from`,
+`username`, `password`, `useStartTls`) **and** this app's `notification.email` routing
+(`enabled`, `to`, `subjectPrefix`, `minSeverity`, `categories`). They are edited together on
+purpose: neither is any use alone, and splitting them across two screens would let an operator
+save a half-configured mail path and discover it at the one moment nobody is watching a settings
+screen. `smtp.password` is the section's secret leaf (`sectionSecrets["notification"]`).
+
+## `TestMail(ctx, body)`
+
+Sends a REAL message through the relay described by the request body (blank password uses the
+stored one), so an operator can verify the mail path before relying on it. It mirrors
+`TestCache` and exists for the same reason: the moment an alerting path is discovered to be
+broken must not be the incident it was supposed to report.
+
+It deliberately sends through the same `infra/mailer` the delivery channel uses rather than
+merely opening a socket to the host. A relay that accepts a connection and then refuses the
+sender, the credential, or the recipient is the common failure, and a connectivity probe would
+call all three a success. A partial rejection is reported as such rather than as a bare
+success — otherwise an operator "verifies" a configuration half of which silently delivers
+nothing.
+
+Exposed as `POST /api/settings/notification/test`, superadmin-gated and written to the audit
+trail: a test message is outbound traffic leaving the control plane, and the audit trail is what
+says who caused it.
 
 ## ISettingsService
 

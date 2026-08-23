@@ -395,6 +395,7 @@ type WebRTCICEServerModel struct {
 type NotificationConfigModel struct {
 	Webhook         NotificationWebhookConfigModel  `json:"webhook"`
 	Telegram        NotificationTelegramConfigModel `json:"telegram"`
+	Email           NotificationEmailConfigModel    `json:"email"`
 	SSEClientBuffer int                             `json:"sseClientBuffer"`
 	// RetentionDays purges notifications older than this many days (0 disables
 	// the periodic purge). Defaults applied by the app when unset.
@@ -403,6 +404,28 @@ type NotificationConfigModel struct {
 	PurgeIntervalHours int `json:"purgeIntervalHours"`
 	// PurgeReadOnly keeps unread notifications regardless of age when true.
 	PurgeReadOnly bool `json:"purgeReadOnly"`
+}
+
+// NotificationEmailConfigModel configures outbound email delivery. The RELAY
+// (host, credentials, sender) is NOT here — it is the shared top-level `smtp`
+// block, so one install has one mail server and one credential to rotate, and so
+// an air-gapped deployment can see at a glance whether it talks to a mail server
+// at all.
+type NotificationEmailConfigModel struct {
+	// Enabled switches email delivery on. Off by default.
+	Enabled bool `json:"enabled"`
+	// To is a comma-separated recipient list (the same shape as allowOrigins, and
+	// the way an operator types one).
+	To string `json:"to"`
+	// SubjectPrefix is prepended to every subject (e.g. "[HQ control plane]"), so
+	// a recipient covering several installs can tell them apart and filter on it.
+	SubjectPrefix string `json:"subjectPrefix"`
+	// MinSeverity drops notifications below this severity ("info", "warning",
+	// "critical"). Empty means no floor.
+	MinSeverity string `json:"minSeverity"`
+	// Categories optionally limits delivery to these notification categories
+	// (comma-separated, e.g. "health.check,system"). Empty means all.
+	Categories string `json:"categories"`
 }
 
 type NotificationWebhookConfigModel struct {

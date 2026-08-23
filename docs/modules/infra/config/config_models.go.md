@@ -192,9 +192,13 @@ What stayed here is anything a second app already uses or obviously will: `Secur
 - `sso.redirectPath` configures the relying-app callback path.
 - `sso.authCodeTtlSeconds` and `sso.accessTokenTtlSeconds` provide MyIDSan defaults when per-client DB config does not override them.
 - `localAuth.enabled`, `localAuth.username`, and `localAuth.password` configure each standalone app's bootstrap local admin: `mymatasan` reads `localAuth.username`/`localAuth.password` at startup to seed its DB-backed first admin user (`ILocalUserService.EnsureDefaultAdmin`), falling back to `admin`/`admin` when empty, same as `myseliasan`'s stock superadmin.
-- `smtp.enabled` turns on the OPTIONAL internal mail relay for myidsan's self-service
-  account-recovery email link (see `infra/mailer/mailer.go.md`,
-  `apps/myidsan/services/password_reset.go.md`); `false` (the default — the block is
+- `smtp.enabled` turns on the OPTIONAL internal mail relay. It is now shared by TWO
+  features: myidsan's self-service account-recovery email link, and (W2-7) the email
+  notification channel on `mymatasan` and `myseliasan` (`infra/mailer/mailer.go.md`,
+  `apps/myidsan/services/password_reset.go.md`,
+  `infra/notification/mail_channel.go.md`). One relay per install means one credential to
+  rotate and one place that decides whether this install talks to a mail server at all —
+  which is the question an air-gapped deployment needs answerable at a glance; `false` (the default — the block is
   absent from the shipped `config.json`/`config.dev.json`, so it decodes to the Go
   zero value) means the operator recovery queue is the only recovery channel and
   nothing ever reaches for a network, keeping an air-gapped install unaffected.
@@ -202,6 +206,16 @@ What stayed here is anything a second app already uses or obviously will: `Secur
   falls back to `smtp.username` when blank; `smtp.username`/`smtp.password`
   authenticate to the relay and, when set, **require** `smtp.useStartTls` — the
   sender refuses to transmit credentials over an un-upgraded connection.
+- `notification.email.*` (W2-7, control-plane side) routes the fleet feed to a mailbox:
+  `enabled` (off by default), `to` (comma-separated recipients — the same shape as
+  `allowOrigins`, and the way an operator types one), `subjectPrefix` (e.g. `[HQ]`),
+  `minSeverity` (`info`/`warning`/`critical`), and `categories` (comma-separated filter;
+  empty means all). The RELAY is the `smtp` block above, not here.
+  `apps/myseliasan` consumes this via `NotificationChannelConfig`
+  (`apps/myseliasan/services/notification_channels.go.md`) — which also finally wires the
+  long-present-but-unconsumed `notification.webhook` / `notification.telegram` blocks on
+  that app. `mymatasan` seeds its DB-backed copy from `smtp` at first boot and edits it in
+  the UI thereafter, like the rest of its notification settings.
 - `kerberos.enabled` turns on Kerberos SPNEGO single sign-on (`myidsan`, Phase 2 of `docs/MYIDSAN_ENTERPRISE_SSO_PLAN.md`); `false` (the shipped default in both `config.json` and `config.dev.json`) means the login endpoint isn't even registered as "offered" — no button, no challenge. `kerberos.keytabPath` is the exported service keytab (required when enabled; a missing/unreadable file logs a `WARNING` at boot and disables Kerberos rather than failing startup — see `apps/myidsan/app/app.go.md`). `kerberos.servicePrincipal` must match the SPN the keytab was exported for (e.g. `HTTP/myidsan.corp.local`); empty lets the acceptor match any principal present in the keytab. `kerberos.onlyRealms` optionally allow-lists accepted realms (case-insensitive); empty accepts any realm the keytab can decrypt tickets for. `kerberos.displayLabel` names the SSO button on both login surfaces (default `"Windows (SSO)"` when blank). See `infra/login/kerberos.go.md` and `docs/HOWTO.md`'s Kerberos SSO subsection for keytab provisioning (`ktpass`/`samba-tool`) and operational requirements (clock skew, browser trust).
 - `camera`, `decoder`, `stream`, `vision`, `health`, and `recording` are documented in
   `docs/modules/apps/mymatasan/config/config.go.md` — they are `mymatasan`-owned blocks, no

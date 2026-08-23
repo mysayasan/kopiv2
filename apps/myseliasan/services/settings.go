@@ -14,6 +14,7 @@ import (
 	"github.com/mysayasan/kopiv2/infra/cache"
 	"github.com/mysayasan/kopiv2/infra/config"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
+	"github.com/mysayasan/kopiv2/infra/mailer"
 )
 
 // Settings exposes a SAFE SUBSET of the app's config.json as an in-app, RBAC-gated
@@ -64,6 +65,10 @@ type ISettingsService interface {
 	// can verify them before saving. A blank password falls back to the stored one. Returns
 	// nil on a successful ping.
 	TestCache(ctx context.Context, body json.RawMessage) error
+	// TestMail sends a real message through the relay in the request body (blank
+	// password uses the stored one), so an operator can verify the mail path
+	// before an incident depends on it. Returns nil on delivery.
+	TestMail(ctx context.Context, body json.RawMessage) error
 }
 
 type settingsService struct {
@@ -76,16 +81,17 @@ type settingsService struct {
 }
 
 // sectionOrder is the canonical display + iteration order.
-var sectionOrder = []string{"localAuth", "sso", "pairing", "agent", "security", "storage", "logging"}
+var sectionOrder = []string{"localAuth", "sso", "pairing", "agent", "notification", "security", "storage", "logging"}
 
 // sectionSecrets maps each section to the dotted (root-relative) leaf paths that are
 // secret, so masking and keep-if-blank are data-driven.
 var sectionSecrets = map[string][]string{
-	"localAuth": {"localAuth.password"},
-	"sso":       {"sso.clientSecret"},
-	"agent":     {"agent.llm.apiKey"},
-	"security":  {"jwt.secret"},
-	"storage":   {"cache.redis.password"},
+	"localAuth":    {"localAuth.password"},
+	"sso":          {"sso.clientSecret"},
+	"agent":        {"agent.llm.apiKey"},
+	"security":     {"jwt.secret"},
+	"storage":      {"cache.redis.password"},
+	"notification": {"smtp.password"},
 }
 
 // NewSettingsService builds the editor over deps.Config + config.json and captures the
@@ -186,6 +192,96 @@ func (s *settingsService) Reset(ctx context.Context, section string) (SaveResult
 // TestCache pings Redis with the given settings. Blank address/password fall back to the
 // currently stored values, so an operator can test an existing config, or a new one they’re
 // about to save, without persisting first.
+// TestMail sends a real message through the relay described by the request body
+// (blank password uses the stored one) so an operator can verify the mail path
+// BEFORE relying on it. It mirrors TestCache, and for the same reason: the moment
+// an alerting path is discovered to be broken must not be the incident it was
+// supposed to report.
+//
+// It deliberately sends through the SAME infra/mailer the delivery channel uses,
+// rather than merely opening a socket to the host. A relay that accepts a
+// connection and then refuses the sender, the credential, or the recipient is the
+// common failure, and a connectivity probe would call all three a success.
+func (s *settingsService) TestMail(ctx context.Context, body json.RawMessage) error {
+	var req struct {
+		Host        string `json:"host"`
+		Port        int    `json:"port"`
+		From        string `json:"from"`
+		Username    string `json:"username"`
+		Password    string `json:"password"`
+		UseStartTls bool   `json:"useStartTls"`
+		To          string `json:"to"`
+	}
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &req); err != nil {
+			return fmt.Errorf("invalid request body: %w", err)
+		}
+	}
+
+	s.mu.Lock()
+	host := strings.TrimSpace(req.Host)
+	if host == "" {
+		host = strings.TrimSpace(s.cfg.Smtp.Host)
+	}
+	port := req.Port
+	if port <= 0 {
+		port = s.cfg.Smtp.Port
+	}
+	from := strings.TrimSpace(req.From)
+	if from == "" {
+		from = strings.TrimSpace(s.cfg.Smtp.From)
+	}
+	username := strings.TrimSpace(req.Username)
+	if username == "" {
+		username = strings.TrimSpace(s.cfg.Smtp.Username)
+	}
+	password := req.Password
+	if strings.TrimSpace(password) == "" {
+		password = s.cfg.Smtp.Password
+	}
+	to := splitList(req.To)
+	if len(to) == 0 {
+		to = splitList(s.cfg.Notification.Email.To)
+	}
+	prefix := strings.TrimSpace(s.cfg.Notification.Email.SubjectPrefix)
+	s.mu.Unlock()
+
+	if host == "" {
+		return fmt.Errorf("an SMTP relay host is required")
+	}
+	if len(to) == 0 {
+		return fmt.Errorf("at least one recipient is required")
+	}
+	if username != "" && !req.UseStartTls {
+		return fmt.Errorf("STARTTLS must be enabled when an SMTP username is set - credentials are never sent over a cleartext link")
+	}
+	if port <= 0 {
+		port = 587
+	}
+
+	subject := "Test notification"
+	if prefix != "" {
+		subject = prefix + " " + subject
+	}
+	m := mailer.New(mailer.Config{
+		Enabled: true, Host: host, Port: port, From: from,
+		Username: username, Password: password, UseStartTls: req.UseStartTls,
+	})
+	err := m.SendMessage(mailer.Message{
+		To:      to,
+		Subject: subject,
+		Body:    "This is a test message from the myseliasan control plane. If you received it, fleet notifications can reach you by email.",
+		Headers: map[string]string{"X-Kopiv2-Category": "system", "X-Kopiv2-Severity": "info"},
+	})
+	// A partial rejection means the relay works and some address does not. Report
+	// that rather than a bare success, or the operator "verifies" a configuration
+	// half of which silently delivers nothing.
+	if re, ok := err.(*mailer.RecipientError); ok && re.Delivered() {
+		return fmt.Errorf("delivered, but the relay rejected: %s", strings.Join(re.Addresses(), ", "))
+	}
+	return err
+}
+
 func (s *settingsService) TestCache(ctx context.Context, body json.RawMessage) error {
 	var req struct {
 		Address            string `json:"address"`
@@ -327,9 +423,36 @@ func (s *settingsService) read(section string) (map[string]any, error) {
 			},
 			"allowDownloads": boolValue(s.cfg.Agent.AllowDownloads, true),
 		}}, nil
+	case "notification":
+		// The relay and the recipients are edited together because neither is any
+		// use alone, even though they live in different config blocks: `smtp` is
+		// shared with the rest of the suite, `notification.email` is this app's
+		// routing. Splitting them across two screens would let an operator save a
+		// half-configured mail path and see no error until an alert failed to
+		// arrive — which is the one moment nobody is watching a settings screen.
+		return map[string]any{
+			"smtp": map[string]any{
+				"enabled":     s.cfg.Smtp.Enabled,
+				"host":        s.cfg.Smtp.Host,
+				"port":        orDefault(s.cfg.Smtp.Port, 587),
+				"from":        s.cfg.Smtp.From,
+				"username":    s.cfg.Smtp.Username,
+				"password":    s.cfg.Smtp.Password,
+				"useStartTls": s.cfg.Smtp.UseStartTls,
+			},
+			"notification": map[string]any{
+				"email": map[string]any{
+					"enabled":       s.cfg.Notification.Email.Enabled,
+					"to":            s.cfg.Notification.Email.To,
+					"subjectPrefix": s.cfg.Notification.Email.SubjectPrefix,
+					"minSeverity":   defaultStr(s.cfg.Notification.Email.MinSeverity, "warning"),
+					"categories":    s.cfg.Notification.Email.Categories,
+				},
+			},
+		}, nil
 	case "security":
 		return map[string]any{
-			"jwt":         map[string]any{"secret": s.cfg.Jwt.Secret},
+			"jwt":          map[string]any{"secret": s.cfg.Jwt.Secret},
 			"allowOrigins": s.cfg.AllowOrigin,
 			"tls": map[string]any{
 				"certPath": s.cfg.Tls.CertPath,

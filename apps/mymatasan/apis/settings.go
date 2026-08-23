@@ -129,6 +129,7 @@ func NewSettingsApi(router *mux.Router, serv services.IRuntimeSettingsService, c
 	group.HandleFunc("/notification/destination", handler.saveNotificationDestination).Methods("PUT")
 	group.HandleFunc("/notification/destination/{id}", handler.deleteNotificationDestination).Methods("DELETE")
 	group.HandleFunc("/notification/retention", handler.saveNotificationRetention).Methods("PUT")
+	group.HandleFunc("/notification/smtp", handler.saveNotificationSmtp).Methods("PUT")
 	group.HandleFunc("/notification/test", handler.testNotification).Methods("POST")
 	group.HandleFunc("/health", handler.getHealth).Methods("GET")
 	group.HandleFunc("/health", handler.saveHealth).Methods("PUT")
@@ -297,6 +298,23 @@ func (a *settingsApi) saveNotificationRetention(w http.ResponseWriter, r *http.R
 		return
 	}
 	settings, err := a.notifServ.SaveRetention(r.Context(), body)
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	controllers.SendResult(w, settings, "succeed")
+}
+
+func (a *settingsApi) saveNotificationSmtp(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
+	var body services.NotificationSmtpSettings
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	settings, err := a.notifServ.SaveSmtp(r.Context(), body)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return

@@ -25,6 +25,28 @@ type NotificationSettings struct {
 	// migrated from the Webhook/Telegram singletons; the live hub still delivers
 	// via those singletons until the Phase 2 refactor consumes this list).
 	Destinations []NotificationDestination `json:"destinations,omitempty"`
+	// Smtp is the ONE mail relay every email destination delivers through. It is
+	// seeded from the config.json smtp block on first run and thereafter edited in
+	// the UI, like the rest of these settings.
+	Smtp NotificationSmtpSettings `json:"smtp"`
+}
+
+// NotificationSmtpSettings is the install-wide SMTP relay backing email
+// destinations. Disabled by default: an air-gapped install must never reach for
+// a mail server it was not explicitly pointed at, and turning this off silences
+// email without anyone having to delete their destinations.
+type NotificationSmtpSettings struct {
+	Enabled bool   `json:"enabled"`
+	Host    string `json:"host"`
+	Port    int    `json:"port"`
+	// From is the sender address (falls back to Username when blank).
+	From string `json:"from"`
+	// Username/Password authenticate to the relay. When a username is set,
+	// UseStartTls must be on — the sender refuses to transmit a credential over a
+	// cleartext link.
+	Username    string `json:"username"`
+	Password    string `json:"password"`
+	UseStartTls bool   `json:"useStartTls"`
 }
 
 type NotificationWebhookSettings struct {
@@ -186,6 +208,53 @@ func (s *notificationSettingsService) SaveRetention(ctx context.Context, retenti
 	return s.Save(ctx, current)
 }
 
+// SaveSmtp persists only the mail-relay section, leaving destinations and
+// retention untouched. It is its own endpoint for the same reason retention is:
+// the relay is edited by whoever runs the mail server, the destinations by
+// whoever decides who gets told, and a save of one must never silently rewrite
+// the other from a stale copy the browser was holding.
+//
+// A blank incoming password keeps the stored one, so an operator can change the
+// host or the port without re-typing a credential the UI never showed them.
+func (s *notificationSettingsService) SaveSmtp(ctx context.Context, smtp NotificationSmtpSettings) (NotificationSettings, error) {
+	current, err := s.Get(ctx)
+	if err != nil {
+		return NotificationSettings{}, err
+	}
+	if strings.TrimSpace(smtp.Password) == "" {
+		smtp.Password = current.Smtp.Password
+	}
+	if err := validateSmtpSettings(smtp); err != nil {
+		return NotificationSettings{}, err
+	}
+	current.Smtp = smtp
+	return s.Save(ctx, current)
+}
+
+// validateSmtpSettings refuses a relay that cannot deliver. The credential rule
+// is the one worth stating: the sender will not transmit a password over a link
+// it has not upgraded, so a username without STARTTLS produces a relay that
+// silently never delivers. Refusing it here is the difference between a
+// corrected setting and an alerting path nobody knows is dead.
+func validateSmtpSettings(smtp NotificationSmtpSettings) error {
+	if !smtp.Enabled {
+		return nil
+	}
+	if strings.TrimSpace(smtp.Host) == "" {
+		return fmt.Errorf("an SMTP relay host is required when mail is enabled")
+	}
+	if strings.TrimSpace(smtp.From) == "" && strings.TrimSpace(smtp.Username) == "" {
+		return fmt.Errorf("a sender address (from) is required when mail is enabled")
+	}
+	if smtp.Port < 0 || smtp.Port > 65535 {
+		return fmt.Errorf("SMTP port must be between 1 and 65535")
+	}
+	if strings.TrimSpace(smtp.Username) != "" && !smtp.UseStartTls {
+		return fmt.Errorf("STARTTLS must be enabled when an SMTP username is set - credentials are never sent over a cleartext link")
+	}
+	return nil
+}
+
 // Destinations returns the configured delivery destinations for per-destination
 // alert rendering. On error it returns nil (no external delivery).
 func (s *notificationSettingsService) Destinations(ctx context.Context) []NotificationDestination {
@@ -235,7 +304,17 @@ func (s *notificationSettingsService) Test(ctx context.Context, severity string)
 // subscription). The legacy Webhook/Telegram singletons are migrated into the
 // destination list by normalizeNotificationSettings, so they are not mapped here.
 func notificationChannelConfig(s NotificationSettings) notification.ChannelConfig {
-	cfg := notification.ChannelConfig{}
+	cfg := notification.ChannelConfig{
+		Smtp: notification.SmtpConfig{
+			Enabled:     s.Smtp.Enabled,
+			Host:        s.Smtp.Host,
+			Port:        s.Smtp.Port,
+			From:        s.Smtp.From,
+			Username:    s.Smtp.Username,
+			Password:    s.Smtp.Password,
+			UseStartTls: s.Smtp.UseStartTls,
+		},
+	}
 	for _, d := range s.Destinations {
 		if !d.Enabled {
 			continue
@@ -252,6 +331,14 @@ func notificationChannelConfig(s NotificationSettings) notification.ChannelConfi
 		case DestinationTypeTelegram:
 			dc.BotToken = d.BotToken
 			dc.ChatID = d.ChatId
+		case DestinationTypeEmail:
+			dc.Email = notification.EmailDestinationConfig{
+				To:            d.Email.To,
+				SubjectPrefix: d.Email.SubjectPrefix,
+				// Snapshot delivery reuses the destination-wide SnapshotMode rather
+				// than an email-only toggle: "link" means send the reference only.
+				IncludeSnapshot: !strings.EqualFold(d.SnapshotMode, SnapshotModeLink),
+			}
 		case DestinationTypeMqtt:
 			dc.Mqtt = notification.MqttDestinationConfig{
 				BrokerURL:          d.Mqtt.BrokerURL,
@@ -278,6 +365,14 @@ func normalizeNotificationSettings(s NotificationSettings) NotificationSettings 
 	s.Telegram.BotToken = strings.TrimSpace(s.Telegram.BotToken)
 	s.Telegram.ChatId = strings.TrimSpace(s.Telegram.ChatId)
 	s.Telegram.MinSeverity = normalizeSeverityString(s.Telegram.MinSeverity)
+	s.Smtp.Host = strings.TrimSpace(s.Smtp.Host)
+	s.Smtp.From = strings.TrimSpace(s.Smtp.From)
+	s.Smtp.Username = strings.TrimSpace(s.Smtp.Username)
+	if s.Smtp.Port <= 0 || s.Smtp.Port > 65535 {
+		// 587 (submission) rather than 25: the relay this talks to is an internal
+		// submission endpoint, and 25 is blocked outbound on most networks.
+		s.Smtp.Port = 587
+	}
 	if s.Retention.Days < 0 {
 		s.Retention.Days = 0
 	}
