@@ -53,7 +53,7 @@ func registerRoutes(api *mux.Router, w *wiring) *mux.Router {
 	apis.NewFacesApi(protected, w.faceGallery)
 	apis.NewSettingsApi(protected, w.settings, w.camera, w.localUser, w.notificationSettings, w.healthSettings, w.machineHealthSettings, w.machineHealth,
 		visionToolSettingsFromAppConfig(w.appCfg, w.detectorPaths.DetectorArgs), w.ffmpegInstaller, w.pythonInstaller, w.appCfg.Decoder.BrowseRoots, w.accessRoles, w.audit, w.continuitySettings, w.tamperSettings)
-	apis.NewRecordingApi(protected, w.recording, w.recorder, w.camera, w.settings, w.atrestCipher, w.vision, w.recorderConfig, w.audit)
+	apis.NewRecordingApi(protected, w.recording, w.recorder, w.camera, w.settings, w.atrestCipher, w.vision, w.recorderConfig, w.audit, w.observation)
 	apis.NewObservationApi(protected, w.observation, w.sightingSearch, w.appearance)
 	apis.NewNotificationApi(protected, w.notification)
 	apis.NewAnomalyApi(protected, w.anomalySettings, w.notification, w.camera)

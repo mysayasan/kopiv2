@@ -57,6 +57,42 @@ rather than starting a new one.
 That is why a person walking through a car park produces one row rather than four hundred — and
 why briefly stepping behind a pillar does not split them into two people.
 
+## Find similar {#appearance}
+
+Any person or vehicle row carries a **Find similar** action. Pick a sighting and the search
+ranks every other sighting the camera has recorded by how much it *looks like* the one you
+picked — clothing colour, build, vehicle shape and colour.
+
+It is a separate switch from object metadata, on the same **Recording** tab: **Describe
+appearance for search**. It requires metadata recording to already be on — the description
+rides on the sighting metadata creates — and it is not free the way metadata is: it is a
+model pass over every person or vehicle in every sampled frame, on top of the detector
+itself. Turn it on for the cameras where "where else did this go" is a question you expect
+to ask.
+
+> [!NOTE]
+> Nothing is described until you switch this on, and nothing recorded before that moment
+> can ever be found by it — the same limit as object metadata itself.
+
+### What a ranked result means, and does not {#appearance-scoring}
+
+A high-ranked result is not an identification. It comes from a general-purpose image
+description, not a face or person re-identification model, so it is good at telling apart
+coarse appearance — a red jacket from a black one, a van from a hatchback — and considerably
+weaker at recognising the same individual across a big change in pose, lighting or camera.
+Every result is a shortlist for *you* to confirm by eye, never a verdict, and the screen
+never claims otherwise.
+
+There is also no match percentage, and that is deliberate rather than missing. Measured
+against the real model, two photos of the *same* person score about 98%, and two photos of
+two *different* people score about 95% — the raw number barely moves no matter who is being
+compared, so showing it as a percentage would look like near-certainty on every single row.
+What the screen shows instead is how far a result **stands out** from everything else that
+was compared for that search: a result that clears the crowd by a wide margin is worth a
+look, one that barely does is not, regardless of what the underlying number reads. With very
+few sightings to compare against, standing out means little, and the screen says so rather
+than manufacturing a rank from too little evidence.
+
 ## What it is not {#limits}
 
 - **It is not a rule.** Nothing alerts. It records so you can search later.

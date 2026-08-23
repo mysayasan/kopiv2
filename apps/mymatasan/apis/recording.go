@@ -40,11 +40,15 @@ type recordingApi struct {
 	// audit records evidence handling: who viewed, downloaded, deleted or purged footage.
 	// Nil is tolerated (Auditor.Record no-ops) so a partially-wired test handler still works.
 	audit *Auditor
+	// observation purges the object metadata alongside the footage. See purgeCameraNow:
+	// destroying a camera's recordings while leaving behind a searchable index of what it
+	// saw is not the thing an operator asked for.
+	observation *services.ObservationService
 }
 
 // NewRecordingApi registers recording routes under /recording.
-func NewRecordingApi(router *mux.Router, serv services.IRecordingService, recorder *recording.Manager, camera services.ICameraService, settings services.IRuntimeSettingsService, cipher *atrest.Cipher, vision services.IVisionService, recorderCfg *services.RecorderConfigBuilder, audit *Auditor) {
-	h := &recordingApi{serv: serv, recorder: recorder, camera: camera, settings: settings, cipher: cipher, vision: vision, recorderCfg: recorderCfg, audit: audit}
+func NewRecordingApi(router *mux.Router, serv services.IRecordingService, recorder *recording.Manager, camera services.ICameraService, settings services.IRuntimeSettingsService, cipher *atrest.Cipher, vision services.IVisionService, recorderCfg *services.RecorderConfigBuilder, audit *Auditor, observation *services.ObservationService) {
+	h := &recordingApi{serv: serv, recorder: recorder, camera: camera, settings: settings, cipher: cipher, vision: vision, recorderCfg: recorderCfg, audit: audit, observation: observation}
 	g := router.PathPrefix("/recording").Subrouter()
 
 	g.HandleFunc("/segments", h.listSegments).Methods("GET")
@@ -107,10 +111,18 @@ func (a *recordingApi) purgeExpired(w http.ResponseWriter, r *http.Request) {
 	controllers.SendResult(w, map[string]int{"deleted": deleted}, "succeed")
 }
 
-// purgeCameraNow deletes ALL footage AND AI-event snapshots for one camera, ignoring
-// expiry — the per-camera "Purge now" action. Body/query: cameraId. Footage removal is
-// authoritative (its error fails the request); snapshot removal is best-effort so a
-// snapshot hiccup can't leave the footage half-purged.
+// purgeCameraNow deletes ALL footage, AI-event snapshots AND object metadata for one
+// camera, ignoring expiry — the per-camera "Purge now" action. Body/query: cameraId.
+// Footage removal is authoritative (its error fails the request); the rest is best-effort
+// so a hiccup in one cannot leave the footage half-purged.
+//
+// THE METADATA GOES TOO, and it did not used to. "Purge now" is the operator's destroy
+// button, and until this it destroyed the video while leaving the object index intact: a
+// searchable record of every person and vehicle the camera saw, pointing at footage that
+// no longer exists. Appearance search made that materially worse by hanging a descriptor
+// off each of those rows — an index of what people LOOKED LIKE, surviving the deletion of
+// the recordings it was derived from. Found by the W3-2 bench, which purged a camera and
+// then successfully ranked a sighting from it.
 func (a *recordingApi) purgeCameraNow(w http.ResponseWriter, r *http.Request) {
 	cameraId := parseInt64Query(r, "cameraId")
 	if cameraId <= 0 {
@@ -137,10 +149,23 @@ func (a *recordingApi) purgeCameraNow(w http.ResponseWriter, r *http.Request) {
 			snapshots = n
 		}
 	}
+	observations := 0
+	if a.observation != nil {
+		// This cascades to the appearance descriptors, which the observation service
+		// deletes BEFORE the rows that point at them — once an observation is gone nothing
+		// can find its descriptor and no later sweep would catch it.
+		if n, oerr := a.observation.PurgeAllForCamera(r.Context(), cameraId); oerr != nil {
+			log.Printf("purge-camera %d: metadata purge warning: %v", cameraId, oerr)
+		} else {
+			observations = n
+		}
+	}
 	a.audit.Success(r, services.ActionRecordingPurge, services.TargetCamera, strconv.FormatInt(cameraId, 10),
-		fmt.Sprintf("purged all footage for camera %d", cameraId),
-		map[string]any{"segments": segments, "snapshots": snapshots})
-	controllers.SendResult(w, map[string]int{"segments": segments, "snapshots": snapshots}, "succeed")
+		fmt.Sprintf("purged all footage and metadata for camera %d", cameraId),
+		map[string]any{"segments": segments, "snapshots": snapshots, "observations": observations})
+	controllers.SendResult(w, map[string]int{
+		"segments": segments, "snapshots": snapshots, "observations": observations,
+	}, "succeed")
 }
 
 // coverage answers "was there actually footage" for a camera over a range, bucketed by

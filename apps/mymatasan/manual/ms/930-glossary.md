@@ -22,6 +22,10 @@ dicetuskan. Kawalan terbaik terhadap kelipan.
 **Cap wajah** — perwakilan matematik bagi wajah orang yang didaftarkan. Data biometrik, dengan
 tanggungjawab undang-undang yang melekat. Lihat [Orang](people#consent).
 
+**Carian rupa** — menyusun penampakan yang direkodkan mengikut sejauh mana ia kelihatan serupa
+dengan yang anda pilih, bukan mengikut kelas objek. Senarai pendek untuk disahkan dengan mata,
+bukan pengecaman identiti. Lihat [Cari yang serupa](object-search#appearance).
+
 **Gambar petikan** — imej pegun yang ditangkap pada detik peraturan dicetuskan, dengan pengesanan
 berkotak dan berlabel.
 

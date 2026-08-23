@@ -18,9 +18,11 @@ Defines app-neutral contracts for visual detection rules, detector outputs, came
 
 `Detection` now carries a `FrameCapturedAt int64` field (Unix seconds) set by every `Detect` implementation to the timestamp of the **input frame**, not the time the detection logic completed. This field is used by the recording manager to anchor the pre-roll/post-roll clip window to when the subject was actually visible rather than when the detector (e.g. YOLO) finished processing the frame.
 
-## WantLPR / WantFace frame gates
+## WantLPR / WantFace / WantAppearance frame gates
 
-`Frame` carries a `WantLPR bool` and a `WantFace bool` (both JSON `"-"`, never serialized) that the vision monitor sets to `true` only for cameras that have an active LPR rule / face rule respectively. The persistent worker reads the `lpr`/`face` fields in the JSON request (forwarded by `persistent.go`) and runs the plate-localization + OCR stage, or the face detect+embed+gallery-match stage, only when asked — so the expensive OCR/face-embedding paths never run on cameras that don't need them. Both gates force the same high-resolution capture path (`CaptureForLPR`) since plates and faces both need real pixels, not the low-res object-detection frame.
+`Frame` carries a `WantLPR bool`, a `WantFace bool`, and a `WantAppearance bool` (all JSON `"-"`, never serialized). The vision monitor sets `WantLPR`/`WantFace` to `true` only for cameras that have an active LPR rule / face rule respectively, and both force the same high-resolution capture path (`CaptureForLPR`) since plates and faces both need real pixels, not the low-res object-detection frame. The persistent worker reads the `lpr`/`face` fields in the JSON request (forwarded by `persistent.go`) and runs the plate-localization + OCR stage, or the face detect+embed+gallery-match stage, only when asked — so the expensive OCR/face-embedding paths never run on cameras that don't need them.
+
+`WantAppearance` (W3-2, "find more like this" — `apps/mymatasan/services/appearance_search.go.md`) is set per-camera (not per-rule, unlike the other two) whenever that camera has appearance search turned on. It requests an appearance vector on each eligible person/vehicle detection, so those sightings can later be ranked by how much they look like one an operator picked. It is the same per-camera compute gate as the two above — a forward pass per crop, and a camera nobody searches by appearance should not pay for one — but deliberately does **not** force the high-resolution capture path: LPR/face are targeted stages active only while a rule fires, while this one runs on every sampled frame of an enabled camera, so raising the baseline capture resolution for it would quietly multiply the cost of the whole sampling loop.
 
 ## Notes
 

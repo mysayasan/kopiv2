@@ -71,7 +71,7 @@ func newAuditedRecordingApi(seg *entities.RecordingSegment) (*mux.Router, *stubR
 	router := mux.NewRouter()
 	// No trusted proxies: an untrusted caller must not be able to forge the recorded
 	// address with X-Forwarded-For.
-	NewRecordingApi(router, serv, nil, nil, nil, nil, nil, nil, NewAuditor(trail, nil))
+	NewRecordingApi(router, serv, nil, nil, nil, nil, nil, nil, NewAuditor(trail, nil), nil)
 	return router, serv, trail
 }
 

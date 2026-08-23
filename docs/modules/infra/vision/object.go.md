@@ -6,7 +6,7 @@ Maps object detector candidates to reusable vision detection rules.
 
 ## Responsibilities
 
-- Define normalized object candidate and bounding-box shapes.
+- Define normalized object candidate and bounding-box shapes, including an optional appearance descriptor (`ObjectCandidate.Appearance []float32` + `AppearanceModel string`, W3-2 — see `vision.go.md`'s *WantAppearance frame gate*).
 - Define the `ObjectDetector` interface for semantic detector backends.
 - Apply rule class mapping, confidence thresholds, zone matching (single or multi-zone union via `boxCenterInAnyZone`), minimum frame count, and cooldown — the cooldown check routes through `cooldownActive` (`cooldown.go`), which seeds the in-process cooldown from the rule's persisted `LastTriggeredAt` on first sight, so cooldown survives a process restart instead of reading as zero.
 - Convert matching candidates into reusable `Detection` results with bounding box and detector metadata JSON.
@@ -22,6 +22,7 @@ When `faceMatch` succeeds, the recognized identity (`personId`, `personName`, `f
 
 ## Notes
 
+- `ObjectCandidate.Appearance`/`AppearanceModel` (W3-2) are populated by the persistent worker only when `Frame.WantAppearance` was set and only on labels worth describing (`person` and common vehicle labels); every other candidate carries a nil `Appearance` (`omitempty`). `ObjectRuleDetector.Detect` forwards these fields through to the observer untouched — this package never reads or ranks them itself, it is purely a carrier — so `apps/mymatasan/services.MetadataRecorder` can attach the peak-crop vector to the presence interval it writes (`services/metadata_recorder.go.md`) and `apps/mymatasan/services.AppearanceService` can later rank stored vectors (`services/appearance_search.go.md`).
 - Candidate boxes are normalized from `0` to `1` and matched by box center against the rule's zone(s) via `boxCenterInAnyZone`. A rule's `ZonePolygon` can hold a single polygon or a list of polygons (multi-zone); a box counts if its center falls inside any one of them. Parsing (`parseZones`) and the underlying point-in-polygon test live in `motion.go` and are shared by every detector in this package (`bestCandidate` here, `crowdMatch` in `crowd.go`, `lprMatch` in `lpr.go`, `faceMatch` in `face.go`, `lineMatches` in `line_crossing.go`).
 - Default class mappings cover `fire`, `smoke`, `person`, `vehicle`, `animal`, `crowd`, `intrusion`, `line_crossing`, `multi_line_crossing`, `lpr` (mapped to the `"license plate"` label by default), and `face` (mapped to the `"face"` label by default).
 - `vehicle` maps common model labels such as `car`, `truck`, `bus`, `motorcycle`, and `bicycle`.
