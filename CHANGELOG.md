@@ -101,6 +101,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-23 — myidsan 1.45.0, mymatasan 1.131.0, myseliasan 1.72.0, core 1.97.0 (124597f)
+
+### Added
+
+- **core,mymatasan,myseliasan,myidsan**: Notifications can now be delivered by email. Alerts, health events and system notices could already be sent to a webhook, a Telegram chat or an MQTT broker; each of those needs something an organisation has to set up and keep running, while a mailbox is something every organisation already operates, audits and retains. Email is now a delivery destination alongside the others, with its own recipient list, its own subject prefix so a reader covering several sites can tell them apart, its own severity floor, and the same choice about whether the alert image is attached or merely referenced. The mail server itself is configured once for the whole installation rather than once per recipient list, so there is a single place that decides whether this installation talks to a mail server at all, and a single password to change when it changes. Separately, and more consequentially, the fleet control plane could not send anything anywhere at all. It recorded every event, wrote it to its log and pushed it to any browser that happened to be open, and stopped there — so an operator responsible for fifty sites only learned that one had gone dark if they were looking at the screen when it happened, which is rarely the case at three in the morning. The control plane now delivers outbound like the appliances do, by email and also through the webhook and Telegram settings that had been present in its configuration file all along without ever being used. It also gains a button that sends a real test message through the configured mail server, so the mail path can be proved to work before an incident depends on it, rather than after.
 ## 2026-08-23 — myiotsan 0.29.0, mymatasan 1.130.0, myseliasan 1.71.0, core 1.96.0 (3c67396)
 
 ### Added
