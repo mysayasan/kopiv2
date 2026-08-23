@@ -102,6 +102,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-23 — mymatasan 1.132.0 (e5493d5)
+
+### Added
+
+- **mymatasan**: Added a Timeline playback screen (Workspace nav, beside Live Views) that plays recorded footage by the clock instead of by file: a scrub bar shaded from the same merged footage spans the coverage strip reports, seeking across segment boundaries automatically, up to 8 cameras synchronised against one moment, playback speed 0.25x-8x, and detection events plotted as clickable jump marks. Backed by two new endpoints, GET /api/recording/timeline (segment index + coverage over a window) and GET /api/recording/timeline/seek (resolve one wall-clock moment to a playable segment + offset per camera, snapping forward and reporting the gap when the moment isn't covered), both capped at 8 cameras and a 31-day window per request and refusing rather than truncating a camera with too many segments in range. The coverage-span merge was factored out of the existing coverage service so the bar, the coverage percentages, and the continuity monitor can never disagree, and the covering-segment resolver object search already used for sighting playback was lifted to a shared function so Timeline seek and Object Search agree on which file covers a given moment.
 ## 2026-08-23 — myidsan 1.45.0, mymatasan 1.131.0, myseliasan 1.72.0, core 1.97.0 (124597f)
 
 ### Added
