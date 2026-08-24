@@ -74,6 +74,11 @@ type profileXML struct {
 	Token                     string                       `xml:"token,attr"`
 	Name                      string                       `xml:"Name"`
 	VideoEncoderConfiguration videoEncoderConfigurationXML `xml:"VideoEncoderConfiguration"`
+	VideoSourceConfiguration  videoSourceConfigurationXML  `xml:"VideoSourceConfiguration"`
+}
+
+type videoSourceConfigurationXML struct {
+	Token string `xml:"token,attr"`
 }
 
 type videoEncoderConfigurationXML struct {
@@ -93,6 +98,13 @@ type MediaProfile struct {
 	Encoding string `json:"encoding"`
 	Width    int    `json:"width"`
 	Height   int    `json:"height"`
+	// VideoSourceToken is the VideoSourceConfiguration this profile draws from, which is
+	// what a privacy mask attaches to (W3-6).
+	//
+	// It matters most on a MULTI-SENSOR camera: masking the wrong configuration masks a
+	// lens nobody was worried about and leaves the one they were worried about clear, and
+	// both look like success from here.
+	VideoSourceToken string `json:"videoSourceToken"`
 }
 
 // User is a local ONVIF camera account (Device Management GetUsers).
@@ -519,6 +531,8 @@ func ParseProfiles(data []byte) ([]MediaProfile, error) {
 			Encoding: strings.TrimSpace(profile.VideoEncoderConfiguration.Encoding),
 			Width:    profile.VideoEncoderConfiguration.Resolution.Width,
 			Height:   profile.VideoEncoderConfiguration.Resolution.Height,
+
+			VideoSourceToken: strings.TrimSpace(profile.VideoSourceConfiguration.Token),
 		})
 	}
 	return profiles, nil

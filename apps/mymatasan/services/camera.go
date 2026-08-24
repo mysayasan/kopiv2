@@ -75,6 +75,12 @@ type onvifClient interface {
 	PullMessages(ctx context.Context, req onvif.PullRequest) ([]onvif.Event, *onvif.EventSubscription, error)
 	RenewSubscription(ctx context.Context, req onvif.PullRequest, leaseSeconds int) (*onvif.EventSubscription, error)
 	Unsubscribe(ctx context.Context, req onvif.PullRequest) error
+	GetMaskOptions(ctx context.Context, req onvif.MaskRequest) (*onvif.MaskOptions, error)
+	GetMasks(ctx context.Context, req onvif.MaskRequest) ([]onvif.Mask, error)
+	CreateMask(ctx context.Context, req onvif.MaskRequest) (string, error)
+	SetMask(ctx context.Context, req onvif.MaskRequest) error
+	DeleteMask(ctx context.Context, req onvif.MaskRequest) error
+	GetProfileDetails(ctx context.Context, req onvif.StreamURIRequest) ([]onvif.MediaProfile, error)
 }
 
 // CameraCleanupFunc releases one subsystem's resources for a camera that is being

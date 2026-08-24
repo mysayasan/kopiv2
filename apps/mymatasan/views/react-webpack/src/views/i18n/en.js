@@ -2053,4 +2053,38 @@ export default {
   'st.eventsIncludeMotionHint': 'Usually leave this off. This recorder already runs its own detection over the same picture, with rules, zones and schedules the camera knows nothing about - and a second, unfiltered stream of movement alerts buries the first. Door contacts and outputs are unaffected: they are always reported.',
   'st.eventsSaved': 'Camera event settings saved',
   'st.eventsSaveFailed': 'Could not save the camera event settings',
+
+  // Privacy zones and export redaction (W3-6)
+  'cam.detailPrivacy': 'Privacy',
+  'privacy.title': 'Areas this camera must not show',
+  'privacy.intro': 'Draw the parts of the picture nobody should see: a window next door, the pavement, a keypad. Where the camera can do it, these areas are never recorded at all. Everywhere else, they are blacked out of any footage you export.',
+  'privacy.recheck': 'Re-check the camera',
+  'privacy.rechecked': 'Checked what the camera is actually masking',
+  'privacy.none': 'Nothing is hidden on this camera yet.',
+  'privacy.add': 'Hide an area',
+  'privacy.name': 'What is this area?',
+  'privacy.style': 'How to hide it',
+  'privacy.style.color': 'Solid block',
+  'privacy.style.blurred': 'Blurred',
+  'privacy.style.pixelated': 'Pixelated',
+  'privacy.styleHint': 'This is how the CAMERA hides the area, and only some cameras offer a choice. Exported footage is always blacked out solidly, because a blur invites the argument that something could be recovered from it.',
+  'privacy.active': 'Hidden',
+  'privacy.switchedOff': 'Not hidden',
+  'privacy.onCamera': 'the camera is hiding it',
+  'privacy.exportOnly': 'only hidden in exports',
+  'privacy.turnOn': 'Hide it',
+  'privacy.turnOff': 'Stop hiding it',
+  'privacy.saved': 'Saved {name}',
+  'privacy.removed': 'Removed {name}',
+  'ev.redact': 'Hide the private areas in this copy',
+  'ev.redactHint': 'Blacks out the privacy areas of this camera in the exported video. The copy is re-encoded to do it, so it is marked as a redacted copy and will not match the original checksums held by the recorder - which is stated inside the bundle.',
+  'ev.redactedBundle': 'Redacted copy',
+
+  // The privacy status sentence, composed on the CLIENT (W3-6) - the server's
+  // `detail` is English and is for the API and the log, not for this screen.
+  'privacy.status.ready': 'This camera can hide areas itself. Nothing is hidden yet.',
+  'privacy.status.confirmed': 'The camera is hiding these areas itself, so they are not recorded at all.',
+  'privacy.status.unconfirmed': 'The camera accepted these areas but did not confirm them ({zones}), so treat the recording as containing them. Exported footage is still blacked out.',
+  'privacy.status.unsupported': 'This camera cannot hide anything itself, so the recording will contain these areas. Exported footage is still blacked out.',
+  'privacy.status.unreachable': 'The camera could not be reached, so whether it is hiding anything is unknown. Exported footage is still blacked out.',
 };

@@ -2035,4 +2035,38 @@ export default {
   'st.eventsIncludeMotionHint': 'Biasanya biarkan dimatikan. Perakam ini sudah menjalankan pengesanannya sendiri ke atas gambar yang sama, dengan peraturan, zon dan jadual yang kamera tidak tahu - dan aliran kedua yang tidak ditapis akan menenggelamkan yang pertama. Sesentuh pintu dan output tidak terjejas: ia sentiasa dilaporkan.',
   'st.eventsSaved': 'Tetapan peristiwa kamera disimpan',
   'st.eventsSaveFailed': 'Tidak dapat menyimpan tetapan peristiwa kamera',
+
+  // Privacy zones and export redaction (W3-6)
+  'cam.detailPrivacy': 'Privasi',
+  'privacy.title': 'Kawasan yang tidak boleh ditunjukkan kamera ini',
+  'privacy.intro': 'Lukis bahagian gambar yang tidak sepatutnya dilihat sesiapa - tingkap jiran, laluan pejalan kaki, papan kekunci. Jika kamera mampu, kawasan ini tidak dirakam langsung. Selain itu, ia dihitamkan daripada mana-mana rakaman yang anda eksport.',
+  'privacy.recheck': 'Semak semula kamera',
+  'privacy.rechecked': 'Telah disemak apa yang benar-benar ditutup oleh kamera',
+  'privacy.none': 'Tiada apa-apa yang disembunyikan pada kamera ini lagi.',
+  'privacy.add': 'Sembunyikan satu kawasan',
+  'privacy.name': 'Apakah kawasan ini?',
+  'privacy.style': 'Cara menyembunyikannya',
+  'privacy.style.color': 'Blok pejal',
+  'privacy.style.blurred': 'Kabur',
+  'privacy.style.pixelated': 'Piksel kasar',
+  'privacy.styleHint': 'Ini ialah cara KAMERA menyembunyikan kawasan itu, dan hanya sesetengah kamera menawarkan pilihan. Rakaman yang dieksport sentiasa dihitamkan sepenuhnya, kerana kabur mengundang hujah bahawa sesuatu boleh dipulihkan daripadanya.',
+  'privacy.active': 'Disembunyikan',
+  'privacy.switchedOff': 'Tidak disembunyikan',
+  'privacy.onCamera': 'kamera sedang menyembunyikannya',
+  'privacy.exportOnly': 'hanya disembunyikan dalam eksport',
+  'privacy.turnOn': 'Sembunyikan',
+  'privacy.turnOff': 'Berhenti menyembunyikan',
+  'privacy.saved': '{name} disimpan',
+  'privacy.removed': '{name} dibuang',
+  'ev.redact': 'Sembunyikan kawasan peribadi dalam salinan ini',
+  'ev.redactHint': 'Menghitamkan kawasan privasi kamera ini dalam video yang dieksport. Salinan itu dikodkan semula untuk berbuat demikian, jadi ia ditandai sebagai salinan yang disunting dan tidak akan sepadan dengan checksum asal perakam - perkara ini dinyatakan di dalam bundel.',
+  'ev.redactedBundle': 'Salinan disunting',
+
+  // The privacy status sentence, composed on the CLIENT (W3-6) - the server's
+  // `detail` is English and is for the API and the log, not for this screen.
+  'privacy.status.ready': 'Kamera ini boleh menyembunyikan kawasan dengan sendirinya. Tiada apa-apa disembunyikan lagi.',
+  'privacy.status.confirmed': 'Kamera menyembunyikan kawasan ini dengan sendirinya, jadi ia tidak dirakam langsung.',
+  'privacy.status.unconfirmed': 'Kamera menerima kawasan ini tetapi tidak mengesahkannya ({zones}), jadi anggap rakaman itu mengandunginya. Rakaman yang dieksport masih dihitamkan.',
+  'privacy.status.unsupported': 'Kamera ini tidak boleh menyembunyikan apa-apa dengan sendirinya, jadi rakaman akan mengandungi kawasan ini. Rakaman yang dieksport masih dihitamkan.',
+  'privacy.status.unreachable': 'Kamera tidak dapat dihubungi, jadi sama ada ia menyembunyikan apa-apa tidak diketahui. Rakaman yang dieksport masih dihitamkan.',
 };

@@ -354,6 +354,20 @@ func (f *fakeResolveStreamClient) RenewSubscription(context.Context, onvif.PullR
 	return nil, nil
 }
 func (f *fakeResolveStreamClient) Unsubscribe(context.Context, onvif.PullRequest) error { return nil }
+func (f *fakeResolveStreamClient) GetMaskOptions(context.Context, onvif.MaskRequest) (*onvif.MaskOptions, error) {
+	return &onvif.MaskOptions{}, nil
+}
+func (f *fakeResolveStreamClient) GetMasks(context.Context, onvif.MaskRequest) ([]onvif.Mask, error) {
+	return nil, nil
+}
+func (f *fakeResolveStreamClient) CreateMask(context.Context, onvif.MaskRequest) (string, error) {
+	return "", nil
+}
+func (f *fakeResolveStreamClient) SetMask(context.Context, onvif.MaskRequest) error    { return nil }
+func (f *fakeResolveStreamClient) DeleteMask(context.Context, onvif.MaskRequest) error { return nil }
+func (f *fakeResolveStreamClient) GetProfileDetails(context.Context, onvif.StreamURIRequest) ([]onvif.MediaProfile, error) {
+	return nil, nil
+}
 func (f *fakeResolveStreamClient) SetHome(context.Context, onvif.PTZPresetRequest) error  { return nil }
 func (f *fakeResolveStreamClient) PTZGetStatus(context.Context, onvif.PTZPresetRequest) (*onvif.PTZStatus, error) {
 	return nil, nil

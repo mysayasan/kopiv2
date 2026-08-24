@@ -54,6 +54,10 @@ func registerRoutes(api *mux.Router, w *wiring) *mux.Router {
 	// room operator who may point a camera is not automatically somebody who may open a
 	// gate, and separate paths are what makes the two grantable apart.
 	apis.NewRelayApi(cameraGroup, w.relays)
+	// Privacy zones (W3-6): what must never be seen. Camera administration rather than an
+	// operator capability — deciding what is not recorded is a policy decision about the
+	// site, not something done during a shift.
+	apis.NewPrivacyApi(cameraGroup, w.privacy, w.audit)
 	apis.NewVisionApi(protected, w.vision, w.detectionClass, w.recorder, w.notification, w.camera, w.settings, w.notificationSettings, w.atrestCipher, w.sightingSearch, w.ptz, w.relays)
 	apis.NewTrainingApi(protected, w.training)
 	apis.NewTeachApi(protected, w.teach)

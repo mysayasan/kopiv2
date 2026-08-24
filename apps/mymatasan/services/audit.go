@@ -105,6 +105,14 @@ const (
 	// siren off at 04:12, and did the camera actually do it" has to be answerable.
 	ActionRelayFire = "relay.fire"
 
+	// Privacy zones (W3-6). A privacy zone is a promise to somebody who is not in the room
+	// — the neighbour, the person at the counter — and changing, disabling or removing one
+	// silently is how that promise stops being kept without anybody noticing. Recorded
+	// whether or not the CAMERA was able to enforce it, because the intent is the thing
+	// being audited.
+	ActionPrivacyZoneChange = "privacy.zone_change"
+	ActionPrivacyZoneDelete = "privacy.zone_delete"
+
 	// Cameras. A credential change is recorded; the credential itself never is.
 	ActionCameraCreate           = "camera.create"
 	ActionCameraUpdate           = "camera.update"

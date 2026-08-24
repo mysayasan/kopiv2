@@ -36,7 +36,8 @@ lands the work.
 | W3-4 | Loitering / left-behind / directional rules | F-15 | `feat/dwell-rules` | ✅ shipped, benched 2026-08-24 (23/23 API + 14/14 en and 15/15 ar screen passes; evaluators unit-tested and mutation-checked — the harness has no people to film) |
 | W3-5a | PTZ presets, home, guard tours + alarm recall | F-13 | `feat/ptz-presets` | ✅ shipped, benched 2026-08-24 (60/60 against a real ONVIF device + 26/26 en and 26/26 ar screen passes; found a patrol that moved the camera after being stopped, a tour that outlived its deleted camera, and a control that landed outside its tile in Arabic) |
 | W3-5b | ONVIF events (PullPoint), digital inputs & relay outputs | F-14 | `feat/onvif-events` | ✅ shipped, benched 2026-08-24 (34/34 against a real ONVIF device + 16/16 en and 16/16 ar screen passes; found an alert-log write that silently never happened, and a control that could not be clicked at all) |
-| W3-6 | Privacy masking + export redaction | F-19 | — | ☐ not started |
+| W3-6 | Privacy zones: camera masks + export redaction | F-19 | `feat/privacy-masking` | ✅ shipped, benched 2026-08-24 (51/51 against a real ONVIF device, including a camera that LIES about what it stored, + 22/22 en and 25/25 ar screen passes; found a redact flag the API silently dropped and a status sentence hard-coded in English) |
+| W3-6b | Face blur on export | F-19 | — | ☐ not started (the redacting export pipeline now exists) |
 | W3-7 | N+1 node failover | F-23 | — | ☐ not started |
 | W3-8 | Tenant isolation | F-24 | — | ✅ CLOSED 2026-08-21 — single-org per install, will not build |
 | W3-9 | Mobile PWA + web push | F-20b | — | ☐ not started |
@@ -1447,9 +1448,74 @@ An input cannot be bookmarked into a case file, because case evidence points at 
 No real relay hardware; the simulator implements the calls the product makes and the faults a
 device returns.
 
-**W3-6 · Privacy masking + redaction** (F-19). Static pre-record masks, face blur on
-export, redaction workflow. **Promote into Phase 2 if any EU deployment comes into view**
-— static masking is a deployment precondition there, not a feature.
+**W3-6 · Privacy zones** (F-19) — SHIPPED and benched on `feat/privacy-masking`.
+`infra/onvif/mask.go` + `services/privacy.go`, and redaction in `services/evidence_export.go`.
+
+**THE EU PROMOTION RULE IS SPENT: asked and answered 2026-08-24 — NOT shipping to the EU.**
+So this was built as an ordinary feature rather than a compliance control. Do not raise it
+again unless the market changes.
+
+**ONE DRAWN REGION, TWO MECHANISMS, AND THE WHOLE DESIGN IS NOT CONFUSING THEM.** The CAMERA
+burning it in means the pixels never leave the sensor — not on disk, not in an export,
+nothing on a stolen drive. The EXPORT redacting it means the pixels are recorded and do not
+leave the building. **A mask that is not burned in by the camera is a courtesy, not a privacy
+control**, and which one an operator has is a fact about their hardware. So the product
+reports it per camera, in those words, rather than implying the stronger claim.
+
+**MASKING IN OUR RECORDING PIPELINE WAS REJECTED AND THE REASON IS WRITTEN DOWN.** It would
+give the strong guarantee on every camera and cost the product its architecture: recording is
+`-c copy`, so masking mid-stream means decoding, filtering and re-encoding every camera
+continuously — an order of magnitude on the capacity story for something most cameras do for
+free. **Masking only in the VIEWER is the trap**, not an option: it looks identical to the
+operator and protects nothing.
+
+**READ IT BACK — a camera can accept a mask with HTTP 200 and store something else.** A
+different coordinate space, a bounding rectangle, or nothing at all. `encoder.go` already
+carried this scar for H.265 ("many cameras accept a Media1 set with HTTP 200 but silently
+keep H.264"). Every write is read back and compared; anything that does not round-trip is
+reported as UNCONFIRMED and treated as not masked. **A privacy mask believed to be applied
+and not applied is worse than none, because somebody relies on it.**
+
+**REDACTION AND THE EXPORT'S INTEGRITY PROMISE ARE IN DIRECT TENSION, and the answer is to
+say so.** `evidence_export.go` states in its own comments that an export must not re-encode,
+"because re-encoding changes every pixel and hands the other side an obvious argument that
+the footage was processed" — and redacting IS re-encoding. So a redacted bundle DECLARES
+ITSELF A DERIVATIVE: in its filename, in the manifest, and first in VERIFY.txt, while still
+carrying the SOURCE digests so the derivation is traceable to footage that stays on the
+recorder. Solid black rather than blur: a blur invites the argument that something could be
+recovered, and on a low-detail region it sometimes can be.
+
+**WHAT THE BENCH FOUND:**
+
+1. **A redact flag the API silently dropped.** The handler builds the service request field
+   by field rather than passing the decoded body, so `redact` existed on the screen, existed
+   in the service, and never crossed the middle. The export came out unredacted with a
+   manifest that correctly said so. **The bench caught it because it asserted the MANIFEST,
+   not that the export succeeded** — the check that would have passed is the obvious one.
+2. **THE ARABIC SCREEN PASS: the status sentence was hard-coded English.** The single most
+   important line on the page — the one that distinguishes "never recorded" from "only the
+   exports are protected" — printed in English in an Arabic UI. **Identical in shape to the
+   defect W3-4 shipped with its rule-schedule summaries.** The server now returns a state
+   plus the zone names and the SCREEN composes the sentence; the screen check asserts, in
+   any non-English run, that the banner is not the API's English text.
+3. **A camera with no ONVIF at all was reported as "could not be reached"**, which sends
+   somebody to check a network for a fact about the camera. Now "this camera cannot mask
+   anything itself".
+4. **My own first pixel check passed on UNREDACTED footage.** It guessed "is it black" from
+   a cropped PNG's file size, and the part of the test pattern it cropped is a flat colour
+   band that compresses to almost nothing — so it was the one green tick on a run whose
+   manifest correctly said nothing had been redacted. Now MEASURED with `signalstats`, two
+   regions: inside the zone must be black AND outside it must not. **A single measurement
+   passes just as happily on a video that is black everywhere.**
+
+**Bench-scene lesson worth keeping: BLACK IS 16, NOT 0.** H.264 here is limited ("TV") range,
+where luma runs 16–235. A "near zero" threshold fails on a perfectly black rectangle and
+reads as a broken redaction.
+
+**Not claimed:** no face blur on export (W3-6b — the pipeline it needs now exists, but
+per-frame detection is a different order of cost and a separate failure mode). No real
+camera: `onvifsim.py` implements the calls the product makes and can be told to lie, but it
+is not any vendor's firmware.
 
 **W3-7 · N+1 node failover** (F-23). Driven from the control plane, which already knows
 which nodes are alive and which cameras they own. `apis/deployment.go` is right that
