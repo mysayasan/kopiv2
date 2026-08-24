@@ -7661,3 +7661,8 @@ input.input-error:focus,
   gap: 8px;
   margin-block-start: 12px;
 }
+
+.case-item-partial {
+  font-size: 11px;
+  color: var(--text-muted);
+}

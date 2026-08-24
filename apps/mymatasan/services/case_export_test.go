@@ -140,6 +140,21 @@ func TestACaseBundleShipsWhatItHasAndSaysWhatIsMissing(t *testing.T) {
 	if written.Evidence.Gaps == nil {
 		t.Fatal("a clip's gap list must never be omitted")
 	}
+	// WHAT THE FILE HOLDS, not what was asked for. The clip is the whole 900-second
+	// segment; the bookmark is 700 seconds starting 100 seconds in. A manifest that
+	// described only the bookmark left a recipient counting wall-clock times from the
+	// wrong first frame - the defect the W3-3a bench found by ffprobing the bundle.
+	out := written.Evidence.Output
+	if out.StartsAt != now-900 || out.EndsAt != now {
+		t.Fatalf("the manifest must say when the video starts and ends: %+v", out)
+	}
+	if out.MediaSeconds != 900 {
+		t.Fatalf("the manifest must say how many seconds of video the file holds, got %d", out.MediaSeconds)
+	}
+	if out.RequestedOffsetSeconds != 100 {
+		t.Fatalf("the manifest must say how far into the file the bookmark begins, got %d",
+			out.RequestedOffsetSeconds)
+	}
 
 	files := readBundle(t, job.BundlePath)
 	if _, ok := files[written.File]; !ok {
@@ -156,6 +171,12 @@ func TestACaseBundleShipsWhatItHasAndSaysWhatIsMissing(t *testing.T) {
 	note := string(files["VERIFY.txt"])
 	if !strings.Contains(note, "INCOMPLETE") {
 		t.Fatalf("VERIFY.txt must say the bundle is incomplete:\n%s", note)
+	}
+	// The person reading VERIFY.txt is the one handing the bundle over, and the offset
+	// between a clip's first frame and the moment that was bookmarked has to be in there
+	// in words, not only as a number in the JSON.
+	if !strings.Contains(note, "the bookmark begins 100s in") {
+		t.Fatalf("VERIFY.txt must state where the bookmark begins inside the clip:\n%s", note)
 	}
 	custody := string(files["chain-of-custody.csv"])
 	if !strings.Contains(custody, "case.create") || !strings.Contains(custody, "opened case 12") {

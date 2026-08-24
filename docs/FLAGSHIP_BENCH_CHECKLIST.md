@@ -820,6 +820,100 @@ metadata and reports the count.
 - The node's sqlite lives at `.artifacts/fleetbench/<node>/mymatasan.db`, not under a
   `data/` subdirectory.
 
+## W3-3a · Case files  ⟨ DONE (2026-08-24), 48/48 + 31/31 en and 32/32 ar screen passes
+
+```
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o .artifacts/fleetbench/bin/mymatasan ./cmd/mymatasan
+KOPIV2_NODE_IMAGE=debian-ffmpeg:bench python tools/fleetbench/fleet_harness.py
+KOPIV2_NODE_IMAGE=debian-ffmpeg:bench python tools/fleetbench/bench_w33_cases.py
+node   tools/fleetbench/uicheck_cases.js .artifacts/fleetbench en
+node   tools/fleetbench/uicheck_cases.js .artifacts/fleetbench ar
+```
+
+Runs about nine minutes: it records real footage on two cameras for five, moves it three
+days into the past, and then drives every path that deletes footage at it.
+
+**SEED THE PAST, AND SEED BOTH SIDES OF THE COMPARISON.** Retention scores a cutoff, so the
+bench moves `recording_segment` AND `case_item` back by three days with the app stopped
+rather than waiting a day. Moving only the footage would slide it out from under the
+evidence pointing at it and the hold would then correctly protect nothing — a bench
+measuring its own scene. The shipped one-day threshold is untouched: compressing a threshold
+benches software that does not ship.
+
+**Order matters: open the case BEFORE backdating.** The node runs a retention purge shortly
+after boot, so a backdate-then-restart with no case open deletes every segment before the
+bench can point at one. For the same reason the retention assertions are on the STATE
+afterwards, not on a delete count.
+
+### What it found
+
+**1. THE BUNDLE'S MEDIA WAS LONGER THAN THE BUNDLE SAID.** An eighteen-second bookmark
+exported as sixty seconds of video: an export is whole stored segments joined, and the
+manifest described only the REQUEST (`requestedRange`, `coveredSeconds`). A recipient
+counting wall-clock times from the first frame — the only thing a recipient can do — was
+out by the difference. This is in the SHIPPED single-clip export too (W1-4), whose bench
+never ffprobed the media. The manifest now carries `output.startsAt` / `endsAt` /
+`mediaSeconds` / `requestedOffsetSeconds`, and `VERIFY.txt` says it in words. The footage is
+NOT cut to fit — a stream-copy cut lands on a keyframe rather than the requested instant and
+can break the leading GOP, and handing over less than was recorded is worse than handing over
+more and describing it exactly. **ffprobe the media. A manifest can claim anything.**
+
+**2. THE CHAIN OF CUSTODY ENDED ONE EVENT BEFORE THE ONE THAT MATTERS.** The custody list is
+read from the audit trail while the bundle is assembled, and the row for THIS export is
+written after — so the bundle never contained "who took a copy of this out of the system".
+The export is now appended to the list explicitly.
+
+**3. A CASE BUNDLE COULD BE COLLECTED THROUGH THE SINGLE-CLIP ROUTE.** `/api/evidence` and
+`/api/cases` are governed by different page grants, and the evidence download did not check
+which kind of job it had. A role with Recordings-use and no Cases grant could pull a whole
+investigation's footage. Both routes now refuse the other's jobs, and export ids gained a
+random suffix — they were `exp-<unix>-<counter>`, enumerable inside the six-hour retention
+window by anyone who could call the route at all.
+
+**4. THE SCREEN SAID "FOOTAGE GONE" ABOUT FOOTAGE IT WAS HOLDING.** Found by the browser
+pass, not the API bench. An item's play link and its missing-footage label were resolved
+from the START INSTANT while the hold and the export work on the SPAN, so a bookmark whose
+opening seconds predated the recording was labelled as having no footage — on a case that
+was correctly reporting it held four clips of it. It now snaps FORWARD to the first footage
+inside the span (the same thing the timeline's seek does with a gap) and says when the
+recording actually starts. **Same shape as W2-4's "Recording…" label: a fact computed at one
+resolution and rendered as an answer to a different question.**
+
+### What it proves
+
+Retention, "Purge now" and the disk-pressure sweeper all keep held footage — **row AND
+file**, checked with `docker exec test -f`, because a hold that keeps the row and loses the
+mp4 leaves the case listing evidence that cannot be played. Unheld expired footage still
+goes, so "held" is distinguishable from "broken". Closing releases it and the next sweep
+takes it. The bundle's clips match their manifest digests and their claimed length. An
+operator can open, work, export and download a case and cannot delete one; a viewer sees
+none of it.
+
+**It also re-checks the defect W3-3a fixed in passing**: an operator starting a single-clip
+evidence export, polling it, and downloading the file. `/api/evidence` was granted POST only,
+so the rung the role model calls "may export footage" conferred the right to begin an export
+and nothing else. W1-4's bench ran as an administrator and never met it.
+
+### Not claimed
+
+**The recorder's own hourly FILE sweep** (`infra/recording` `purgeOldFiles`) honours the hold
+through a predicate on `RecorderConfig`, and this bench does not drive it: the ticker is one
+hour and compressing it would bench software that does not ship. Unit-tested
+(`TestTheRecorderPredicateAnswersTheSameAsThePurge`) and mutation-checked instead. The
+DB-side purge is the primary defence and IS driven here, file and all.
+
+### The traps this one added
+
+- **The disk guard reads the HOST volume.** `.artifacts/` sat on a drive at 95%, so the node
+  paused recording fleet-wide within a minute of boot and the bench "measured" a recorder
+  that was working perfectly. Nothing in the failure mentions disk — it looks exactly like
+  ffmpeg not running. `KOPIV2_BENCH_DIR` onto a roomy drive, and remember `bin/` moves with
+  it.
+- **`result_of` re-wraps a bare array**, and `/api/settings/roles` answers with one — read as
+  a dict of named lists it silently found no roles at all. Second sighting; see W3-2.
+- A hold-honouring purge reports `keptHeld` and a reason. Asserting only on `deleted` would
+  pass on a purge that kept everything.
+
 ### And the one that was not caught here at all
 
 **W3-1 shipped with the whole `:root` design-token block deleted from `app.css`** — an

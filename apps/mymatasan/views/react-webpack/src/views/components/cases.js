@@ -384,6 +384,13 @@ function CaseItemRow({ item, authHeader, editable, onPlay, onNote, onRemove }) {
               <Ico n="warning" sz={14} /> {t('cases.missing')}
             </span>
           ) : null}
+          {/* Partly recorded is neither "here" nor "gone", and saying nothing would let an
+              operator believe the clip begins where they marked it. */}
+          {!item.footageMissing && item.footageStartsAt ? (
+            <span className="case-item-partial">
+              {t('cases.footageFrom', { time: formatTimestamp(item.footageStartsAt) })}
+            </span>
+          ) : null}
         </div>
         {editing ? (
           <div className="case-item-edit">

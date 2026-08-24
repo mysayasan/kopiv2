@@ -189,7 +189,10 @@ class Node:
         return requests.post(self.base + path, auth=self.auth, json=body or {}, verify=False, timeout=20)
 
     def get(self, path):
-        return requests.get(self.base + path, auth=self.auth, verify=False, timeout=20)
+        return requests.get(self.base + path, auth=self.auth, verify=False, timeout=60)
+
+    def delete(self, path):
+        return requests.delete(self.base + path, auth=self.auth, verify=False, timeout=20)
 
 
 class CP:

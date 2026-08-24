@@ -1899,4 +1899,5 @@ export default {
   'cases.exportMissing': '有 {n} 项证据没有可导出的录像，已在打包文件中标注为缺失。',
   'cases.exportDownload': '下载打包文件',
   'cases.exportDownloading': '正在下载案件打包文件...',
+  'cases.footageFrom': '录像从 {time} 开始',
 };

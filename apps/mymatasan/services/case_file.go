@@ -73,9 +73,20 @@ type CaseItemView struct {
 	// pickCovering), so a clip opened from a case is the clip opened from anywhere else.
 	SegmentId int64 `json:"segmentId"`
 	Seek      int64 `json:"seek"`
+	// FootageStartsAt is when this item's footage actually begins, set only when that is
+	// LATER than the item itself — a bookmark taken across the moment a camera came back,
+	// say. The screen says so; the alternative is a clip that silently starts thirty
+	// seconds after the moment somebody marked.
+	FootageStartsAt int64 `json:"footageStartsAt,omitempty"`
 	// FootageMissing marks evidence whose video is no longer on the appliance. It is a
 	// fact the case screen MUST show: an item that silently renders as un-playable reads
 	// as a broken player, when what it actually means is that the evidence is gone.
+	//
+	// It means NOTHING IN THE WHOLE SPAN has footage, not "the first instant has none".
+	// Those are different facts, and the first version of this screen reported the second
+	// one as the first: a sixty-second bookmark whose opening seconds predated the
+	// recording was labelled "Footage gone" and refused to play, while the same case
+	// correctly reported that it was holding four clips of it. Found by the screen pass.
 	FootageMissing bool `json:"footageMissing"`
 }
 
@@ -281,10 +292,26 @@ func (s *caseService) Get(ctx context.Context, id int64) (*CaseDetail, error) {
 			}
 			views[i].SegmentId = refs[i].SegmentId
 			views[i].Seek = refs[i].Seek
-			// Only footage-bearing items can be missing footage. A note has none to miss,
-			// and saying "footage missing" about a note is a false alarm on a screen whose
-			// whole job is to be trusted about what evidence still exists.
-			views[i].FootageMissing = views[i].CaseItem.HoldsFootage() && refs[i].SegmentId == 0
+			if !views[i].CaseItem.HoldsFootage() {
+				// Only footage-bearing items can be missing footage. A note has none to
+				// miss, and saying "footage missing" about a note is a false alarm on a
+				// screen whose whole job is to be trusted about what evidence exists.
+				continue
+			}
+			if views[i].SegmentId == 0 {
+				// Nothing covers the exact moment, so snap FORWARD to the first footage
+				// inside the span — the same thing the timeline's seek does with a gap,
+				// and for the same reason: an operator asked to see this stretch, and
+				// "the first frame we have of it" is a better answer than nothing.
+				if seg := s.firstFootageIn(ctx, items[i]); seg != nil {
+					views[i].SegmentId = seg.Id
+					views[i].Seek = 0
+					if seg.StartedAt > items[i].StartedAt {
+						views[i].FootageStartsAt = seg.StartedAt
+					}
+				}
+			}
+			views[i].FootageMissing = views[i].SegmentId == 0
 		}
 	}
 
@@ -666,6 +693,19 @@ func pageOrCap(want uint64) uint64 {
 		return repoPageCap
 	}
 	return want
+}
+
+// firstFootageIn returns the earliest segment overlapping an item's span, or nil when the
+// span holds no footage at all.
+func (s *caseService) firstFootageIn(ctx context.Context, item *entities.CaseItem) *entities.RecordingSegment {
+	segs := s.segmentsOverlapping(ctx, item.CameraId, item.StartedAt, item.EndedAt)
+	var best *entities.RecordingSegment
+	for _, seg := range segs {
+		if best == nil || seg.StartedAt < best.StartedAt {
+			best = seg
+		}
+	}
+	return best
 }
 
 func (s *caseService) touch(ctx context.Context, row *entities.CaseFile) {

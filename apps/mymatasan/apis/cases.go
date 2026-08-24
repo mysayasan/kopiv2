@@ -427,6 +427,7 @@ func (a *caseApi) exportCase(w http.ResponseWriter, r *http.Request) {
 	}
 	actorId, actorName, _ := auditActor(r)
 	custody, note := a.custodyFor(r, id)
+	custody = withThisExport(custody, actorName, strings.TrimSpace(body.Reason), time.Now().UTC().Unix())
 	job, err := a.export.CreateCase(r.Context(), services.CaseExportRequest{
 		Case: detail.Case, Items: detail.Items,
 		Custody: custody, CustodyNote: note,
@@ -486,6 +487,23 @@ func (a *caseApi) custodyFor(r *http.Request, caseId int64) ([]services.CaseCust
 		return out, "This case has more recorded actions than one bundle carries; the 500 most recent are included."
 	}
 	return out, ""
+}
+
+// withThisExport appends the export being built to the custody list.
+//
+// It cannot come from the trail: the trail is read while the bundle is being assembled, and
+// the row for this export is written after. Leaving it out made the chain of custody end one
+// event before the event that matters most — who took a copy of this evidence out of the
+// system, and when. Found by the W3-3a bench, which read the CSV and did not find the export
+// in it.
+func withThisExport(custody []services.CaseCustodyEntry, actor, reason string, at int64) []services.CaseCustodyEntry {
+	return append(custody, services.CaseCustodyEntry{
+		At:      time.Unix(at, 0).UTC().Format(time.RFC3339),
+		Actor:   actor,
+		Action:  services.ActionRecordingExport,
+		Outcome: services.OutcomeSuccess,
+		Detail:  "exported this case bundle — " + reason,
+	})
 }
 
 func (a *caseApi) exportStatus(w http.ResponseWriter, r *http.Request) {

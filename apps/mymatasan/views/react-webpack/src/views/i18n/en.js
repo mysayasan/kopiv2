@@ -1917,4 +1917,5 @@ export default {
   'cases.exportMissing': '{n} piece(s) of evidence had no footage to export. They are listed in the bundle as missing.',
   'cases.exportDownload': 'Download bundle',
   'cases.exportDownloading': 'Downloading the case bundle...',
+  'cases.footageFrom': 'Recording starts {time}',
 };

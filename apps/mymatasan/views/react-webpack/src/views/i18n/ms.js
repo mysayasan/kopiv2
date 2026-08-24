@@ -1899,4 +1899,5 @@ export default {
   'cases.exportMissing': '{n} bukti tiada rakaman untuk dieksport. Ia disenaraikan sebagai hilang di dalam bungkusan.',
   'cases.exportDownload': 'Muat turun bungkusan',
   'cases.exportDownloading': 'Sedang memuat turun bungkusan kes...',
+  'cases.footageFrom': 'Rakaman bermula {time}',
 };

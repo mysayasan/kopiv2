@@ -1899,4 +1899,5 @@ export default {
   "cases.exportMissing": "{n} من الأدلة لم يكن لها تسجيل للتصدير. وهي مدرجة في الحزمة على أنها مفقودة.",
   "cases.exportDownload": "تنزيل الحزمة",
   "cases.exportDownloading": "جارٍ تنزيل حزمة القضية...",
+  "cases.footageFrom": "يبدأ التسجيل {time}",
 };

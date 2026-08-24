@@ -173,7 +173,9 @@ func (s *evidenceExportService) CreateCase(ctx context.Context, req CaseExportRe
 
 	s.mu.Lock()
 	s.seq++
-	id := fmt.Sprintf("case-%d-%d", time.Now().UTC().Unix(), s.seq)
+	// Unguessable for the same reason a single-clip id is: the job is looked up by id
+	// alone, and a case bundle is a whole investigation's footage.
+	id := fmt.Sprintf("case-%d-%d-%s", time.Now().UTC().Unix(), s.seq, exportNonce())
 	job := &ExportJob{
 		Id: id, Status: ExportPending, CaseId: req.Case.Id,
 		Reason: man.Reason, CreatedAt: time.Now().UTC().Unix(),
@@ -437,7 +439,28 @@ func caseVerifyNote(man *CaseManifest) string {
 	}
 	sb.WriteString("\n")
 
-	sb.WriteString("2. WHAT THE SOURCE DIGESTS MEAN\n\n")
+	sb.WriteString("2. WHAT EACH CLIP ACTUALLY COVERS\n\n")
+	sb.WriteString("   A clip is NOT cut to the moment that was bookmarked. It is the stored\n")
+	sb.WriteString("   recordings covering it, joined without re-encoding, so each clip begins\n")
+	sb.WriteString("   and ends on a recording boundary and is usually longer than the evidence\n")
+	sb.WriteString("   it was added for. Each clip's evidence.output says exactly what it\n")
+	sb.WriteString("   holds:\n\n")
+	for _, clip := range man.Clips {
+		if clip.File == "" || clip.Evidence == nil {
+			continue
+		}
+		sb.WriteString("     " + clip.File + "\n")
+		sb.WriteString("       bookmarked: " + utcStamp(clip.From) + "  to  " + utcStamp(clip.To) + "\n")
+		sb.WriteString("       the video:  " + utcStamp(clip.Evidence.Output.StartsAt) + "  to  " +
+			utcStamp(clip.Evidence.Output.EndsAt) +
+			fmt.Sprintf("   (%d seconds", clip.Evidence.Output.MediaSeconds))
+		if clip.Evidence.Output.RequestedOffsetSeconds > 0 {
+			sb.WriteString(fmt.Sprintf(", the bookmark begins %ds in",
+				clip.Evidence.Output.RequestedOffsetSeconds))
+		}
+		sb.WriteString(")\n")
+	}
+	sb.WriteString("\n3. WHAT THE SOURCE DIGESTS MEAN\n\n")
 	sb.WriteString("   Each clip's evidence.sources entries carry a hashOrigin:\n\n")
 	sb.WriteString("     \"recorded\"            the digest was taken when the segment was\n")
 	sb.WriteString("                           written. The footage has not been altered\n")
@@ -447,7 +470,7 @@ func caseVerifyNote(man *CaseManifest) string {
 	sb.WriteString("                           since THIS export.\n\n")
 
 	if man.Totals.ClipsMissing > 0 {
-		sb.WriteString("3. THIS BUNDLE IS INCOMPLETE\n\n")
+		sb.WriteString("4. THIS BUNDLE IS INCOMPLETE\n\n")
 		sb.WriteString(fmt.Sprintf("   %d of the %d pieces of evidence in this case could not be\n",
 			man.Totals.ClipsMissing, man.Totals.ClipsMissing+man.Totals.ClipsWritten))
 		sb.WriteString("   exported. They are listed in manifest.json with a \"missing\"\n")
@@ -461,17 +484,17 @@ func caseVerifyNote(man *CaseManifest) string {
 		}
 		sb.WriteString("\n")
 	} else {
-		sb.WriteString("3. COMPLETENESS\n\n")
+		sb.WriteString("4. COMPLETENESS\n\n")
 		sb.WriteString("   Every piece of footage in this case was exported.\n\n")
 	}
 
-	sb.WriteString("4. GAPS INSIDE A CLIP\n\n")
+	sb.WriteString("5. GAPS INSIDE A CLIP\n\n")
 	sb.WriteString("   A clip whose range has periods with no recording jumps across them.\n")
 	sb.WriteString("   Those periods are listed in that clip's evidence.gaps. A clip with an\n")
 	sb.WriteString("   empty gap list is continuous.\n\n")
 
 	if man.CustodyNote != "" {
-		sb.WriteString("5. CHAIN OF CUSTODY\n\n   " + man.CustodyNote + "\n\n")
+		sb.WriteString("6. CHAIN OF CUSTODY\n\n   " + man.CustodyNote + "\n\n")
 	}
 
 	sb.WriteString("All times are UTC.\n")

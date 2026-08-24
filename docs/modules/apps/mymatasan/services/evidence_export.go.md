@@ -42,3 +42,29 @@ the case's chain of custody — reusing `plan`/`materialize`/`concat` unchanged 
 implementation of "what footage covers this range". `ExportJob` gained `CaseId` and
 `CaseManifest`; which manifest is populated is what tells the two bundle kinds apart. See
 `apps/mymatasan/services/case_export.go.md`.
+
+## What the file contains, versus what was asked for (W3-3a)
+
+An export is whole stored segments joined without re-encoding, so a request for 14:05-14:40
+against fifteen-minute segments produces a file whose first frame is 14:00. The manifest used
+to describe only the REQUEST — `requestedRange`, `coveredSeconds`, `gaps` — and said nothing
+about the media, so a recipient counting wall-clock times from the start of the file (the only
+thing a recipient can do) was out by the difference. Found by ffprobing a bundle in the W3-3a
+bench: an eighteen-second clip that was sixty seconds of video.
+
+`Output` now carries `startsAt`, `endsAt`, `mediaSeconds` and `requestedOffsetSeconds`,
+computed in `plan()` from the sources, and `VERIFY.txt` states them in words.
+
+**The footage is not cut to fit, and that is the decision, not an omission.** A stream-copy
+cut lands on a keyframe rather than on the requested instant and can break the leading GOP;
+handing over less footage than was recorded is a worse answer for evidence than handing over
+more and describing it exactly.
+
+`mediaSeconds` is the SUM of the source spans, not `endsAt - startsAt`: gaps between sources
+are not in the file, and the file jumps across them. They are listed under `gaps`.
+
+## Export ids are unguessable (W3-3a)
+
+A job is looked up by id alone, so the id is the only thing between a caller holding some
+export grant and a bundle they did not create. `exp-<unix>-<counter>` was enumerable inside
+the six-hour retention window; ids now carry 8 random bytes (`exportNonce`).

@@ -67,3 +67,16 @@ is a request to export a week.
 - `apps/mymatasan/services/case_hold.go.md`
 - `apps/mymatasan/services/case_export.go.md`
 - `apps/mymatasan/apis/cases.go.md`
+
+## Resolving an item's footage over its SPAN (W3-3a bench)
+
+`Get` resolves each item through the shared `ResolveFootageFor` → `pickCovering`, which
+answers about one INSTANT. When nothing covers the item's start it now snaps FORWARD to the
+first segment overlapping the span (`firstFootageIn`) and reports `FootageStartsAt`, the same
+thing the timeline's seek does with a gap.
+
+`FootageMissing` therefore means **nothing in the whole span has footage**, not "the first
+instant has none". The first version reported the second as the first: a sixty-second bookmark
+whose opening seconds predated the recording was labelled "Footage gone" and refused to play,
+on a case that was simultaneously and correctly reporting that it held four clips of it. Found
+by the browser pass; the 48 API checks all passed through it.

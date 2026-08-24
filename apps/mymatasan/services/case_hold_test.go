@@ -404,6 +404,73 @@ func TestTheCaseSaysWhatItIsKeepingAlive(t *testing.T) {
 	}
 }
 
+// THE SCREEN DEFECT, pinned. A bookmark taken across the moment a camera came back has no
+// footage at its first instant and plenty inside it. Reporting that as "footage gone" told
+// an operator their evidence had been deleted while the same case was holding four clips of
+// it, and refused to offer the play link that would have shown otherwise.
+func TestEvidenceThatStartsBeforeTheFootageStillPlays(t *testing.T) {
+	f := newHoldFixture(t, 0, nil)
+	now := f.now
+	// Recording begins 30 seconds into the bookmarked minute.
+	f.segments.rows = []*entities.RecordingSegment{
+		{Id: 9, CameraId: 3, StartedAt: now - 570, EndedAt: now - 510, FileSize: 100},
+	}
+	f.cases.svc.footage = &noCoveringSegment{}
+	row := f.cases.openCase(t, "Loading bay")
+	if _, err := f.cases.svc.AddItem(context.Background(), row.Id, CaseItemInput{
+		CameraId: 3, StartedAt: now - 600, EndedAt: now - 540,
+	}); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	detail, err := f.cases.svc.Get(context.Background(), row.Id)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	item := detail.Items[0]
+	if item.FootageMissing {
+		t.Fatal("evidence with footage inside its span must not be reported as gone")
+	}
+	if item.SegmentId != 9 {
+		t.Fatalf("it must snap forward to the first footage in the span, got segment %d", item.SegmentId)
+	}
+	if item.FootageStartsAt != now-570 {
+		t.Fatalf("the screen must be told when the footage actually starts, got %d", item.FootageStartsAt)
+	}
+}
+
+// And the other half: a span with nothing in it at all IS missing, and must still say so.
+func TestEvidenceWithNoFootageAnywhereInItsSpanSaysSo(t *testing.T) {
+	f := newHoldFixture(t, 0, nil)
+	now := f.now
+	f.segments.rows = []*entities.RecordingSegment{
+		{Id: 9, CameraId: 3, StartedAt: now - 100, EndedAt: now, FileSize: 100},
+	}
+	f.cases.svc.footage = &noCoveringSegment{}
+	row := f.cases.openCase(t, "Loading bay")
+	if _, err := f.cases.svc.AddItem(context.Background(), row.Id, CaseItemInput{
+		CameraId: 3, StartedAt: now - 50_000, EndedAt: now - 49_000,
+	}); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	detail, err := f.cases.svc.Get(context.Background(), row.Id)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !detail.Items[0].FootageMissing {
+		t.Fatal("evidence with no footage anywhere in its span must be reported as gone")
+	}
+}
+
+// noCoveringSegment is the shared resolver answering "nothing covers that instant", which
+// is what it does for a moment before the recording started. The snap-forward is what has
+// to happen next.
+type noCoveringSegment struct{}
+
+func (noCoveringSegment) ResolveFootageFor(_ context.Context, points []FootagePoint) []FootageRef {
+	return make([]FootageRef, len(points))
+}
+
 // A camera that keeps footage forever has no retention cutoff, so nothing in its case is
 // "only alive because of the hold". Reporting otherwise would tell an operator that
 // closing the case destroys footage that closing the case does not touch.
