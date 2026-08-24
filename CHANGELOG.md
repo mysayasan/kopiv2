@@ -109,6 +109,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-24 — mymatasan 1.139.0, core 1.103.0 (70ca00d)
+
+### Added
+
+- **core,mymatasan**: You can now mark parts of a camera's view that must not be seen — the window next door, the pavement outside the gate, the keypad somebody types a PIN into. Draw the area on the picture, using the same editor the detection zones use, and it is protected two ways at once. Where the camera can do it, the recorder asks the camera to black the area out ITSELF, which means those pixels are never recorded at all: not on the disk, not in an export, and not on a drive somebody walks off with. And whatever the camera can do, you can now tick a box when exporting footage to have those areas blacked out of the copy you hand over. The two are genuinely different promises, so the screen tells you which one you have got, per camera, in plain words rather than leaving you to assume the stronger one. It also does not take the camera's word for it: cameras are known to accept a setting and quietly keep doing something else, so the recorder reads the masks back off the camera and compares them with what it asked for. If they do not match — a camera that stored a different shape, or nothing at all — the screen says the area is NOT confirmed as hidden and tells you to treat the recording as containing it, naming the area in question. A camera that cannot hide anything at all says so plainly instead of pretending.
 ## 2026-08-24 — mymatasan 1.138.0, core 1.102.0 (def29f4)
 
 ### Added
