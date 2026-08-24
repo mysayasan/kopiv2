@@ -20,6 +20,8 @@ type repos struct {
 	AlertEvent        dbsql.IGenericRepo[appentities.AlertEvent]
 	ObjectObservation dbsql.IGenericRepo[appentities.ObjectObservation]
 	ObjectAppearance  dbsql.IGenericRepo[appentities.ObjectAppearance]
+	CaseFile          dbsql.IGenericRepo[appentities.CaseFile]
+	CaseItem          dbsql.IGenericRepo[appentities.CaseItem]
 	RecordingConfig   dbsql.IGenericRepo[appentities.RecordingConfig]
 	RecordingSegment  dbsql.IGenericRepo[appentities.RecordingSegment]
 	TrainingDataset   dbsql.IGenericRepo[appentities.TrainingDataset]
@@ -46,6 +48,8 @@ func newRepos(db dbsql.IDbCrud) repos {
 		AlertEvent:        dbsql.NewGenericRepo[appentities.AlertEvent](db),
 		ObjectObservation: dbsql.NewGenericRepo[appentities.ObjectObservation](db),
 		ObjectAppearance:  dbsql.NewGenericRepo[appentities.ObjectAppearance](db),
+		CaseFile:          dbsql.NewGenericRepo[appentities.CaseFile](db),
+		CaseItem:          dbsql.NewGenericRepo[appentities.CaseItem](db),
 		RecordingConfig:   dbsql.NewGenericRepo[appentities.RecordingConfig](db),
 		RecordingSegment:  dbsql.NewGenericRepo[appentities.RecordingSegment](db),
 		TrainingDataset:   dbsql.NewGenericRepo[appentities.TrainingDataset](db),

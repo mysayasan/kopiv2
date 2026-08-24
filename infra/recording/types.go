@@ -78,6 +78,18 @@ type RecorderConfig struct {
 	// crypto-erased. nil = plaintext. The live .ts and the in-progress remux are
 	// briefly plaintext until the segment is finalized.
 	Cipher *atrest.Cipher
+	// RetentionHold, when set, is asked before the recorder's own retention sweep
+	// deletes an expired segment FILE, and keeps it when it answers true.
+	//
+	// It exists because that sweep walks the live directory and deletes by filename age,
+	// knowing nothing about the database. mymatasan's case files hold the footage an open
+	// investigation points at past its retention date; a hold enforced only where the
+	// database is would be undone by this loop within the hour, leaving segment rows
+	// pointing at files that no longer exist. The predicate is the app's, so infra keeps
+	// no idea what a case is — it only knows some footage is spoken for.
+	//
+	// It is asked with the segment's span; nil means nothing is held.
+	RetentionHold func(cameraId, startedAt, endedAt int64) bool
 	// Metrics (optional) records recorder telemetry — ffmpeg restarts and segment
 	// finalize outcomes. nil is fine; use recordMetric/observeMetric, which are nil-safe.
 	Metrics telemetry.Metrics

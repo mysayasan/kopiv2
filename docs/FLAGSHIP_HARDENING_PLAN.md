@@ -31,7 +31,8 @@ lands the work.
 | **Phase 3 — Win the bake-off** |
 | W3-1 | Timeline playback | F-12 | `feat/timeline-playback` | ✅ shipped, benched 2026-08-23 (29/29 on real recorded footage + 25/25 en and 26/26 ar screen passes; the screen pass found 4 defects the API bench could not) |
 | W3-2 | Appearance search across cameras/nodes | F-16 | `feat/appearance-search` | ✅ shipped, benched 2026-08-23 (11/11 on the real model, 34/34 on a real two-node fleet, 17/17 en and 18/18 ar screen passes) |
-| W3-3 | Cases + video wall | F-17, F-18 | — | ☐ not started |
+| W3-3a | Case files (bookmarks, annotation, assignment, closure, bundle export, footage hold) | F-17 | `feat/case-files` | ● built, not benched |
+| W3-3b | Video wall (named layouts, sequence cycling, alarm auto-pop) | F-18 | — | ☐ not started |
 | W3-4 | Loitering / left-behind / directional rules | F-15 | — | ☐ not started |
 | W3-5 | PTZ presets + ONVIF events & relay I/O | F-13, F-14 | — | ☐ not started |
 | W3-6 | Privacy masking + export redaction | F-19 | — | ☐ not started |
@@ -1134,10 +1135,38 @@ pixels, the unit tests cover the recorder's hand-off, and the join between them 
 exercised. Also not built: searching by an uploaded photograph, which is a different feature
 with a different risk profile — it turns a review tool into a watchlist.
 
-**W3-3 · Cases + video wall** (F-17, F-18). Bookmarks, annotation, multi-clip incident
-packaging, assignment, closure — the natural home for W1-4's export bundle and W1-2's
-audit trail; the three want to be one feature. Video wall: named layouts, sequence
-cycling, multi-monitor, alarm-driven auto-pop. The fleet-level wall spanning nodes is
+**W3-3 · Cases + video wall** (F-17, F-18) was SPLIT into two PR-sized items. They share a
+row on the original register and nothing else: one is an investigation container, the other
+is a wall of live tiles.
+
+**W3-3a · Case files** (F-17) — BUILT on `feat/case-files`, not yet benched. Bookmark a
+moment or a sighting into a case from the Timeline or Objects, annotate it, assign it, close
+it with a stated outcome, and export the whole thing as one bundle. This is the natural home
+for W1-4's export bundle and W1-2's audit trail, and the three did want to be one feature: the
+case bundle reuses `plan`/`materialize`/`concat` unchanged, and ships the case's own audit
+entries as `chain-of-custody.csv`.
+
+**The design decision that makes it a product rather than a demo: an OPEN case holds its
+footage.** Retention, the per-camera "Purge now" and the disk-pressure sweeper all refuse to
+delete footage a case's evidence points at. Without it, on a box with seven-day retention, a
+case opened today is a list of broken links next week — silently, because nothing about the
+case changes. Footage leaves this appliance by FOUR paths and the fourth is the trap: the
+recorder runs its own hourly sweep over the live directory, deleting by filename age with no
+view of the database, so a hold enforced only in the service layer is undone within the hour
+and leaves rows pointing at nothing. It is wired through a predicate on `RecorderConfig`.
+Secure wipe, factory reset and deleting a camera still destroy footage regardless — a hold
+that could block those would turn a case into a way to make footage undeletable. The hold
+FAILS CLOSED: a hold that cannot be read means everything is held.
+
+Also fixed in passing, found by reading the path rather than by a test: **the operator role
+could start an evidence export and could not download it.** `/api/evidence` was granted POST
+only, and a bundle is built asynchronously — so the rung the role model describes as "may
+export footage" conferred the right to begin an export and nothing else. W1-4's bench never
+caught it because it ran as an administrator.
+
+**W3-3b · Video wall** (F-18) — not started. Named layouts, sequence cycling, multi-monitor,
+alarm-driven auto-pop. `Live Views` already exists with cookie-persisted tiles, so this is an
+extension of a real screen rather than new ground. The fleet-level wall spanning nodes is
 something no appliance vendor can match.
 
 **W3-4 · Loitering / left-behind / directional** (F-15). New rule evaluators over the

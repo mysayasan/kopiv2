@@ -69,6 +69,10 @@ func registerRoutes(api *mux.Router, w *wiring) *mux.Router {
 	// Evidence export: a verifiable bundle of a span of footage. Operator-grantable,
 	// separately from deleting — see services/pages.go.
 	apis.NewEvidenceApi(protected, w.evidence, w.audit)
+	// Case files: bookmark, annotate, assign, close, and export the whole investigation
+	// as one bundle. It reads the audit trail as well as writing to it — the case's own
+	// entries are the chain of custody the bundle ships.
+	apis.NewCaseApi(protected, w.cases, w.evidence, w.auditService, w.localUser, w.audit)
 
 	return protected
 }

@@ -136,11 +136,15 @@ func (a *recordingApi) purgeCameraNow(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrBadRequest, "cameraId is required")
 		return
 	}
-	segments, err := a.serv.PurgeAllForCamera(r.Context(), cameraId)
+	// PurgeCameraFootage, not PurgeAllForCamera: this button must not destroy footage an
+	// open case file is holding. What it kept comes back in the result so the screen can
+	// say so — a purge that silently leaves footage behind is a purge nobody trusts again.
+	purge, err := a.serv.PurgeCameraFootage(r.Context(), cameraId)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
+	segments := purge.Deleted
 	snapshots := 0
 	if a.vision != nil {
 		if n, verr := a.vision.PurgeAlertsForCamera(r.Context(), cameraId); verr != nil {
@@ -162,9 +166,15 @@ func (a *recordingApi) purgeCameraNow(w http.ResponseWriter, r *http.Request) {
 	}
 	a.audit.Success(r, services.ActionRecordingPurge, services.TargetCamera, strconv.FormatInt(cameraId, 10),
 		fmt.Sprintf("purged all footage and metadata for camera %d", cameraId),
-		map[string]any{"segments": segments, "snapshots": snapshots, "observations": observations})
-	controllers.SendResult(w, map[string]int{
+		map[string]any{
+			"segments": segments, "snapshots": snapshots, "observations": observations,
+			"keptHeld": purge.Kept,
+		})
+	controllers.SendResult(w, map[string]any{
 		"segments": segments, "snapshots": snapshots, "observations": observations,
+		// keptHeld/heldReason are how the operator learns their purge stopped short, and
+		// which case stopped it.
+		"keptHeld": purge.Kept, "heldReason": purge.Reason,
 	}, "succeed")
 }
 

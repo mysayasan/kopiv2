@@ -31,13 +31,26 @@ func Pages() sharedservices.PageCatalog
   - `notifications` — *view*: read notifications and vision alerts. *use*: acknowledge an alert,
     mark a notification read.
   - `recordings` — *view*: reads `/api/recording`. *use* (a second rung, added for evidence
-    export): grants `/api/evidence` — exporting a verifiable bundle. Deleting footage stays
+    export): grants `/api/evidence` for GET **and** POST (`canUse`, not `canWrite`) —
+    exporting a verifiable bundle. The GET is not a widening: a bundle is built
+    asynchronously, so the exporter must poll the job and then download the file. Granted
+    POST alone, the rung conferred the right to START an export and was then refused both the
+    status and the result — the capability it describes, unusable. Found in W3-3 while tracing
+    the path for the case bundle, not by a test. Deleting footage stays
     superadmin-only and is still never a level this page can hand out — an operator present
     at an incident must be able to hand the footage of it to somebody, and must not be able
     to destroy it. That is the same line drawn twice, and every export is audited with the
     operator's stated reason, which is what makes granting `use` safe rather than merely
     convenient.
   - `objects` — *view*: reads `/api/observations`.
+  - `cases` (W3-3) — *view*: reads `/api/cases`. *use*: `canUse("/api/cases")` — opening,
+    annotating, closing and exporting case files. It sits in the workspace group beside
+    Recordings because it is the same job: reviewing what happened. Exporting a case is an
+    evidence export and is audited as one, so the rung carries what the Recordings rung
+    carries; a role given Cases-use without Recordings-use can still export its own cases,
+    which is the point of the grant living here too. No level grants DELETE, so removing a
+    case entirely stays with an administrator — a case is the record that an investigation
+    happened.
 - **`AdminOnly` pages** — listed so the catalog stays a complete description of the app, but
   `DerivePermissions` will never grant them regardless of what a role's rows say:
   - `cameras` → `/api/cameras`, `/api/onvif` (manage/full)
@@ -57,8 +70,8 @@ func Pages() sharedservices.PageCatalog
   with nothing narrower to shadow it.
 
 Page ids (`PageDashboard`, `PageLiveViews`, `PageCameras`, `PageDetection`, `PageTeach`,
-`PagePeople`, `PageObjects`, `PageRecordings`, `PageNotifications`, `PageSettings`,
-`PageAudit`) are stable and are what the SPA will later map to nav entries and labels. Level
+`PagePeople`, `PageObjects`, `PageRecordings`, `PageCases`, `PageNotifications`,
+`PageSettings`, `PageAudit`) are stable and are what the SPA will later map to nav entries and labels. Level
 ids (`LevelView`, `LevelUse`, `LevelManage`) are cumulative in that order wherever a page
 declares more than one.
 
@@ -73,7 +86,7 @@ Maps the two grantable built-in roles onto page grants:
 - `viewer` → `dashboard`(view), `live-views`(view), `notifications`(view).
 - `operator` → `dashboard`(view), `live-views`(use), `notifications`(use), `recordings`(**use**,
   was `view` — the built-in operator preset gained evidence-export capability alongside the
-  new `recordings` `use` level), `objects`(view).
+  new `recordings` `use` level), `objects`(view), `cases`(use).
 
 `admin` has no preset — it is the superadmin builtin and bypasses the matrix entirely, same as
 in `Policy()`.

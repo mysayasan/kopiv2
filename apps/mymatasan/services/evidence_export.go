@@ -131,15 +131,21 @@ type ExportManifest struct {
 
 // ExportJob is one export's live state.
 type ExportJob struct {
-	Id        string         `json:"id"`
-	Status    ExportStatus   `json:"status"`
-	CameraId  int64          `json:"cameraId"`
-	From      int64          `json:"from"`
-	To        int64          `json:"to"`
-	Reason    string         `json:"reason"`
-	CreatedAt int64          `json:"createdAt"`
-	Error     string         `json:"error,omitempty"`
+	Id     string       `json:"id"`
+	Status ExportStatus `json:"status"`
+	// CaseId is set on a CASE bundle and 0 on a single-clip one. The two share this job
+	// type because they share the whole build pipeline; which manifest is populated is
+	// what tells them apart.
+	CaseId    int64           `json:"caseId,omitempty"`
+	CameraId  int64           `json:"cameraId"`
+	From      int64           `json:"from"`
+	To        int64           `json:"to"`
+	Reason    string          `json:"reason"`
+	CreatedAt int64           `json:"createdAt"`
+	Error     string          `json:"error,omitempty"`
 	Manifest  *ExportManifest `json:"manifest,omitempty"`
+	// CaseManifest is the case bundle's manifest; nil on a single-clip export.
+	CaseManifest *CaseManifest `json:"caseManifest,omitempty"`
 	// BundlePath is server-side only.
 	BundlePath string `json:"-"`
 	// GapWarning surfaces the headline fact to the UI without it having to read the
@@ -164,6 +170,9 @@ type IEvidenceExportService interface {
 	// Preview reports what an export WOULD contain, so the UI can warn about gaps
 	// before the operator commits to producing a bundle.
 	Preview(ctx context.Context, cameraId, from, to int64) (*ExportManifest, error)
+	// CreateCase builds a bundle out of a whole case file — every clip, the notes, and
+	// the case's chain of custody. See case_export.go.
+	CreateCase(ctx context.Context, req CaseExportRequest) (*ExportJob, error)
 }
 
 type evidenceExportService struct {
@@ -305,11 +314,11 @@ func (s *evidenceExportService) plan(ctx context.Context, cameraId, from, to int
 
 	for _, seg := range inRange {
 		src := SourceSegment{
-			SegmentId: seg.Id,
-			File:      filepath.Base(seg.FilePath),
-			StartedAt: seg.StartedAt,
-			EndedAt:   seg.EndedAt,
-			Sha256:    strings.TrimSpace(seg.Sha256),
+			SegmentId:  seg.Id,
+			File:       filepath.Base(seg.FilePath),
+			StartedAt:  seg.StartedAt,
+			EndedAt:    seg.EndedAt,
+			Sha256:     strings.TrimSpace(seg.Sha256),
 			HashOrigin: "recorded",
 		}
 		if src.Sha256 == "" {
@@ -352,7 +361,7 @@ func (s *evidenceExportService) Create(ctx context.Context, req ExportRequest) (
 	job := &ExportJob{
 		Id: id, Status: ExportPending, CameraId: req.CameraId,
 		From: req.From, To: req.To, Reason: man.Reason,
-		CreatedAt: time.Now().UTC().Unix(),
+		CreatedAt:  time.Now().UTC().Unix(),
 		GapWarning: len(man.Gaps) > 0,
 	}
 	s.jobs[id] = job

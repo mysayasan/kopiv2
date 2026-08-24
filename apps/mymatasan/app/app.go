@@ -17,9 +17,9 @@ import (
 	appentities "github.com/mysayasan/kopiv2/apps/mymatasan/entities"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
-	sharedaudit "github.com/mysayasan/kopiv2/domain/shared/audit"
 	apiaccessenums "github.com/mysayasan/kopiv2/domain/enums/apiaccess"
 	"github.com/mysayasan/kopiv2/domain/notification"
+	sharedaudit "github.com/mysayasan/kopiv2/domain/shared/audit"
 	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/infra/apidocs"
 	"github.com/mysayasan/kopiv2/infra/apphost"
@@ -155,6 +155,11 @@ func (m *module) Entities() []any {
 		appentities.RecordingConfig{},
 		appentities.ObjectObservation{},
 		appentities.ObjectAppearance{},
+		// Case files and their evidence. New tables; the auto-migrator creates them, so
+		// no migration is needed. The struct is CaseFile, not Case, because CASE is a
+		// reserved word on every engine — see entities/case_file.go.
+		appentities.CaseFile{},
+		appentities.CaseItem{},
 		sharedentities.Notification{},
 		sharedentities.NotificationRollup{},
 		// The append-only audit trail, shared with myidsan and myseliasan. New table on
@@ -326,7 +331,15 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// is sized from the boot-time value, because it must be set before any recorder starts.
 	recSettings, _ := settingsService.Recording(context.Background())
 	recording.SetNVENCConcurrency(recSettings.Storage.MaxConcurrentEncodes)
-	recordingService := services.NewRecordingService(repo.RecordingSegment, repo.RecordingConfig, shredPasses)
+	// The case-file footage guard is constructed EMPTY and filled in below, once the case
+	// service exists. The cycle is real — the case service reads recordings, and every
+	// footage purge asks the case service what is held — and a mutable guard is the
+	// smallest honest way to break it. Everything that deletes footage holds this pointer,
+	// so there is exactly one place the hold can be forgotten, and it is this line.
+	footageGuard := services.NewFootageGuard(nil, func(format string, args ...any) {
+		deps.Logger.Warnf("mymatasan.cases", format, args...)
+	})
+	recordingService := services.NewRecordingService(repo.RecordingSegment, repo.RecordingConfig, shredPasses, footageGuard)
 	// Metadata recorder: logs "what objects each camera saw" as searchable presence
 	// intervals, reusing the detector's inference (no second decode). The recorder is
 	// the write side (fed candidates via the detector's observation sink); the
@@ -350,6 +363,11 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// the node's own Objects page would open for it, and adds the alert-event half —
 	// plates and recognized faces — which the object index does not hold.
 	sightingSearch := services.NewSightingSearch(observationService, repo.AlertEvent, repo.Camera)
+	// Case files (W3-3): the investigation container. It resolves each item's footage
+	// through the observation service, so a clip opened from a case is the same clip the
+	// Objects grid would open, and it is what the footage guard above asks.
+	caseService := services.NewCaseService(repo.CaseFile, repo.CaseItem, recordingService, observationService, cameraService)
+	footageGuard.SetCases(caseService)
 	notificationService := notification.NewService(repo.Notification, notificationOptionsFromAppConfig(deps.Config, deps.Logger, deps.Metrics))
 	// Incrementally aggregate the notifications feed into the hourly rollup table
 	// that powers the dashboard's baseline/anomaly analytics (Phase 0). The cursor
@@ -512,6 +530,10 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	recorderConfigBuilder := services.NewRecorderConfigBuilder(
 		cameraService, recordingService, settingsService, atrestCipher, shredPasses, deps.Metrics,
 	)
+	// The recorder runs its OWN retention sweep over the live directory, deleting files by
+	// name with no view of the database. Without this the case-file hold would be enforced
+	// everywhere the database is and undone by that loop within the hour.
+	recorderConfigBuilder.SetFootageHold(footageGuard.Predicate())
 
 	if cfgs, err := recordingService.ListConfigs(context.Background()); err != nil {
 		// Previously swallowed: on error the whole fan-out was skipped and recording
@@ -668,6 +690,8 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 		audit:        auditApi,
 		auditService: auditService,
+
+		cases: caseService,
 
 		continuitySettings: services.NewContinuitySettingsService(repo.RuntimeSetting),
 		tamperSettings:     services.NewTamperSettingsService(repo.RuntimeSetting),

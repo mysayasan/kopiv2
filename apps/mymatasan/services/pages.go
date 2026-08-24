@@ -25,6 +25,7 @@ const (
 	PageTeach         = "teach"
 	PagePeople        = "people"
 	PageObjects       = "objects"
+	PageCases         = "cases"
 	PageRecordings    = "recordings"
 	PageNotifications = "notifications"
 	PageSettings      = "settings"
@@ -52,6 +53,13 @@ var (
 	canRead  = sharedservices.Read
 	canWrite = sharedservices.Write
 	canAll   = sharedservices.Full
+	// canUse is read plus post: the shape an area needs when its write is asynchronous
+	// (start an export, poll it, download it) or when writing means reading back. It is
+	// deliberately not Full — DELETE is the verb that destroys records, and no grantable
+	// page level hands it out.
+	canUse = func(path string) sharedservices.PathGrant {
+		return sharedservices.PathGrant{Path: path, CanGet: true, CanPost: true}
+	}
 )
 
 // Pages returns mymatasan's page catalog.
@@ -134,8 +142,12 @@ func Pages() sharedservices.PageCatalog {
 						//
 						// Every export is audited with the operator's stated reason, which is
 						// what makes granting this rung safe rather than merely convenient.
+						// canUse, not canWrite: an export is built asynchronously, so the
+						// exporter must be able to poll the job and download the bundle.
+						// With POST alone the rung granted the right to start an export and
+						// nothing else, which is not the capability it describes.
 						Id:     LevelUse,
-						Grants: []sharedservices.PathGrant{canWrite("/api/evidence")},
+						Grants: []sharedservices.PathGrant{canUse("/api/evidence")},
 					},
 				},
 			},
@@ -145,6 +157,26 @@ func Pages() sharedservices.PageCatalog {
 					Id:     LevelView,
 					Grants: []sharedservices.PathGrant{canRead("/api/observations")},
 				}},
+			},
+			{
+				// Cases sit in the workspace beside Recordings because they are the same
+				// job: reviewing what happened. Reading one is not the same as working it,
+				// so the second rung is where opening, annotating and closing live.
+				Id: PageCases, Group: groupWorkspace, Order: 40,
+				Levels: []sharedservices.PageLevel{
+					{
+						Id:     LevelView,
+						Grants: []sharedservices.PathGrant{canRead("/api/cases")},
+					},
+					{
+						// Exporting a case is an evidence export and is audited as one, so
+						// this rung also needs what the Recordings rung needs. A role given
+						// Cases-use without Recordings-use can still export its own cases —
+						// that is the point of the grant living here too.
+						Id:     LevelUse,
+						Grants: []sharedservices.PathGrant{canUse("/api/cases")},
+					},
+				},
 			},
 
 			// --- Administrative surfaces -------------------------------------------------
@@ -204,6 +236,7 @@ func RolePresets() map[string][]sharedservices.PageGrant {
 			{PageId: PageNotifications, Level: LevelUse},
 			{PageId: PageRecordings, Level: LevelUse},
 			{PageId: PageObjects, Level: LevelView},
+			{PageId: PageCases, Level: LevelUse},
 		},
 	}
 }

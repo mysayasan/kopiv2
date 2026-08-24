@@ -22,14 +22,20 @@ type recordingService struct {
 	// shredPasses > 0 securely overwrites segment files before deleting them; 0 =
 	// plain delete. Applies to manual deletes and the retention purge.
 	shredPasses int
+	// guard is the case-file footage hold: footage an OPEN case points at is not deleted
+	// by any of the three purges below. Passed in as a pointer that the composition root
+	// fills in later, because the case service needs this service — see case_hold.go.
+	// nil blocks nothing.
+	guard *FootageGuard
 }
 
 func NewRecordingService(
 	segmentRepo dbsql.IGenericRepo[entities.RecordingSegment],
 	configRepo dbsql.IGenericRepo[entities.RecordingConfig],
 	shredPasses int,
+	guard *FootageGuard,
 ) IRecordingService {
-	return &recordingService{segments: segmentRepo, configs: configRepo, shredPasses: shredPasses}
+	return &recordingService{segments: segmentRepo, configs: configRepo, shredPasses: shredPasses, guard: guard}
 }
 
 func (s *recordingService) GetSegments(ctx context.Context, limit, offset uint64, cameraId, alertId, startedAfter, startedBefore int64) ([]*entities.RecordingSegment, uint64, error) {
@@ -206,13 +212,24 @@ func (s *recordingService) PurgeOldSegments(ctx context.Context) (int, error) {
 		// the app offline for a while) could never be caught up: each run deleted at most
 		// one page and left the rest to accumulate.
 		sorters := []sqldataenums.Sorter{{FieldName: "StartedAt", Sort: sqldataenums.ASC}}
+		// One hold read per camera, not one per segment.
+		held := s.guard.CameraHolds(ctx, cfg.CameraId)
+		// heldSoFar counts the expired segments this camera kept because a case wants
+		// them. They stay at the front of the oldest-first window forever, so without
+		// paging past them the loop would re-read the same batch until it gave up — and
+		// every segment behind them would outlive its retention.
+		var heldSoFar uint64
 		for {
-			segs, _, err := s.segments.Get(ctx, "", purgeBatchSize, 0, filters, sorters)
+			segs, _, err := s.segments.Get(ctx, "", purgeBatchSize, heldSoFar, filters, sorters)
 			if err != nil || len(segs) == 0 {
 				break
 			}
 			progressed := false
 			for _, seg := range segs {
+				if blocked, _ := held.BlockedSegment(seg); blocked {
+					heldSoFar++
+					continue
+				}
 				if p := strings.TrimSpace(seg.FilePath); p != "" {
 					_ = recording.SecureRemove(p, s.shredPasses)
 				}
@@ -221,8 +238,9 @@ func (s *recordingService) PurgeOldSegments(ctx context.Context) (int, error) {
 					progressed = true
 				}
 			}
-			// Every row in the batch failed to delete — the next query would return the
-			// same page forever, so stop rather than spin.
+			// Nothing in the batch could be deleted — either every row failed, or every
+			// row is held. The next query would return the same page forever, so stop
+			// rather than spin.
 			if !progressed {
 				break
 			}
@@ -232,40 +250,77 @@ func (s *recordingService) PurgeOldSegments(ctx context.Context) (int, error) {
 }
 
 // PurgeAllForCamera deletes EVERY recorded segment for one camera regardless of its
-// retention/expiry, securely removing each file. It reads oldest-first batches (deleting
-// each batch before the next read, so the window advances without offset drift). Returns
-// the number of segments deleted. Used by the per-camera "Purge now" action.
+// retention/expiry OR of any case hold, securely removing each file. It is the
+// camera-delete cascade's purge; the operator-facing "Purge now" is PurgeCameraFootage,
+// which keeps footage an open case is holding. It reads oldest-first batches, deleting
+// each batch before the next read. Returns the number of segments deleted.
 func (s *recordingService) PurgeAllForCamera(ctx context.Context, cameraId int64) (int, error) {
 	if cameraId <= 0 {
 		return 0, errors.New("cameraId is required")
 	}
+	res, err := s.purgeCamera(ctx, cameraId, &HeldSpans{})
+	return res.Deleted, err
+}
+
+// PurgeCameraFootage is the per-camera "Purge now" action: the same destruction as
+// PurgeAllForCamera, except that footage an OPEN case is holding is kept and reported.
+//
+// The two are separate methods rather than a flag because the difference is a policy
+// decision and it should be visible at the call site. The cascade behind DELETE camera
+// takes the unconditional one — the camera is being removed, and footage held by a case
+// nobody can find or release afterwards is worse than footage that is gone. The operator's
+// destroy button takes this one: an open investigation's evidence must not be one click
+// from gone, and the way to destroy it is to close or empty the case, which is a decision
+// with somebody's name on it.
+func (s *recordingService) PurgeCameraFootage(ctx context.Context, cameraId int64) (PurgeFootageResult, error) {
+	if cameraId <= 0 {
+		return PurgeFootageResult{}, errors.New("cameraId is required")
+	}
+	return s.purgeCamera(ctx, cameraId, s.guard.CameraHolds(ctx, cameraId))
+}
+
+// purgeCamera drains one camera's segments oldest-first, skipping anything held.
+func (s *recordingService) purgeCamera(ctx context.Context, cameraId int64, held *HeldSpans) (PurgeFootageResult, error) {
 	filters := []sqldataenums.Filter{
 		{FieldName: "CameraId", Compare: sqldataenums.Equal, Value: cameraId},
 	}
 	sorters := []sqldataenums.Sorter{{FieldName: "StartedAt", Sort: sqldataenums.ASC}}
-	deleted := 0
+	var res PurgeFootageResult
+	// Held rows stay at the front of the window, so the read has to page past them or the
+	// loop re-reads the same batch and everything behind them survives a purge that
+	// reported success.
+	var heldSoFar uint64
 	for {
-		batch, _, err := s.segments.Get(ctx, "", 500, 0, filters, sorters)
+		batch, _, err := s.segments.Get(ctx, "", 500, heldSoFar, filters, sorters)
 		if err != nil {
-			return deleted, err
+			return res, err
 		}
 		if len(batch) == 0 {
 			break
 		}
+		before := res.Deleted
 		for _, seg := range batch {
-			if _, err := s.segments.DeleteById(ctx, "", uint64(seg.Id)); err != nil {
-				return deleted, err
+			if blocked, reason := held.BlockedSegment(seg); blocked {
+				res.Kept++
+				if res.Reason == "" {
+					res.Reason = reason
+				}
+				heldSoFar++
+				continue
 			}
-			deleted++
+			if _, err := s.segments.DeleteById(ctx, "", uint64(seg.Id)); err != nil {
+				return res, err
+			}
+			res.Deleted++
 			if p := strings.TrimSpace(seg.FilePath); p != "" {
 				_ = recording.SecureRemove(p, s.shredPasses)
 			}
 		}
-		if len(batch) < 500 {
+		if len(batch) < 500 || res.Deleted == before {
 			break
 		}
 	}
-	return deleted, nil
+	return res, nil
 }
 
 func (s *recordingService) PurgeOldestSegments(ctx context.Context, keepAfter int64, wantBytes int64) (int, int64, error) {
@@ -279,9 +334,23 @@ func (s *recordingService) PurgeOldestSegments(ctx context.Context, keepAfter in
 	}
 	deleted := 0
 	var freed int64
+	// The disk-pressure sweeper is the one that hurts to get wrong: it runs BECAUSE the
+	// appliance is short of space, so the temptation is to let it take whatever it needs.
+	// It must not take evidence. If the holds mean it cannot free enough, it frees what it
+	// can and the caller escalates — the same rule the fleet clip archive follows, where a
+	// full archive stops rather than evicting evidence.
+	byCamera := map[int64]*HeldSpans{}
 	for _, seg := range segs {
 		if wantBytes > 0 && freed >= wantBytes {
 			break
+		}
+		held, ok := byCamera[seg.CameraId]
+		if !ok {
+			held = s.guard.CameraHolds(ctx, seg.CameraId)
+			byCamera[seg.CameraId] = held
+		}
+		if blocked, _ := held.BlockedSegment(seg); blocked {
+			continue
 		}
 		if p := strings.TrimSpace(seg.FilePath); p != "" {
 			_ = recording.SecureRemove(p, s.shredPasses)

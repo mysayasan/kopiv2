@@ -34,6 +34,10 @@ type RecorderConfigBuilder struct {
 	cipher      *atrest.Cipher
 	shredPasses int
 	metrics     telemetry.Metrics
+	// hold is the case-file footage hold, handed to every recorder so its own retention
+	// sweep — which deletes FILES by name and never reads the database — cannot shred
+	// footage an open case is holding. nil = nothing is held.
+	hold func(cameraId, startedAt, endedAt int64) bool
 }
 
 // The builder needs two methods, not two whole services. Declaring the interfaces here —
@@ -66,6 +70,14 @@ func NewRecorderConfigBuilder(
 		shredPasses: shredPasses,
 		metrics:     metrics,
 	}
+}
+
+// SetFootageHold wires the case-file hold predicate. Set after construction because the
+// case service is built from the recording service, which is built before this — see
+// case_hold.go for the whole picture. A builder without it holds nothing, which is the
+// right behaviour for an app that has no cases.
+func (b *RecorderConfigBuilder) SetFootageHold(hold func(cameraId, startedAt, endedAt int64) bool) {
+	b.hold = hold
 }
 
 // ErrNoStreamURL is the warning surfaced when a camera has recording enabled but no
@@ -164,6 +176,7 @@ func (b *RecorderConfigBuilder) ForRecording(ctx context.Context, cfg *entities.
 		RecordFallbackCopy: fallbackCopy,
 		Cipher:             b.cipher,
 		Metrics:            b.metrics,
+		RetentionHold:      b.hold,
 	}, warning
 }
 

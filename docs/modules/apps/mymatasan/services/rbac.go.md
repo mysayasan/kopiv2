@@ -132,3 +132,19 @@ Called from `app.go`'s `RegisterAppRoutes`, before the default admin is seeded a
   (`GET /api/auth/session`, `GET /api/settings/runtime`, `GET /api/cameras`,
   `POST /api/auth/change-password`) and asserts viewer and operator are allowed every step —
   every other test in the file asserts what a role must NOT do, this one asserts the floor.
+
+## W3-3 changes
+
+- **`/api/cases`** — `Viewer: none, Operator: readWrite`. Opening cases, adding and annotating
+  evidence, closing them and exporting the bundle is the operator's job. `readWrite` is
+  `Verbs{Get, Post}` and grants no DELETE, so deleting a case stays an administrator's act:
+  the case is the record that an investigation happened, and the person who was present at the
+  incident must not be able to erase it.
+- **`/api/evidence`** moved from `write` to `readWrite` for the operator. An export is
+  asynchronous — start, poll, download — so POST alone granted the right to begin an export
+  and nothing else. The role model said operators may export footage; until this they could
+  not collect it.
+
+## Related
+
+- `apps/mymatasan/services/case_file.go.md`

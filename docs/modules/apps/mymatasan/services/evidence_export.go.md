@@ -34,3 +34,11 @@ A bundle is a `.zip` containing one video file, `manifest.json`, and `VERIFY.txt
 - Audited twice on purpose (`recording.export`): at request time, because deciding to take a copy out of the system is the auditable act and a build that later fails must still leave a record; and at download, because requesting a bundle and collecting it can be minutes and one shift apart.
 - Covered by `evidence_export_test.go`: gaps mid-range and at both edges, `"gaps":[]` surviving JSON encoding, honest hash-origin labelling, a required reason, range validation, out-of-range segments excluded, a straddling segment counted, and the verification note stating the digest and any gaps.
 - **Live-benched 2026-08-19 and passing.** Real ffmpeg-produced H.264 clips, hashed as plaintext and sealed with the app's own cipher, registered across an hour with a deliberate 15-minute gap: the concat produced a 12.02s file ffprobe reads cleanly, its SHA-256 matched the manifest, the gap was reported in the preview, the manifest and `VERIFY.txt`, and corrupting one stored digest made the export refuse to run. See `docs/FLAGSHIP_BENCH_CHECKLIST.md`.
+
+## `CreateCase` (W3-3)
+
+The same service also builds **case bundles** — every clip in a case file, one manifest, and
+the case's chain of custody — reusing `plan`/`materialize`/`concat` unchanged so there is one
+implementation of "what footage covers this range". `ExportJob` gained `CaseId` and
+`CaseManifest`; which manifest is populated is what tells the two bundle kinds apart. See
+`apps/mymatasan/services/case_export.go.md`.

@@ -4,6 +4,7 @@ import { FormAlert } from './ui';
 import { useT } from '@shared/i18n';
 import { HelpButton } from '@shared/Manual';
 import { apiBase } from '../lib/helpers';
+import { AddToCaseDialog, caseEvidenceFromMoment } from './cases';
 
 // Timeline playback: continuous, wall-clock review across segment boundaries and
 // across cameras.
@@ -192,6 +193,7 @@ export function TimelinePlayback({ cameras = [], authHeader }) {
   const [seeks, setSeeks] = useState({});
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [bookmarking, setBookmarking] = useState(false);
 
   const videoRefs = useRef({});
   // clockCameraId is which tile's currentTime advances the cursor. Chosen from the seek
@@ -586,6 +588,15 @@ export function TimelinePlayback({ cameras = [], authHeader }) {
           <span>{t('tl.audio')}</span>
         </label>
 
+        {/* Bookmarking is offered where the moment IS. The timeline's whole design is
+            that every tile answers one question about one instant, so a bookmark here is
+            that instant on every camera on screen — which is what an incident actually
+            looks like — rather than one camera at a time. */}
+        <button type="button" className="btn-icon" onClick={() => setBookmarking(true)}
+          disabled={selectedIds.length === 0}>
+          <Ico n="folder" /> {t('tl.bookmark')}
+        </button>
+
         <span className="tl-readout" aria-live="polite">{formatClock(cursor, true)}</span>
       </div>
 
@@ -699,6 +710,16 @@ export function TimelinePlayback({ cameras = [], authHeader }) {
           />
         ))}
       </div>
+
+      {bookmarking ? (
+        <AddToCaseDialog
+          authHeader={authHeader}
+          items={selectedIds.map((id) => caseEvidenceFromMoment(
+            id, cursor, (cameraById.get(id) || {}).name || t('tl.cameraN', { n: id }),
+          ))}
+          onClose={() => setBookmarking(false)}
+        />
+      ) : null}
     </section>
   );
 }

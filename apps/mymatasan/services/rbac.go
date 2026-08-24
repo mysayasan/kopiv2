@@ -41,6 +41,10 @@ var (
 	read  = sharedservices.VerbsRead
 	write = sharedservices.VerbsWrite
 	none  = sharedservices.VerbsNone
+	// readWrite is for an area whose write action is asynchronous or whose reads are part
+	// of doing the write — an export you must poll, a case you must read back to annotate.
+	// It grants no DELETE: destruction stays an administrator's verb.
+	readWrite = sharedservices.Verbs{Get: true, Post: true}
 )
 
 // operatorDescription is what a human sees next to the operator role.
@@ -96,8 +100,20 @@ func Policy() []PolicyRule {
 		// drawn twice: an operator who was present at an incident must be able to hand the
 		// footage of it to somebody, and must not be able to destroy it. Every export is
 		// audited with the operator's stated reason.
-		{Path: "/api/evidence", Description: "Export footage as a verifiable evidence bundle", Viewer: none, Operator: write},
+		//
+		// GET as well as POST, and the GET is not a widening: building a bundle is
+		// asynchronous, so an exporter must poll the job and then download the result.
+		// Granted POST alone, an operator could START an export and was then refused both
+		// the status and the file — the capability the role model says it has, unusable.
+		// Found while tracing this path for the case bundle, not by a test.
+		{Path: "/api/evidence", Description: "Export footage as a verifiable evidence bundle", Viewer: none, Operator: readWrite},
 		{Path: "/api/observations", Description: "Search what objects a camera saw", Viewer: none, Operator: read},
+		// Case files: the investigation container. An operator opens cases, adds evidence,
+		// annotates and closes them, and exports the bundle — that is the role's job.
+		// DELETE is absent from readWrite, so removing a case entirely stays with an
+		// administrator: a case is the record that an investigation happened, and the
+		// person who was present at the incident must not be able to erase it.
+		{Path: "/api/cases", Description: "Open, annotate and export case files", Viewer: none, Operator: readWrite},
 
 		// --- Operating (operator only) ----------------------------------------------------
 		{Path: "/api/vision/alerts/*/ack", Description: "Acknowledge an alert", Viewer: none, Operator: write},
