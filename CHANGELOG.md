@@ -105,6 +105,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-24 — mymatasan 1.135.0 (e75be00)
+
+### Added
+
+- **mymatasan**: Live View becomes a video wall. An arrangement worth keeping is now a WALL: a name, a grid, and the cameras in the order you put them in, saved on the appliance instead of in the browser. That one change is most of the feature — the old arrangement lived in a cookie, so it existed only on the machine that built it, could not be handed to the operator on the next shift, could not be opened on a second monitor without being rebuilt by hand, and vanished when somebody cleared their browser. Walls are shared rather than personal, because a control room's walls are furniture and an administrator has to be able to fix the one everybody is looking at; one can be marked as the wall a screen opens with. Two numbers decide what a wall does while nobody is touching it. CYCLE advances through the pages every few seconds, so a station can watch more cameras than fit the grid. POP brings a camera onto the visible page when it raises an alert and holds it there, outlined, so it is obvious which camera the wall jumped for — and cycling pauses while it is showing, because a wall that rotates away two seconds later has done the opposite of raising an alarm. Paging by hand restarts the dwell, so a page you turned to is not whipped away a moment later. SECOND MONITOR opens the selected wall in its own window with no navigation and nothing else on screen, to be dragged onto another display and left there. It is a real browser window because a panel inside the app cannot be dragged to another screen. A wall that names a camera somebody has since deleted says so, rather than quietly rendering one tile fewer and letting an operator believe they are watching everything.
 ## 2026-08-24 — mymatasan 1.134.0, core 1.99.0 (8009f6e)
 
 ### Added
