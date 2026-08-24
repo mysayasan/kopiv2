@@ -59,6 +59,13 @@ type onvifClient interface {
 	GetServices(ctx context.Context, req onvif.DeviceRequest) ([]onvif.Service, error)
 	PTZMove(ctx context.Context, req onvif.PTZMoveRequest) error
 	PTZStop(ctx context.Context, req onvif.PTZMoveRequest) error
+	GetPresets(ctx context.Context, req onvif.PTZPresetRequest) ([]onvif.PTZPreset, error)
+	SetPreset(ctx context.Context, req onvif.PTZPresetRequest) (string, error)
+	RemovePreset(ctx context.Context, req onvif.PTZPresetRequest) error
+	GotoPreset(ctx context.Context, req onvif.PTZPresetRequest) error
+	GotoHome(ctx context.Context, req onvif.PTZPresetRequest) error
+	SetHome(ctx context.Context, req onvif.PTZPresetRequest) error
+	PTZGetStatus(ctx context.Context, req onvif.PTZPresetRequest) (*onvif.PTZStatus, error)
 	GetVideoEncoderConfig(ctx context.Context, req onvif.StreamURIRequest) (*onvif.VideoEncoderConfig, error)
 	ConfigureRecording(ctx context.Context, req onvif.ConfigureRecordingRequest) (*onvif.VideoEncoderConfig, error)
 }
@@ -88,6 +95,11 @@ type cameraService struct {
 	lprCapById  map[int64]cachedLPRCapability
 	talkCapMu   sync.Mutex
 	talkCapById map[int64]cachedTalkCapability
+	// ptzJournal records every commanded move so the tamper monitor can tell a camera
+	// that was re-aimed by an intruder from one that was re-aimed by us, and so a tour
+	// defers to an operator working the ring. Optional: nil behaves exactly as this
+	// service did before the journal existed. See ptz_journal.go.
+	ptzJournal *PTZJournal
 }
 
 // cachedCameraName memoizes a camera's resolved display name so callers (e.g. the
@@ -107,6 +119,7 @@ func NewCameraService(
 	onvifRepo dbsql.IGenericRepo[entities.CameraOnvif],
 	client onvifClient,
 	rtspClient rtsp.Client,
+	ptzJournal *PTZJournal,
 ) ICameraService {
 	return &cameraService{
 		cameraRepo:  cameraRepo,
@@ -116,6 +129,7 @@ func NewCameraService(
 		nameCache:   map[int64]cachedCameraName{},
 		lprCapById:  map[int64]cachedLPRCapability{},
 		talkCapById: map[int64]cachedTalkCapability{},
+		ptzJournal:  ptzJournal,
 	}
 }
 
@@ -1046,6 +1060,12 @@ func (s *cameraService) PTZMove(ctx context.Context, id uint64, req PTZMoveReque
 	}); err != nil {
 		return nil, err
 	}
+	// A jog is a PERSON driving this camera, and both consequences are recorded here
+	// rather than in the handler: the view has legitimately changed (so the tamper
+	// monitor must not report it as somebody re-aiming the camera), and a guard tour
+	// must keep out of the way until they are done. Recording it at the one place that
+	// performs the move is what stops a future caller getting the pair half-right.
+	s.ptzJournal.ClaimManual(int64(id), manualPTZHold*time.Second)
 	return detail, nil
 }
 
@@ -1065,6 +1085,10 @@ func (s *cameraService) PTZStop(ctx context.Context, id uint64) (*CameraDetail, 
 	}); err != nil {
 		return nil, err
 	}
+	// Releasing the button ends the move but not the operator's claim: they are still
+	// looking, and a tour that stepped the instant they let go would be worse than one
+	// that stepped while they held it.
+	s.ptzJournal.ClaimManual(int64(id), manualPTZHold*time.Second)
 	return detail, nil
 }
 

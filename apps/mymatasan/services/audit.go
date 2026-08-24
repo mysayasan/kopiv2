@@ -81,6 +81,20 @@ const (
 	ActionWallChange = "wall.change"
 	ActionWallDelete = "wall.delete"
 
+	// PTZ (W3-5). A preset is WHERE AN ALARM WILL SEND THIS CAMERA, so re-pointing one at
+	// the sky is a way to make a rule useless that leaves the rule, the tour and the screen
+	// all looking correct — and nothing else records it. Starting and stopping a patrol is
+	// recorded for the same reason: "why was this camera not looking at the door" is
+	// answered by who stopped its tour, and when. Recalling a preset is deliberately NOT
+	// audited — an operator driving a camera generates one per press, and a trail that
+	// fills with them is a trail nobody reads.
+	ActionPTZPresetSave   = "ptz.preset_save"
+	ActionPTZPresetDelete = "ptz.preset_delete"
+	ActionPTZHomeSet      = "ptz.home_set"
+	ActionPTZTourChange   = "ptz.tour_change"
+	ActionPTZTourDelete   = "ptz.tour_delete"
+	ActionPTZTourRun      = "ptz.tour_run"
+
 	// Cameras. A credential change is recorded; the credential itself never is.
 	ActionCameraCreate           = "camera.create"
 	ActionCameraUpdate           = "camera.update"

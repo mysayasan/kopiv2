@@ -85,7 +85,14 @@ type cameraEncoderRequest struct {
 }
 
 // NewCameraApi registers camera CRUD, streaming, and PTZ routes under /cameras.
-func NewCameraApi(router *mux.Router, serv services.ICameraService, settings services.IRuntimeSettingsService, streamManager *stream.Manager, healthProber services.ICameraHealthProber, audit *Auditor) {
+//
+// It RETURNS the subrouter so NewPTZApi can hang the preset and tour routes off the same
+// group. They have to share it: gorilla matches a PathPrefix subrouter first and does not
+// reliably fall through to a second router registered on an overlapping prefix, so a
+// separate "/cameras/{id}/ptz" router would make the route that matched depend on
+// registration order — which is exactly the kind of thing that works in a unit test and
+// 404s on the appliance.
+func NewCameraApi(router *mux.Router, serv services.ICameraService, settings services.IRuntimeSettingsService, streamManager *stream.Manager, healthProber services.ICameraHealthProber, audit *Auditor) *mux.Router {
 	handler := &cameraApi{serv: serv, settings: settings, streamManager: streamManager, healthProber: healthProber}
 	group := router.PathPrefix("/cameras").Subrouter()
 
@@ -122,6 +129,7 @@ func NewCameraApi(router *mux.Router, serv services.ICameraService, settings ser
 	group.HandleFunc("/{id}/live.mjpeg", handler.liveMJPEG).Methods("GET")
 	group.HandleFunc("/{id}", handler.updateDetails).Methods("PUT")
 	group.HandleFunc("/{id}", handler.delete).Methods("DELETE")
+	return group
 }
 
 func (a *cameraApi) get(w http.ResponseWriter, r *http.Request) {

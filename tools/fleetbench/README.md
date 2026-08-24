@@ -46,7 +46,28 @@ node   tools/fleetbench/uicheck_wall.js .artifacts/fleetbench ar
 python tools/fleetbench/bench_w34_dwell.py        # W3-4: time-based rules (no footage needed)
 node   tools/fleetbench/uicheck_dwell.js .artifacts/fleetbench en
 node   tools/fleetbench/uicheck_dwell.js .artifacts/fleetbench ar
+python tools/fleetbench/bench_w35_ptz.py          # W3-5a: PTZ, against a real ONVIF device
+node   tools/fleetbench/uicheck_ptz.js .artifacts/fleetbench en
+node   tools/fleetbench/uicheck_ptz.js .artifacts/fleetbench ar
 ```
+
+## `onvifsim.py` — a real ONVIF device, on demand
+
+The bench cameras are mediamtx RTSP sources with **no ONVIF service at all**, and everything
+in W3-5 is an ONVIF conversation. `onvifsim.py` is a small ONVIF PTZ device (stdlib only,
+runs in a bare `python:3-slim` container on `benchnet`) that answers the SOAP calls the
+product makes, keeps the state a real dome keeps, and — the part that makes it worth having —
+**records every call**, at `GET /journal`.
+
+That is what lets `bench_w35_ptz.py` assert the appliance *sent* `GotoPreset` for the stops of
+a tour, in order, spaced by the dwell. A patrol that persuaded its own database it was
+running while sending nothing would pass a status-code check and fail this one. It also
+exposes `POST /presets/wipe` (somebody clearing the presets from the camera's own web page)
+and `POST /journal/reset`.
+
+Both `bench_w35_ptz.py` and `uicheck_ptz.js` start and remove it themselves, so neither
+depends on the other having been run. **Extend it rather than starting again** for anything
+else ONVIF — W3-5b's PullPoint events and relay I/O belong in the same file.
 
 `bench_w34_dwell.py` (W3-4) states at the top of the file what it does NOT claim: no
 evaluator is driven end to end, because the harness films test patterns and the detector

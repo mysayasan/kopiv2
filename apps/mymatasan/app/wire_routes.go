@@ -46,8 +46,11 @@ func registerRoutes(api *mux.Router, w *wiring) *mux.Router {
 
 	apis.NewLocalAuthApi(protected, w.localUser)
 	apis.NewOnvifApi(protected, w.camera, w.settings, w.streamManager)
-	apis.NewCameraApi(protected, w.camera, w.settings, w.streamManager, w.cameraHealth, w.audit)
-	apis.NewVisionApi(protected, w.vision, w.detectionClass, w.recorder, w.notification, w.camera, w.settings, w.notificationSettings, w.atrestCipher, w.sightingSearch)
+	cameraGroup := apis.NewCameraApi(protected, w.camera, w.settings, w.streamManager, w.cameraHealth, w.audit)
+	// PTZ presets, home and guard tours (W3-5) hang off the SAME subrouter, under the same
+	// /ptz path the role model already grants as "may move a camera".
+	apis.NewPTZApi(cameraGroup, w.camera, w.ptz, w.audit)
+	apis.NewVisionApi(protected, w.vision, w.detectionClass, w.recorder, w.notification, w.camera, w.settings, w.notificationSettings, w.atrestCipher, w.sightingSearch, w.ptz)
 	apis.NewTrainingApi(protected, w.training)
 	apis.NewTeachApi(protected, w.teach)
 	apis.NewFacesApi(protected, w.faceGallery)

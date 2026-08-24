@@ -111,7 +111,11 @@ func Pages() sharedservices.PageCatalog {
 						// they are a rung above watching it.
 						Id: LevelUse,
 						Grants: []sharedservices.PathGrant{
-							canWrite("/api/cameras/*/ptz"), canWrite("/api/cameras/*/talk/offer"),
+							// canUse, not canWrite. Presets, tours and PTZ status are all
+							// GETs that this rung's own buttons are built from: without the
+							// read, an operator gets a PTZ panel with no places on it and a
+							// tour list that will not load. See rbac.go.
+							canUse("/api/cameras/*/ptz"), canWrite("/api/cameras/*/talk/offer"),
 							// Arranging the walls, which is the same rung as moving a camera:
 							// it changes what a room sees rather than merely watching it.
 							canUse("/api/walls"),

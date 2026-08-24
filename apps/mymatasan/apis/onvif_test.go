@@ -96,6 +96,21 @@ func (f *fakeCameraService) PTZMove(_ context.Context, _ uint64, _ services.PTZM
 func (f *fakeCameraService) PTZStop(_ context.Context, _ uint64) (*services.CameraDetail, error) {
 	return nil, nil
 }
+func (f *fakeCameraService) PTZPresets(_ context.Context, _ uint64) ([]onvif.PTZPreset, error) {
+	return nil, nil
+}
+func (f *fakeCameraService) PTZSavePreset(_ context.Context, _ uint64, _ string, _ string) (string, error) {
+	return "", nil
+}
+func (f *fakeCameraService) PTZDeletePreset(_ context.Context, _ uint64, _ string) error { return nil }
+func (f *fakeCameraService) PTZGotoPreset(_ context.Context, _ uint64, _ string, _ float64) error {
+	return nil
+}
+func (f *fakeCameraService) PTZHome(_ context.Context, _ uint64) error    { return nil }
+func (f *fakeCameraService) PTZSetHome(_ context.Context, _ uint64) error { return nil }
+func (f *fakeCameraService) PTZStatus(_ context.Context, _ uint64) (*onvif.PTZStatus, error) {
+	return nil, nil
+}
 func (f *fakeCameraService) GetCameraEncoder(_ context.Context, _ uint64) (*onvif.VideoEncoderConfig, error) {
 	return nil, nil
 }

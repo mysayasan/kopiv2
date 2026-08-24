@@ -41,7 +41,11 @@ func startBackgroundWorkers(ctx context.Context, w *wiring) {
 		// The metadata recorder shares the monitor's lifecycle: it aggregates the
 		// observations the monitor feeds it and flushes open intervals on shutdown.
 		w.metadata.Start(ctx)
-		services.NewVisionMonitor(w.camera, w.vision, w.settings, w.visionMonitorSettings).Start(ctx)
+		// WithPTZ lets a rule point a camera at what it just detected. Optional by
+		// design: an appliance with no PTZ camera passes nothing and every rule behaves
+		// as it did before.
+		services.NewVisionMonitor(w.camera, w.vision, w.settings, w.visionMonitorSettings).
+			WithPTZ(w.ptz).Start(ctx)
 	}
 
 	// The health monitors read their settings live on every sweep, so enabling or retuning
@@ -63,9 +67,19 @@ func startBackgroundWorkers(ctx context.Context, w *wiring) {
 	// which answers, records, and is pointing at a wall. It reads the JPEG the recorder
 	// already siphons for the detector, so it costs a decode per camera per sweep and
 	// nothing else.
+	//
+	// It takes the PTZ motion journal so it can tell a camera that was re-aimed by an
+	// intruder from one that was re-aimed by us. Without it, a guard tour raises a MOVED
+	// alert every few minutes on the camera it is patrolling — and the operator's fix is
+	// to turn tamper detection off, after which it protects nothing.
 	services.NewCameraTamperMonitor(
 		w.recorder, w.camera, w.recording, w.tamperSettings, w.notification, deps.Metrics,
-	).Start(ctx)
+	).WithPTZ(w.ptzJournal).Start(ctx)
+
+	// PTZ guard tours: the patrol loop. It resumes tours that were running before a
+	// restart, which is why IsRunning is a persisted column — an appliance that reboots at
+	// 03:00 must come back doing what it was doing, with nobody awake to restart it.
+	w.ptz.Start(ctx)
 
 	// Incrementally aggregates the notifications feed into the hourly rollup table that
 	// backs dashboard analytics. The first sweep backfills existing history.

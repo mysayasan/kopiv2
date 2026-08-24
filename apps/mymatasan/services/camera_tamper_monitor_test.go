@@ -601,3 +601,115 @@ func TestTamperDoesNotCallAnUncoveredLensAMovedCamera(t *testing.T) {
 		t.Fatalf("uncovering a lens is not moving the camera; got %d moved alerts", got)
 	}
 }
+
+// --- the PTZ interlock (W3-5) ------------------------------------------------
+//
+// A PTZ camera being re-aimed by an operator, an alarm or its own guard tour produces
+// EXACTLY the picture this monitor's MOVED verdict exists to catch. Nothing connected the
+// two before presets and tours were built, so a fleet that started patrolling would report
+// tampering on every camera it patrolled, every few minutes — and the operator's fix is to
+// turn tamper detection off, after which it protects nothing.
+
+func newTamperRigWithPTZ(cfg TamperSettings) (*CameraTamperMonitor, *scriptedFrames, *capturedNotifier, *PTZJournal) {
+	src := &scriptedFrames{}
+	notif := &capturedNotifier{}
+	rec := &tamperRecordingStub{configs: []*entities.RecordingConfig{{CameraId: 3, Enabled: true}}}
+	journal := NewPTZJournal()
+	m := NewCameraTamperMonitor(src, &fakeContinuityCamera{name: "Yard dome"}, rec,
+		staticTamperSettings{cfg}, notif, nil).WithPTZ(journal)
+	return m, src, notif, journal
+}
+
+// A commanded move must not read as tampering — and it must not merely be DEFERRED. The
+// monitor forgets what it knew about the camera rather than suppressing the verdict for a
+// while, because a suppression window ends with the old reference still in place and the
+// new view still a long way from it.
+func TestTamperIgnoresACameraWeMovedOurselves(t *testing.T) {
+	cfg := testTamperCfg()
+	normal := jpegOf(busyScene(31), t)
+	wall := jpegOf(wallScene(32), t)
+
+	m, src, notif, journal := newTamperRigWithPTZ(cfg)
+	feed(t, m, src, normal, tamperBaselineSize, 100)
+
+	// A preset recall, a jog or a tour step — all of them land here.
+	journal.NoteCommandedMove(3)
+
+	// Far more samples at the new view than FailureThreshold, and well past any plausible
+	// settling window: if the reference had merely been suppressed, this would alert.
+	feed(t, m, src, wall, 40, 300)
+	if got := alertsTitled(notif.sent, "Camera view changed"); got != 0 {
+		t.Fatalf("a camera we moved ourselves must not be reported as tampered with, got %d", got)
+	}
+
+	// The monitor is not blinded for good: the camera is re-aimed again by somebody else,
+	// with no command from us, and that IS reported.
+	feed(t, m, src, normal, 20, 900)
+	if got := alertsTitled(notif.sent, "Camera view changed"); got != 1 {
+		t.Fatalf("after settling at its new view the monitor must work again, got %d alerts", got)
+	}
+}
+
+// A camera re-aimed onto a plain surface has legitimately lost its edge energy too, so the
+// edge baseline has to be forgotten alongside the histogram reference. Leaving it in place
+// turns every move onto a blank wall into a COVERED alert instead of a MOVED one — the same
+// bug wearing a different label.
+func TestTamperDoesNotReportACommandedMoveAsACoveredLens(t *testing.T) {
+	cfg := testTamperCfg()
+	normal := jpegOf(busyScene(33), t)
+	blank := jpegOf(coveredScene(), t)
+
+	m, src, notif, journal := newTamperRigWithPTZ(cfg)
+	feed(t, m, src, normal, tamperBaselineSize, 100)
+	journal.NoteCommandedMove(3)
+	feed(t, m, src, blank, 10, 300)
+
+	if got := alertsTitled(notif.sent, "Camera view blocked"); got != 0 {
+		t.Fatalf("a commanded move onto a plain surface must not read as a covered lens, got %d", got)
+	}
+}
+
+// A camera on PATROL is a different fact from one that was moved once. Its view is supposed
+// to keep changing, so there is no "normal picture" to measure either scene verdict against
+// — and a half-rebuilt reference made of six different stops is worse than none.
+func TestTamperDoesNotJudgeTheSceneOfAPatrollingCamera(t *testing.T) {
+	cfg := testTamperCfg()
+	normal := jpegOf(busyScene(34), t)
+	wall := jpegOf(wallScene(35), t)
+
+	m, src, notif, journal := newTamperRigWithPTZ(cfg)
+	feed(t, m, src, normal, tamperBaselineSize, 100)
+
+	journal.SetTouring(3, true)
+	feed(t, m, src, wall, 40, 300)
+	if got := alertsTitled(notif.sent, "Camera view changed"); got != 0 {
+		t.Fatalf("a patrolling camera must not be reported as re-aimed, got %d", got)
+	}
+	if got := alertsTitled(notif.sent, "Camera view blocked"); got != 0 {
+		t.Fatalf("a patrolling camera must not be reported as covered, got %d", got)
+	}
+
+	// Stopping the patrol restores the verdict: the camera settles at one view, and being
+	// re-aimed away from it is reported again.
+	journal.SetTouring(3, false)
+	feed(t, m, src, wall, tamperBaselineSize, 900)
+	feed(t, m, src, normal, 20, 1200)
+	if got := alertsTitled(notif.sent, "Camera view changed"); got != 1 {
+		t.Fatalf("a camera that has stopped patrolling must be judged again, got %d alerts", got)
+	}
+}
+
+// The journal is optional. An appliance with no PTZ wiring passes nil and every verdict has
+// to behave exactly as it did before this interlock existed.
+func TestTamperWithoutAPTZJournalIsUnchanged(t *testing.T) {
+	cfg := testTamperCfg()
+	normal := jpegOf(busyScene(36), t)
+	wall := jpegOf(wallScene(37), t)
+
+	m, src, notif := newTamperRig(nil, cfg)
+	feed(t, m, src, normal, tamperBaselineSize, 100)
+	feed(t, m, src, wall, 10, 300)
+	if got := alertsTitled(notif.sent, "Camera view changed"); got != 1 {
+		t.Fatalf("with no journal the moved verdict must still fire, got %d", got)
+	}
+}

@@ -1226,3 +1226,113 @@ field with a real default, and the value typed there reaches the draft that will
 - **`result_of` re-wraps a bare array — third sighting.** The harness now has
   `result_list(response, *keys)`; use it for any list endpoint. Iterating the dict instead
   yields the string `"result"` and a failure that never mentions the envelope.
+
+## W3-5a · PTZ presets, home, guard tours and alarm recall  ⟨ DONE (2026-08-24), 60/60 + 26/26 en and 26/26 ar
+
+    python tools/fleetbench/fleet_harness.py
+    python tools/fleetbench/bench_w35_ptz.py             # 60/60, ~4 min (mostly dwell)
+    node   tools/fleetbench/uicheck_ptz.js .artifacts/fleetbench en
+    node   tools/fleetbench/uicheck_ptz.js .artifacts/fleetbench ar
+
+**THE HARNESS HAD NO ONVIF DEVICE, AND THIS ITEM IS ENTIRELY AN ONVIF CONVERSATION.** The
+bench cameras are mediamtx RTSP sources with no ONVIF service at all, so without a device the
+only thing checkable was that the appliance produced an error — a test of the error path.
+
+`tools/fleetbench/onvifsim.py` is a small ONVIF PTZ device (stdlib only, runs in a bare
+`python:3-slim` container on `benchnet`). It answers the SOAP calls the product makes, keeps
+the state a real dome keeps — a preset table, a home position, where it is pointing — and,
+**the part that makes it worth having, RECORDS EVERY CALL** at `GET /journal`. That is what
+lets the bench assert the appliance *sent* `GotoPreset` for the stops of a tour, in order,
+spaced by the dwell. A patrol that persuaded its own database it was running while sending
+nothing would pass a status-code check and fail this one.
+
+It also exposes `POST /presets/wipe` — somebody clearing the presets from the camera's own
+web page, which is the event a guard tour has to notice and survive.
+
+**Reuse it for anything ONVIF.** Adding a call is a few lines in `ptz_response` /
+`device_response`, and a fault is one `fault()` return. W3-5b (PullPoint events, relay I/O)
+should extend this file rather than start again.
+
+### What the bench found
+
+1. **A patrol that had been told to STOP moved the camera once more.** The runner reads the
+   tour rows, then asks the camera what presets it has — an ONVIF round trip — and only then
+   commands the move. A stop landing in that gap is written to a row the tick has already
+   read. Fixed with a generation counter re-checked immediately before the command, which
+   also covers an operator taking the ring mid-tick. Both are now unit tests
+   (`TestAStoppedPatrolDoesNotGetOneMoreMoveOut`,
+   `TestAnOperatorTakingTheRingMidTickStopsTheStep`), driven by a fake camera that performs
+   the interfering action *inside* the preset read.
+2. **A deleted camera left its patrols behind**, commanding a device that was no longer
+   configured, every dwell, forever. Same shape as W3-2's appearance descriptors, found the
+   same way.
+3. **The Arabic screen pass: the button that opens the panel could not be pressed.** See
+   below.
+
+**A BENCH ONLY COVERS THE VERBS IT USES — third sighting.** The first run passed **44/44**
+without ever deleting a preset, deleting a tour, editing a tour, stopping a patrol, or
+deleting a camera. Two of the three defects above are in that list. The bench now has a
+section headed "the verbs the rest of this bench never used", and it should be the first
+thing copied into the next one.
+
+### `uicheck_ptz.js`, and what it does that the others do not
+
+* **It starts the simulator itself**, so it does not depend on the API bench having run
+  first — that bench deletes its camera on the way out, deliberately.
+* **`elementFromPoint` at the control's own centre.** "The button did nothing" has two very
+  different causes — a dead handler, or something else on top of it — and only one is a
+  layout bug. This is what turned the Arabic failure from a mystery into a diagnosis in one
+  run: the button's rect was 1268–1294, its tile ended at 1269, and the click was landing on
+  `MAIN.main-workspace`. **When a click does nothing, ask what is actually there.**
+* **A REAL `Input.dispatchMouseEvent`**, not `element.click()`. The presets button lives
+  inside `.ptz-ring-overlay`, which is `pointer-events: none` precisely so its dead corners
+  stop swallowing clicks meant for the picture (the W3-1 ring bug). A control added there
+  that forgets to opt back in renders perfectly, passes `element.click()`, and cannot be
+  pressed by a person. The check also asserts the computed `pointer-events` of both.
+* **It reads the DEVICE's journal after a click in the browser.** Pressing a preset row has
+  to move a physical camera; a panel that renders and posts nothing looks identical on
+  screen.
+* Real keystrokes into the name fields (the `uicheck_mail_dest.js` lesson).
+* The design-token and painted-body assertions (the W3-1 regression).
+
+### The RTL defect, which is the transferable part
+
+`.ptz-presets-button` was placed at `inset-inline-start: -34px` inside `.ptz-ring-overlay`,
+which is anchored with a **physical** `right: 8px`. That reads as "just to the left of the
+ring" and is, in a left-to-right page. In Arabic the logical inset flips to the other side and
+pushes the button off the tile's right edge: **25 of its 26 pixels landed on the page
+background**, where a click hits the workspace and nothing happens.
+
+**MIXING A PHYSICAL ANCHOR WITH A LOGICAL OFFSET is the bug.** The fix is flow layout — the
+overlay became a flex row and the button lost its offset entirely — because in flow there is
+no offset to flip and the box grows to hold what is in it in either direction. **Grep any new
+absolutely-positioned control for a logical inset inside a physically-anchored parent.**
+
+### Harness traps this bench added
+
+* **`result_of` re-wraps a bare scalar, fifth sighting.** Saving a camera answers with a bare
+  id — `{"result": 1}` — and `result_of` wraps any non-dict result as `{"result": <it>}` so it
+  can always return a dict. Reading only `id`/`cameraId` reported a save that worked as a
+  failure. Use `result_list` for lists, and check `result` for scalars.
+* **A screen check must RE-SIGN-IN after creating data through `fetch`.** The SPA loaded its
+  camera list before the fetch created the camera, and a bare `Page.navigate` lands on the
+  sign-in screen while the app re-checks the session — so the check clicked into a login form
+  and reported that the product had no navigation. Call the same `signIn` helper again; it
+  handles `ALREADY IN`.
+* **The first-run wizard is not in English on a fresh fleet.** A skip pattern that only knows
+  `/skip|finish|done/` leaves an Arabic run staring at `تخطي الإعداد` and reporting that Live
+  Views does not exist. Every uicheck's skip regex needs the four languages.
+* **A `—` in an API message prints as `\ufffd` in a piped Windows console.** The wire bytes are
+  correct UTF-8 (`\xe2\x80\x94`); it is the terminal. Do not go hunting for an encoding bug in
+  the product — check `r.content` before believing the console.
+
+### Not claimed
+
+* **The tamper interlock is not live-benched.** The simulator serves ONVIF and no video, so
+  there is no siphon frame for the tamper monitor to read. The interlock is unit-tested
+  against generated scenes and **mutation-checked in three places** (patrol suppresses MOVED,
+  a commanded move forgets the edge baseline, a commanded move forgets the histogram
+  reference), plus a test that a nil journal leaves every verdict unchanged. A future bench
+  wanting the real thing needs a source that is both ONVIF-controllable and streaming.
+* No real PTZ hardware. The simulator implements the calls the product makes and the faults a
+  device returns; it does not reproduce any specific vendor's quirks.

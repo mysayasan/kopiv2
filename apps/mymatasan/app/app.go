@@ -162,6 +162,9 @@ func (m *module) Entities() []any {
 		appentities.CaseItem{},
 		// Named video walls (W3-3b). New table; the auto-migrator creates it.
 		appentities.WallLayout{},
+		// PTZ guard tours (W3-5). New table; the auto-migrator creates it. It stores an
+		// itinerary of preset TOKENS the camera owns, never the positions themselves.
+		appentities.PtzTour{},
 		sharedentities.Notification{},
 		sharedentities.NotificationRollup{},
 		// The append-only audit trail, shared with myidsan and myseliasan. New table on
@@ -277,7 +280,12 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 	repo := newRepos(deps.Db)
 
-	cameraService := services.NewCameraService(repo.Camera, repo.CameraOnvif, onvif.NewClient(), rtsp.NewClient())
+	// The PTZ motion journal is built BEFORE the camera service because both it and the
+	// tamper monitor take it. It is the one place that knows a camera's view changed
+	// because we changed it — without it, every guard tour makes the appliance report
+	// tampering on the camera it is patrolling. See services/ptz_journal.go.
+	ptzJournal := services.NewPTZJournal()
+	cameraService := services.NewCameraService(repo.Camera, repo.CameraOnvif, onvif.NewClient(), rtsp.NewClient(), ptzJournal)
 	visionService := services.NewVisionService(repo.DetectionRule, repo.AlertEvent)
 	detectionClassService := services.NewDetectionClassService(repo.DetectionClass)
 	if err := detectionClassService.EnsureBuiltins(context.Background(), appCfg.Vision.Detector.ClassMap); err != nil {
@@ -374,6 +382,10 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// cookie Live View used to remember a grid in.
 	wallService := services.NewWallService(repo.WallLayout, cameraService)
 	notificationService := notification.NewService(repo.Notification, notificationOptionsFromAppConfig(deps.Config, deps.Logger, deps.Metrics))
+	// PTZ guard tours and alarm recall (W3-5). It publishes into the same feed the health
+	// monitors use, because "the patrol stopped" is a health fact: a tour that has quietly
+	// stopped visiting its route leaves a screen saying "running" and nobody watching.
+	ptzService := services.NewPTZService(repo.PtzTour, cameraService, ptzJournal, notificationService)
 	// Incrementally aggregate the notifications feed into the hourly rollup table
 	// that powers the dashboard's baseline/anomaly analytics (Phase 0). The cursor
 	// persists the last-folded notification id so sweeps are exactly-once and the
@@ -506,6 +518,13 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		})
 		cascade.AddCameraCleanup(func(ctx context.Context, cameraId int64) error {
 			_, err := visionService.PurgeAlertsForCamera(ctx, cameraId)
+			return err
+		})
+		// The camera's guard tours (W3-5). Without this the patrol outlives the camera:
+		// the runner keeps commanding a device that is no longer configured and logs the
+		// failure every dwell, forever, under an id nothing can render.
+		cascade.AddCameraCleanup(func(ctx context.Context, cameraId int64) error {
+			_, err := ptzService.DeleteToursForCamera(ctx, cameraId)
 			return err
 		})
 		// Last: the config row that the purges above are driven from.
@@ -698,6 +717,9 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 		cases: caseService,
 		walls: wallService,
+
+		ptz:        ptzService,
+		ptzJournal: ptzJournal,
 
 		continuitySettings: services.NewContinuitySettingsService(repo.RuntimeSetting),
 		tamperSettings:     services.NewTamperSettingsService(repo.RuntimeSetting),
@@ -1404,6 +1426,58 @@ func (m *module) APIDocs() apidocs.SpecConfig {
 			"POST /api/onvif/devices/{id}/ptz/stop": {
 				Summary:     "Stop PTZ camera",
 				Description: "Uses ONVIF PTZ Stop for saved cameras that expose PTZ capability.",
+				Tags:        []string{"ptz"},
+			},
+			// Saved positions and guard tours (W3-5). Under the same /ptz path the role
+			// model already grants as "may move a camera".
+			"GET /api/cameras/{id}/ptz/presets": {
+				Summary:     "List saved PTZ positions",
+				Description: "Reads the presets stored ON THE CAMERA. They are never mirrored into a table, so this is always what the device actually holds.",
+				Tags:        []string{"ptz"},
+			},
+			"POST /api/cameras/{id}/ptz/presets": {
+				Summary:     "Save a PTZ position",
+				Description: "Stores where the camera is pointing right now under a name. Supplying a token overwrites that preset instead of creating one.",
+				Tags:        []string{"ptz"},
+			},
+			"POST /api/cameras/{id}/ptz/presets/{token}/goto": {
+				Summary:     "Recall a saved PTZ position",
+				Description: "Sends the camera to a stored position. A camera's own refusal is returned in the camera's words.",
+				Tags:        []string{"ptz"},
+			},
+			"POST /api/cameras/{id}/ptz/presets/{token}/delete": {
+				Summary:     "Delete a saved PTZ position",
+				Description: "Removes the preset from the camera. A POST rather than a DELETE, because no grantable page level hands out the DELETE verb.",
+				Tags:        []string{"ptz"},
+			},
+			"GET /api/cameras/{id}/ptz/status": {
+				Summary:     "Read PTZ position",
+				Description: "Where the camera is pointing and whether it is still moving. hasPosition distinguishes 'centred' from 'the device did not say'.",
+				Tags:        []string{"ptz"},
+			},
+			"POST /api/cameras/{id}/ptz/home": {
+				Summary:     "Send a PTZ camera home",
+				Description: "Uses ONVIF GotoHomePosition.",
+				Tags:        []string{"ptz"},
+			},
+			"POST /api/cameras/{id}/ptz/home/set": {
+				Summary:     "Set the PTZ home position",
+				Description: "Makes the camera's current position its home. Does not move the camera.",
+				Tags:        []string{"ptz"},
+			},
+			"GET /api/cameras/{id}/ptz/tours": {
+				Summary:     "List guard tours",
+				Description: "A camera's patrols, each with its stops marked missing where the camera no longer holds that preset, or presetsUnavailable when the camera could not be asked.",
+				Tags:        []string{"ptz"},
+			},
+			"POST /api/cameras/{id}/ptz/tours": {
+				Summary:     "Create a guard tour",
+				Description: "An ordered route of saved positions with a dwell. At least two stops; every stop must name a preset the camera has.",
+				Tags:        []string{"ptz"},
+			},
+			"POST /api/cameras/{id}/ptz/tours/{tourId}/start": {
+				Summary:     "Start a guard tour",
+				Description: "Begins patrolling. Refused when the tour's presets are no longer on the camera. Survives a restart; a person at the PTZ ring and an alarm recall both take precedence.",
 				Tags:        []string{"ptz"},
 			},
 			"POST /api/onvif/devices/{id}/webrtc/offer": {

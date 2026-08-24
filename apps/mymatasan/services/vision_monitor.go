@@ -46,7 +46,14 @@ type VisionMonitor struct {
 	mu             sync.Mutex
 	lastDiag       map[string]int64
 	metrics        telemetry.Metrics
+	// ptz points a camera at what just fired, when a rule asks for it (W3-5). Optional:
+	// nil is an appliance with no PTZ camera, and every rule behaves as before.
+	ptz PTZRecaller
+	// ptzRecalled debounces recalls per rule, so a rule firing on consecutive frames
+	// sends one command rather than one per detection.
+	ptzRecalled map[int64]int64
 }
+
 
 // countFrame records one sampled frame's outcome, and observeInference records how long
 // a detector pass took. Both nil-safe: tests construct the monitor without telemetry.
@@ -126,7 +133,16 @@ func NewVisionMonitor(camera ICameraService, visionService IVisionService, setti
 		snapshotDir:    monitor.SnapshotDir,
 		lastDiag:       map[string]int64{},
 		metrics:        monitor.Metrics,
+		ptzRecalled:    map[int64]int64{},
 	}
+}
+
+// WithPTZ gives the monitor the PTZ service, enabling rules that ask for a camera to be
+// pointed at what they detected. Returns the monitor so it can be chained at the wiring
+// site; nil leaves every rule behaving exactly as it did before.
+func (m *VisionMonitor) WithPTZ(ptz PTZRecaller) *VisionMonitor {
+	m.ptz = ptz
+	return m
 }
 
 func (m *VisionMonitor) Start(ctx context.Context) {
@@ -462,13 +478,19 @@ func (m *VisionMonitor) sampleCamera(ctx context.Context, cameraID int64, camera
 		if m.recorder != nil && alert != nil {
 			m.recorder.TriggerEvent(detection.CameraId, alert.Id, detection.FrameCapturedAt)
 		}
+		ruleName := ruleNameByID(cameraRules, detection.RuleId)
 		NotifyVisionAlert(ctx, m.notifier, alert, cameraName, VisionAlertOptions{
-			RuleName:         ruleNameByID(cameraRules, detection.RuleId),
+			RuleName:         ruleName,
 			RawImage:         frame.Data,
 			Destinations:     notifyDestinations,
 			RuleDestinations: ruleDestinationsByID(cameraRules, detection.RuleId),
 			ArchiveClip:      ruleArchivesClip(cameraRules, detection.RuleId),
 		})
+		// Point a camera at it, if the rule asked for one. This runs AFTER the alert is
+		// persisted and the notification sent, deliberately: an ONVIF call to a dome that
+		// is not answering takes seconds, and a detection that never reached the log
+		// because the camera was slow to move is a detection that did not happen.
+		m.recallPTZ(ctx, cameraRules, detection.RuleId, detection.CameraId, ruleName)
 	}
 
 	// Persist each fired rule's trigger time so its cooldown survives a restart. In-memory
@@ -477,6 +499,51 @@ func (m *VisionMonitor) sampleCamera(ctx context.Context, cameraID int64, camera
 		if err := m.vision.MarkRuleTriggered(ctx, ruleID, at); err != nil {
 			log.Printf("vision: rule%d: persist cooldown failed: %v", ruleID, err)
 		}
+	}
+}
+
+// recallPTZ sends a camera to a preset because a rule fired.
+//
+// Debounced per RULE rather than per camera. A rule firing on ten consecutive frames is one
+// event, and ten identical GotoPreset calls to the same dome is a camera that never finishes
+// arriving — each command restarts the move. Two rules that genuinely want different presets
+// on the same camera are a real conflict, and the last one wins, which is at least the same
+// answer an operator would get by pressing both buttons.
+func (m *VisionMonitor) recallPTZ(ctx context.Context, rules []vision.DetectionRule, ruleID int64, cameraID int64, ruleName string) {
+	if m.ptz == nil {
+		return
+	}
+	config := ""
+	for _, rule := range rules {
+		if rule.Id == ruleID {
+			config = rule.RuleConfig
+			break
+		}
+	}
+	recall := ParseRulePTZRecall(config)
+	if recall == nil {
+		return
+	}
+	hold := recall.HoldSeconds
+	if hold <= 0 {
+		hold = ptzRecallDefaultHold
+	}
+	now := time.Now().UTC().Unix()
+	m.mu.Lock()
+	// The debounce is the HOLD, not a fixed interval: re-commanding the camera before its
+	// hold expires would only restart a move to where it already is, and extending the hold
+	// on every frame would keep a patrol suspended for as long as anything was in view.
+	if last := m.ptzRecalled[ruleID]; last > 0 && now-last < int64(hold) {
+		m.mu.Unlock()
+		return
+	}
+	m.ptzRecalled[ruleID] = now
+	m.mu.Unlock()
+
+	if err := ApplyRulePTZRecall(ctx, m.ptz, config, cameraID, ruleName); err != nil {
+		// Logged, not swallowed: a rule that says "point the camera at the gate" and
+		// silently does not is worse than one that never claimed to.
+		log.Printf("vision: rule%d: PTZ recall to %q failed: %v", ruleID, recall.Preset, err)
 	}
 }
 

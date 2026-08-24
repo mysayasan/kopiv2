@@ -104,6 +104,12 @@ type wiring struct {
 	cases services.ICaseService
 	// walls are the named video-wall arrangements Live View renders.
 	walls services.IWallService
+	// ptz owns guard tours and alarm recall — the two things that make a PTZ camera an
+	// unattended device rather than one that needs somebody holding a button.
+	ptz services.IPTZService
+	// ptzJournal is the one place that knows a camera's view changed because WE changed
+	// it. Held here because the tamper monitor reads it and the camera service writes it.
+	ptzJournal *services.PTZJournal
 
 	// tamperSettings backs the camera tamper monitor — the third health question, after
 	// "does it answer" and "is it recording": is it still showing its scene?
@@ -173,6 +179,8 @@ func (w *wiring) validate() error {
 	check("evidence", w.evidence != nil)
 	check("cases", w.cases != nil)
 	check("walls", w.walls != nil)
+	check("ptz", w.ptz != nil)
+	check("ptzJournal", w.ptzJournal != nil)
 	check("tamperSettings", w.tamperSettings != nil)
 	check("accessPerms", w.accessPerms != nil)
 	check("ffmpegInstaller", w.ffmpegInstaller != nil)

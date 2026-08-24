@@ -4,6 +4,7 @@ import { Tabs } from '@shared/Tabs';
 import { CameraHero, statusTone } from '@shared/CameraHero';
 import { useT } from '@shared/i18n';
 import { WallBar, useWallCycling } from './wall';
+import { PTZPanel } from './ptz';
 import { HelpButton } from '@shared/Manual';
 import { FormAlert, FormBusyOverlay, InfoButton, Tracks, LayoutDropdown } from './ui';
 import { CameraAiPanel } from './vision';
@@ -166,6 +167,10 @@ export function ViewsTab({
   const tileCount = layoutCapacity(layout);
   const columns = layoutColumns(layout);
   const rows = layoutRows(layout);
+  // The camera whose PTZ presets/tours panel is open, or 0. One at a time: the panel
+  // commands a physical device, and two open at once is two operators' worth of buttons
+  // on one screen.
+  const [ptzCamera, setPtzCamera] = useState(0);
 
   // The grid size is a per-page size, not a cap: all selected cameras are kept
   // and shown `tileCount` at a time, so changing the grid re-paginates instead of
@@ -419,6 +424,17 @@ export function ViewsTab({
                       onMove={(dir) => onPTZMove(tile.id, dir)}
                       onStop={() => onPTZStop(tile.id)}
                     />
+                    {/* Presets, home and guard tours (W3-5). Beside the ring, because
+                        "drive it there" and "send it to the gate" are the same job. */}
+                    <button
+                      type="button"
+                      className="ptz-presets-button"
+                      onClick={() => setPtzCamera(Number(tile.id))}
+                      aria-label={t('ptz.open', { name: tile.title })}
+                      title={t('ptz.openHint')}
+                    >
+                      <Ico n="map-pin" sz={14} />
+                    </button>
                   </div>
                 ) : null}
               </>
@@ -429,6 +445,16 @@ export function ViewsTab({
           );
         })}
       </div>
+
+      {ptzCamera ? (
+        <PTZPanel
+          authHeader={authHeader}
+          cameraId={ptzCamera}
+          cameraName={(viewTiles.find((tile) => Number(tile.id) === ptzCamera) || {}).title || ''}
+          onClose={() => setPtzCamera(0)}
+          onMessage={onMessage}
+        />
+      ) : null}
     </section>
   );
 }

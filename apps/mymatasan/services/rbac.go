@@ -122,7 +122,13 @@ func Policy() []PolicyRule {
 		// --- Operating (operator only) ----------------------------------------------------
 		{Path: "/api/vision/alerts/*/ack", Description: "Acknowledge an alert", Viewer: none, Operator: write},
 		{Path: "/api/notifications/*/read", Description: "Mark a notification read", Viewer: none, Operator: write},
-		{Path: "/api/cameras/*/ptz", Description: "Pan, tilt and zoom a camera", Viewer: none, Operator: write},
+		// PTZ. readWrite, not write: everything under /ptz that is worth doing has to be
+		// READ first. The preset list is what a "go to the loading bay" button is built
+		// from, the tour list is what a start button acts on, and a status read is how the
+		// screen knows the camera has arrived. Granted POST alone, an operator could
+		// command a camera to a preset they had no way to see the name of — the same
+		// half-granted capability the evidence export shipped with, above.
+		{Path: "/api/cameras/*/ptz", Description: "Pan, tilt and zoom a camera; recall and manage its saved positions and guard tours", Viewer: none, Operator: readWrite},
 		{Path: "/api/cameras/*/talk/offer", Description: "Talk through a camera's speaker", Viewer: none, Operator: write},
 
 		// --- Admin only -------------------------------------------------------------------

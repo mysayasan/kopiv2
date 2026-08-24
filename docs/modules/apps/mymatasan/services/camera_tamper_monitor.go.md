@@ -35,3 +35,37 @@ No ML and no dependency on the detector: it reads the JPEG the recorder already 
 - The analysis primitives are pure functions over a `Fingerprint` and are tested separately in `infra/vision/tamper_test.go` against generated scenes (sharp / blurred / flat / shifted / person-crossing) rather than checked-in binary fixtures — the properties under test are mathematical, and a generator states that intent more clearly than a blob nobody can inspect in review.
 - Covered by `camera_tamper_monitor_test.go`: a covered lens is detected, a dark night scene is not, a covered lens does not become the new normal, recovery clears, a frozen picture is detected, a quiet-but-live scene is not, a stalled siphon is not, alerts fire once rather than per sweep, disabled cameras are skipped, and nonsense settings normalize. Plus, for `moved`: a camera turned to face somewhere else and left there raises exactly one alert (the regression test for the reference-vs-previous-sample bug above), the wall it now sees does not become the new normal, putting the camera back clears the alert, a person crossing frame does not trigger it, a scene going dark does not either, a covered lens is reported as `covered` only (not also `moved`), a camera with almost no history is judged on neither, and uncovering a lens is not reported as moving the camera (frames taken while covered are kept out of the reference, or cleaning a lens would immediately raise a second alarm). These use a measured `wallScene` generator (structure large enough to survive the 32×32 downsample, so it is not read as `covered` instead).
 - **Live benching of the shipped W1-5 monitor (see `docs/FLAGSHIP_BENCH_CHECKLIST.md`) found `moved` unreachable in production and drove this fix. The fix has since been re-benched live** against a real node pulling a real RTSP stream with the scene swapped underneath the recorder: a re-aimed camera raised `Camera view changed`, the alert stayed outstanding for 2m27s (more than two reference windows) while the camera kept pointing elsewhere, and cleared only when the original scene was restored. It was not mistaken for a covered lens — the bench scene was measured first at 7.7x the baseline edge energy and histogram distance 0.93 against the 0.55 threshold.
+
+## The PTZ interlock (W3-5)
+
+A PTZ camera being re-aimed by an operator, an alarm or its own guard tour produces **exactly
+the picture the MOVED verdict exists to catch**. Nothing connected the two before presets and
+tours were built, so a fleet that started patrolling would have reported tampering on every
+camera it patrolled, every few minutes — and the operator's fix is to turn tamper detection
+off, after which it protects nothing.
+
+`WithPTZ(journal)` gives the monitor the PTZ motion journal (`services/ptz_journal.go`); nil
+leaves every verdict exactly as it was.
+
+**A commanded move FORGETS this camera's baselines** rather than suppressing the verdict for
+a while. Suppression alone defers the alert, it does not prevent it: the old reference
+survives the quiet period, and the first sample after it is still a long way from a view that
+changed a minute ago. Forgetting is also the honest statement — what this monitor knew about
+this camera described a scene it is no longer looking at. Both windows go, not just the
+histograms: a camera re-aimed at a plain wall has legitimately lost its edge energy too, and
+leaving the edge baseline in place turns every move onto a blank surface into a `covered`
+alert instead of a `moved` one — the same bug wearing a different label.
+
+**A camera on PATROL is judged on neither scene verdict.** Its view is supposed to keep
+changing, so there is no "normal picture" to measure against, and a half-rebuilt reference
+made of six different stops is worse than none. The cost is stated rather than hidden, here
+and on the tour screen: while a camera patrols, this appliance cannot tell you it has been
+re-aimed or that its lens has been covered. `frozen` still works, because it asks whether the
+picture is changing at all — a question about the **stream** rather than the scene — so a
+patrolling camera whose feed dies is still caught.
+
+Pinned by `TestTamperIgnoresACameraWeMovedOurselves` (which feeds far more samples at the new
+view than any settling window, so a merely-suppressed reference would fail it, and then
+proves the monitor works again afterwards), `TestTamperDoesNotReportACommandedMoveAsACoveredLens`,
+`TestTamperDoesNotJudgeTheSceneOfAPatrollingCamera` and `TestTamperWithoutAPTZJournalIsUnchanged`.
+All four were mutation-checked.

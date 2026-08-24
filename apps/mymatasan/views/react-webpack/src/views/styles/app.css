@@ -1325,6 +1325,18 @@ body .toast-stack {
   bottom: 8px;
   z-index: 2;
   pointer-events: none;
+  /* The overlay carries the ring AND the presets button (W3-5), laid out in flow.
+     The button was originally placed at `inset-inline-start: -34px` inside this box —
+     which reads as "just to the left of the ring" and IS, in a left-to-right page. This
+     box is anchored with a PHYSICAL `right`, so in Arabic the logical inset flipped to
+     the other side and pushed the button off the tile's right edge: 25 of its 26 pixels
+     landed on the page background, where a click hits the workspace and nothing happens.
+     The button rendered perfectly and could not be pressed.
+     MIXING a physical anchor with a logical offset is the bug. In flow there is no
+     offset to flip, and the box grows to hold what is in it in either direction. */
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
 }
 
 .preview-viewport .ptz-ring-overlay {
@@ -7742,3 +7754,183 @@ input.input-error:focus,
   font-size: 11px;
   color: var(--text-muted);
 }
+
+/* --- PTZ presets, home and guard tours (W3-5) --- */
+
+/* The overlay is pointer-events:none so the tile keeps its drag and double-click; anything
+   inside it that IS interactive has to say so. The ring's sectors do it for themselves.
+   The button sits in the overlay's normal FLOW rather than at a negative offset from it:
+   see the flex rule added to .ptz-ring-overlay above. */
+.ptz-presets-button {
+  flex: 0 0 auto;
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 26px;
+  block-size: 26px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 50%;
+  background: rgba(15, 23, 33, 0.72);
+  color: rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+}
+
+.ptz-presets-button:hover {
+  background: rgba(15, 23, 33, 0.92);
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+.modal-card.ptz-panel {
+  inline-size: min(560px, 92vw);
+  max-block-size: 86vh;
+  overflow-y: auto;
+  text-align: start;
+}
+
+.ptz-panel-title {
+  margin-block: 0 10px;
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+.ptz-section {
+  margin-block-end: 16px;
+  padding-block-end: 12px;
+  border-block-end: 1px solid var(--border-subtle);
+}
+
+.ptz-section:last-of-type { border-block-end: 0; }
+
+.ptz-section h3 {
+  margin-block: 0 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.ptz-tamper-note {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin-block-end: 12px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-subtle, transparent);
+  color: var(--text-secondary);
+}
+
+.ptz-preset-list,
+.ptz-tour-list,
+.ptz-stop-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+}
+
+.ptz-preset-list li,
+.ptz-stop-list li {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding-block: 4px;
+}
+
+.ptz-preset-go {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  flex: 1;
+  padding: 5px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: start;
+}
+
+.ptz-preset-go:hover { border-color: var(--accent, var(--text-secondary)); }
+
+.ptz-preset-name { font-weight: 600; }
+
+.ptz-save-row {
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+  margin-block-start: 6px;
+}
+
+.ptz-save-row input[type="text"],
+.ptz-save-row input:not([type]),
+.ptz-save-row select { flex: 1; }
+
+.ptz-dwell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.ptz-dwell input { inline-size: 90px; }
+
+.ptz-home-row { display: flex; gap: 8px; }
+
+.ptz-tour-list li {
+  padding: 8px 10px;
+  margin-block-end: 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+}
+
+/* A running patrol is marked on the INLINE-START edge so it reads the same way in Arabic. */
+.ptz-tour-list li.running { border-inline-start: 3px solid var(--accent, #2f80ed); }
+
+.ptz-tour-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.ptz-tour-meta { font-size: 11px; color: var(--text-muted); }
+
+.ptz-tour-missing {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  margin-block: 4px 0;
+  font-size: 11px;
+  color: var(--danger-text, var(--text-secondary));
+}
+
+.ptz-tour-actions {
+  display: flex;
+  gap: 6px;
+  margin-block-start: 8px;
+}
+
+.ptz-tour-editor {
+  margin-block-start: 8px;
+  padding: 10px;
+  border: 1px dashed var(--border-subtle);
+  border-radius: 6px;
+}
+
+.ptz-stop-list { counter-reset: ptz-stop; }
+
+.ptz-stop-list li::before {
+  counter-increment: ptz-stop;
+  content: counter(ptz-stop) ".";
+  inline-size: 18px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.ptz-stop-list li span { flex: 1; }
+
+.ptz-recall .metadata-row { gap: 10px; }

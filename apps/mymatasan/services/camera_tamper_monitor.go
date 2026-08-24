@@ -64,6 +64,9 @@ type CameraTamperMonitor struct {
 	notifier  INotificationPublisher
 	recording IRecordingService
 	metrics   telemetry.Metrics
+	// ptz is the PTZ motion journal, or nil on an appliance with no PTZ wiring. See
+	// the movedSuppressed block in sampleCamera for what it changes.
+	ptz *PTZJournal
 
 	mu    sync.Mutex
 	state map[int64]*tamperState
@@ -92,6 +95,10 @@ type tamperState struct {
 	// are currently alerting, so an alert is raised and cleared once rather than repeated.
 	streak map[string]int
 	active map[string]bool
+	// ptzSettledFrom is the timestamp of the last commanded PTZ move this monitor has
+	// already accounted for. It is how "we moved this camera" is turned into an action
+	// exactly once per move rather than on every sweep after it.
+	ptzSettledFrom int64
 	// frozenSince is when the picture first stopped changing, so the frozen rule can be
 	// expressed in SECONDS rather than in samples — a static scene at 3am is normal and
 	// only a long-enough stillness is evidence of a stopped stream.
@@ -111,6 +118,14 @@ func NewCameraTamperMonitor(
 		settings: settings, notifier: notifier, metrics: metrics,
 		state: map[int64]*tamperState{},
 	}
+}
+
+// WithPTZ gives the monitor the PTZ motion journal. Returns the monitor so it can be
+// chained onto the constructor at the wiring site, and is optional: a nil journal leaves
+// every verdict exactly as it was before PTZ presets existed.
+func (m *CameraTamperMonitor) WithPTZ(journal *PTZJournal) *CameraTamperMonitor {
+	m.ptz = journal
+	return m
 }
 
 func (m *CameraTamperMonitor) Start(ctx context.Context) {
@@ -182,6 +197,33 @@ func (m *CameraTamperMonitor) sampleCamera(ctx context.Context, cameraId int64, 
 		st = &tamperState{streak: map[string]int{}, active: map[string]bool{}}
 		m.state[cameraId] = st
 	}
+	// THE PTZ INTERLOCK. Everything below this monitor knows about a camera's "normal
+	// picture" is a statement about WHERE IT WAS POINTING. A commanded move — a jog of the
+	// PTZ ring, a preset recall, an alarm, a tour step — makes all of it false, and the
+	// monitor has no way to tell that from an intruder re-aiming the camera, because from
+	// the picture's point of view it is the same event.
+	//
+	// So a commanded move FORGETS this camera's baselines rather than merely suppressing
+	// the verdict for a while. Suppression alone would defer the alert, not prevent it: the
+	// old reference survives the quiet period and the first sample after it is still a long
+	// way from a view that changed a minute ago. Forgetting is also the honest statement —
+	// what this monitor knew about this camera described a scene it is no longer looking at.
+	//
+	// Both windows go, not just the histograms. A camera re-aimed at a plain wall has
+	// legitimately lost its edge energy too, and leaving the edge baseline in place turns
+	// every move onto a blank surface into a COVERED alert.
+	motion := PTZMotion{}
+	if m.ptz != nil {
+		motion = m.ptz.Motion(cameraId)
+	}
+	if motion.LastCommandedAt > st.ptzSettledFrom {
+		st.ptzSettledFrom = motion.LastCommandedAt
+		st.edges = nil
+		st.hists = nil
+		st.streak[TamperMoved] = 0
+		st.streak[TamperCovered] = 0
+	}
+
 	prev, prevAt := st.last, st.lastCapturedAt
 	baseline := vision.Median(st.edges)
 	haveBaseline := len(st.edges) >= tamperBaselineSize/2
@@ -247,7 +289,13 @@ func (m *CameraTamperMonitor) sampleCamera(ctx context.Context, cameraId int64, 
 	// fleet reports a covered lens at dusk and the feature is muted by morning — after
 	// which it protects nothing. A lens covered overnight is missed; that is the right
 	// trade against a monitor nobody trusts.
-	if haveBaseline && baseline > 0 && !vision.LowLight(fp) {
+	//
+	// Suppressed on a camera that is on PATROL, for the reason spelled out on the moved
+	// block below: its recent normal is a mixture of every stop on the route. A tour that
+	// includes one plain wall drags the median up and reports the wall as a covered lens
+	// on every rotation, and an alert that fires on a working camera every few minutes is
+	// an alert that gets switched off.
+	if haveBaseline && baseline > 0 && !motion.Touring && !vision.LowLight(fp) {
 		if fp.EdgeEnergy < baseline*cfg.CoveredRatio {
 			verdicts[TamperCovered] = true
 		}
@@ -277,8 +325,26 @@ func (m *CameraTamperMonitor) sampleCamera(ctx context.Context, cameraId int64, 
 	// somewhere else" — and the second one is not something the picture can support: you
 	// cannot tell where a camera is aimed when you cannot see out of it. Same shape as the
 	// low-light rule: when the evidence is absent, say nothing rather than guess.
+	//
+	// Not judged AT ALL on a camera that is on patrol. A guard tour's whole purpose is to
+	// keep changing what the camera sees, so there is no "normal picture" to measure
+	// against — every stop on the route is a large, sustained shift away from the last one,
+	// which is precisely this verdict's signature. Forgetting the baseline (above) is the
+	// right answer for a move that ENDS somewhere; a tour never ends anywhere, and a
+	// half-rebuilt reference from a mixture of six scenes is worse than none.
+	//
+	// THE COST IS STATED RATHER THAN HIDDEN: while a camera is patrolling, this appliance
+	// cannot tell you it has been re-aimed OR that its lens has been covered. Both verdicts
+	// are comparisons against "what this camera normally looks like", and a camera that is
+	// supposed to keep changing what it looks at does not have one. FROZEN still works — it
+	// asks whether the picture is changing at all, which is a question about the STREAM
+	// rather than about the scene — so a patrolling camera whose feed dies is still caught.
+	//
+	// That trade is why touring is a distinct fact from "we moved it recently" and not just
+	// a very long settling period, and it is why this is written down here and on the tour
+	// screen rather than left to be discovered.
 	coveredNow := verdicts[TamperCovered] || st.active[TamperCovered]
-	if haveReference && !coveredNow && !vision.LowLight(fp) {
+	if haveReference && !coveredNow && !motion.Touring && !vision.LowLight(fp) {
 		if vision.HistogramDistanceFrom(reference, fp) >= cfg.MovedDistance {
 			verdicts[TamperMoved] = true
 		}
