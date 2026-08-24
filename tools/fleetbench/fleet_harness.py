@@ -27,6 +27,37 @@ def result_of(r):
     return res if isinstance(res, dict) else {"result": res}
 
 
+def result_list(r, *keys):
+    """Unwrap a LIST result, whatever shape the envelope arrived in.
+
+    `result_of` re-wraps a bare array as {"result": [...]} so that it can always return a
+    dict, which means every caller expecting a list has to know that and unwrap it again.
+    Three benches have now iterated the dict instead, got the string "result", and reported
+    that the fleet had no nodes / the appliance had no roles / the camera had no rules — a
+    failure that never mentions the envelope. This is that unwrap, once.
+
+    Extra `keys` name the fields a list may hide under ("items", "walls", "cases", ...).
+    """
+    try:
+        body = r.json()
+    except Exception:
+        return []
+    for candidate in (body, body.get("data") if isinstance(body, dict) else None):
+        if isinstance(candidate, list):
+            return candidate
+        if not isinstance(candidate, dict):
+            continue
+        for key in ("result",) + tuple(keys) + ("items",):
+            value = candidate.get(key)
+            if isinstance(value, list):
+                return value
+            if isinstance(value, dict):
+                for inner in ("result",) + tuple(keys) + ("items",):
+                    if isinstance(value.get(inner), list):
+                        return value[inner]
+    return []
+
+
 def sh(*args, check=True, capture=True):
     p = subprocess.run(args, capture_output=capture, text=True)
     if check and p.returncode != 0:

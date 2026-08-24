@@ -24,6 +24,9 @@ daripada satu yang luas.
 | **Pencerobohan (zon)** | Objek memasuki kawasan yang dilukis. |
 | **Lintasan garis** | Objek melintasi garis yang dilukis, boleh dihadkan kepada satu arah. |
 | **Lintasan berbilang garis** | Objek melintasi beberapa garis mengikut urutan, dalam had masa. |
+| **Melepak (tempoh)** | Objek kekal di dalam zon lebih lama daripada yang anda benarkan. |
+| **Ditinggalkan** | Objek berhenti bergerak dan kekal di situ, tanpa sesiapa di sisinya. |
+| **Arah pergerakan** | Objek melintasi zon menuju ke arah tertentu. |
 | **Plat nombor (LPR)** | Plat yang boleh dibaca dilihat — lihat [Api, asap dan plat](fire-smoke-and-plates#lpr). |
 
 Pilih mengikut soalan yang sebenarnya anda tanya. "Adakah ada sesiapa di halaman?" ialah kehadiran.
@@ -130,3 +133,46 @@ Bagi kebanyakan tapak, pada kebanyakan kamera:
 
 Jalankannya sehari, baca log amaran, kemudian sempitkan. Urutan itu mengatasi cubaan menetapkannya
 dengan betul lebih awal, kerana anda tidak akan berjaya.
+
+## Peraturan tentang masa {#time-rules}
+
+Tiga mod bertanya soalan yang tidak dapat dijawab oleh satu bingkai, jadi ia memerhati objek
+merentasi banyak bingkai.
+
+**Melepak (tempoh)** memberi amaran apabila sesuatu daripada jenis yang dipilih berada di dalam
+zon lebih lama daripada yang anda benarkan. Keluar dari zon memulakan semula kiraan — dilihat di
+tempat lain ialah maklumat. Satu bingkai yang terlepas sekejap tidak: kejatuhan keyakinan atau
+seseorang lalu di hadapan ialah maklumat yang hilang, bukan tanda keluar, dan menyamakan
+kedua-duanya bermakna peraturan tiga puluh saat tidak akan pernah berbunyi pada kamera sebenar.
+
+Amaran itu merekodkan **bila tempoh itu bermula**, bukan hanya bila ia berbunyi. Itu penting
+apabila anda mencari kemudian: amaran tiba pada 14:05 sedangkan tiga puluh saat yang menarik
+bermula pada 14:04:30.
+
+**Ditinggalkan** memberi amaran apabila sesuatu daripada jenis yang dipilih berhenti bergerak dan
+kekal di situ. Bezanya ialah pergerakan, bukan kehadiran — beg yang dibawa melintasi bingkai bukan
+beg yang ditinggalkan, dan peraturan yang berbunyi atas kehadiran akan memberi amaran bagi setiap
+penumpang. Dua tetapan membentuknya: berapa lama ia mesti diam, dan berapa banyak pergerakan yang
+masih dikira diam (pecahan bingkai, untuk menyerap goyangan kotak yang dihasilkan setiap pengesan).
+
+Secara lalai ia hanya berbunyi apabila **tiada sesiapa berdiri di sisinya**. Beg dengan pemiliknya
+di sebelahnya bukan beg terbiar. Matikan tetapan itu hanya jika anda mahu tahu tentang setiap
+objek yang berhenti.
+
+**Arah pergerakan** memberi amaran apabila sesuatu melintasi zon menuju ke arah tertentu —
+peraturan arah salah. Arah adalah relatif kepada **gambar**, bukan kompas: "ke atas" bermaksud ke
+atas imej. Ia memerlukan jarak minimum sebelum menilai sesuatu arah, kerana objek yang pegun
+bergoyang ke arah rawak dan akhirnya akan memenuhi mana-mana peraturan secara tidak sengaja.
+
+> [!NOTE]
+> Peraturan masa memerlukan objek itu **dijejaki** merentasi bingkai. Apabila dua orang bersilang
+> di hadapan kamera, penjejak boleh menukar mereka; tempoh itu kemudian mengikut orang yang salah.
+> Lukis zon di tempat yang paling kurang berkemungkinan itu berlaku, dan pilih ambang yang lebih
+> panjang daripada yang pendek.
+
+### Memilih ambang {#time-thresholds}
+
+Mulakan dengan tempoh yang lebih panjang daripada yang terasa wajar. Peraturan melepak tiga puluh
+saat di muka pintu akan berbunyi bagi sesiapa yang membaca telefon; dua minit akan berbunyi bagi
+seseorang yang menunggu orang yang tidak akan datang. Amaran yang anda bertindak ke atasnya ialah
+amaran yang jarang berlaku.

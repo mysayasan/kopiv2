@@ -33,7 +33,7 @@ lands the work.
 | W3-2 | Appearance search across cameras/nodes | F-16 | `feat/appearance-search` | ✅ shipped, benched 2026-08-23 (11/11 on the real model, 34/34 on a real two-node fleet, 17/17 en and 18/18 ar screen passes) |
 | W3-3a | Case files (bookmarks, annotation, assignment, closure, bundle export, footage hold) | F-17 | `feat/case-files` | ✅ shipped, benched 2026-08-24 (48/48 on real recorded footage + 31/31 en and 32/32 ar screen passes; the bench found 4 defects, one of them in W1-4's shipped export) |
 | W3-3b | Video wall (named layouts, sequence cycling, alarm auto-pop, second monitor) | F-18 | `feat/video-wall` | ✅ shipped, benched 2026-08-24 (25/25 API + 21/21 en and 21/21 ar screen passes; found a shipped defect that made MOST cameras undeletable) |
-| W3-4 | Loitering / left-behind / directional rules | F-15 | — | ☐ not started |
+| W3-4 | Loitering / left-behind / directional rules | F-15 | `feat/dwell-rules` | ✅ shipped, benched 2026-08-24 (23/23 API + 14/14 en and 15/15 ar screen passes; evaluators unit-tested and mutation-checked — the harness has no people to film) |
 | W3-5 | PTZ presets + ONVIF events & relay I/O | F-13, F-14 | — | ☐ not started |
 | W3-6 | Privacy masking + export redaction | F-19 | — | ☐ not started |
 | W3-7 | N+1 node failover | F-23 | — | ☐ not started |
@@ -1238,9 +1238,50 @@ far.**
 **The fleet-level wall spanning nodes is still unbuilt** and remains the differentiator no
 appliance vendor can match; this is the single-appliance half.
 
-**W3-4 · Loitering / left-behind / directional** (F-15). New rule evaluators over the
-existing tracker, not new pipelines. Loitering and direction are track-duration
-questions over data already produced.
+**W3-4 · Loitering / left-behind / directional** (F-15) — SHIPPED and benched on
+`feat/dwell-rules`. Three evaluators over the tracker line crossing already used, in
+`infra/vision/dwell.go`; no second inference pass, no new pipeline.
+
+**THE WHOLE DIFFICULTY IS THAT A TIME RULE CANNOT BE WRONG FOR ONE FRAME.** A frame rule is
+corrected by the next frame and the min-frames streak absorbs the wobble. A time rule that is
+wrong for one frame LOSES ITS CLOCK, and a thirty-second threshold then never fires on a real
+camera where anybody ever walks behind anything. Every decision in the file follows from
+that, and two are worth carrying elsewhere:
+
+- **Not being seen is not the same as being seen somewhere else.** A missed detection is
+  missing information and is forgiven; being observed OUTSIDE the zone is information and
+  resets the dwell immediately. Conflating them either resets on every flicker or lets
+  somebody who steps out and back accumulate a dwell they never had.
+- **The forgiveness is counted in MISSED SAMPLES, not seconds.** What is tolerated is a
+  dropped detection, and detections only happen when the detector runs — "not seen for eight
+  seconds" means nothing on a camera sampled once in that window. The same confusion W2-2
+  found in the availability numbers, pointing the other way.
+
+**The alert says when the dwell BEGAN**, not only when it fired: the alert arrives at 14:05
+and the interesting thirty seconds start at 14:04:30. **A rule that could never fire is
+refused at save time** — no classes (these types have no entry in the static class map, so it
+would match nothing silently), or a direction rule with no direction.
+
+**The bench cannot drive the evaluators and says so.** The harness films synthetic test
+patterns, so the detector finds no person, bag or vehicle to track; a drawn rectangle is not
+a person to a COCO model. What is claimed live: creation, the four refusals and their
+wording, survival across a restart, an alert of each type flowing through notification into
+the alert log carrying `dwellStartedAt`, and the role model. The evaluators are covered by
+unit tests that drive a clock across many samples, plus three mutations — the zone-exit
+reset, the unattended check, and the bearing negation — each caught.
+
+**What the tests found while being written:** tracks were being aged by wall clock AFTER
+matching, so an expired track was matched back to life on the very pass that should have
+retired it, and a seventeen-second absence counted as continuous dwell. Fixed by ageing on
+missed samples. And the first direction test moved a person 0.4 of the frame in one sample —
+further than the tracker's own matching radius — so it became a new track every step and
+accumulated no travel at all: **a synthetic scene has to reproduce the real condition, not
+just contain the right answer**, the same lesson as W1-5's 3px bands and W3-2's orthogonal
+crowd.
+
+**Found by the Arabic screen pass, unrelated:** a rule's schedule summary ("Always active",
+"Daytime only") was hard-coded English and appeared untranslated beside every rule in every
+non-English installation. Now localised.
 
 **W3-5 · PTZ presets + ONVIF events** (F-13, F-14). `infra/onvif/client.go` stops at
 `PTZMove`/`PTZStop` — add presets, absolute/relative move, tours, home, recall-on-detection.

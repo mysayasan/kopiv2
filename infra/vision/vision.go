@@ -25,6 +25,8 @@ const (
 	DetectionIntrusion         = "intrusion"
 	DetectionLineCrossing      = "line_crossing"
 	DetectionMultiLineCrossing = "multi_line_crossing"
+	// The time-based rules (W3-4) live in dwell.go: DetectionLoitering,
+	// DetectionLeftBehind and DetectionDirection.
 	// DetectionLicensePlate is automatic license-plate recognition (ALPR/LPR). The
 	// worker localizes a plate, OCRs the crop, and (optionally) associates the
 	// enclosing vehicle's type and color; the plate string and attributes ride the
@@ -233,6 +235,9 @@ func ValidateDetectionRule(rule DetectionRule) error {
 		return err
 	}
 	if err := validateFaceRule(rule); err != nil {
+		return err
+	}
+	if err := validateDwellRule(rule); err != nil {
 		return err
 	}
 	return ValidateSchedulePolicy(rule.SchedulePolicy)

@@ -31,3 +31,15 @@ When `faceMatch` succeeds, the recognized identity (`personId`, `personName`, `f
 - `line_crossing` and `multi_line_crossing` rules use object centers, track matching, and line geometry from `line_crossing.go`.
 - Rule `threshold` and detector `minObjectConfidence` are both applied; the effective minimum is the higher of the two values.
 - If the backend implements `io.Closer`, this wrapper closes it during app shutdown.
+
+## The time-based branch (W3-4)
+
+`Detect` routes `loitering`, `left_behind` and `direction` to `detectDwell` before the
+per-frame machinery, the same way it routes line crossing to `detectLineCrossing`. Those
+rules follow TRACKS rather than frames, so they keep their own streak and cooldown accounting
+and skip the min-frames logic entirely: a dwell threshold IS the evidence, and requiring
+three consecutive confirmations on top of it would silently add samples to it.
+
+`objectRuleState` gained `dwellRules`, held separately from `lineRules` because the two keep
+different state about the same tracks — sharing one table would make a dwell rule's timers
+depend on which line rules happen to exist on the camera.

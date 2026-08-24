@@ -79,13 +79,10 @@ type lineCrossingRuleState struct {
 }
 
 type lineTrack struct {
-	id                int64
-	yoloTrackID       int64 // stable ID assigned by ByteTrack in the YOLO worker; 0 when unavailable
-	label             string
-	center            point2D
-	box               Box
-	seen              int
-	lastSeen          int64
+	// The identity half lives in trackCore (track.go), shared with the dwell rules —
+	// id, label, centre, box, seen count and lastSeen, plus the ByteTrack id when the
+	// worker supplies one. Its fields are promoted, so track.center still reads as before.
+	trackCore
 	nextLineIndex     int
 	sequenceStartedAt int64
 	// sides holds the last confirmed side of each line (keyed by line ID). It gives
@@ -457,48 +454,21 @@ func buildLineCrossingDetection(rule DetectionRule, candidate ObjectCandidate, t
 func (s *lineCrossingRuleState) matchOrCreate(match lineMatch, maxDistance float64, now int64, used map[int64]bool) (*lineTrack, bool) {
 	yoloID := yoloTrackIDFromMetadata(match.candidate.Metadata)
 
-	// Prefer matching by stable ByteTrack ID when the YOLO worker provides one.
-	if yoloID > 0 {
-		for _, track := range s.tracks {
-			if used[track.id] || track.label != match.candidate.Label {
-				continue
-			}
-			if track.yoloTrackID == yoloID {
-				used[track.id] = true
-				return track, false
-			}
-		}
-	}
-
-	// Fall back to nearest-centre matching for workers without ByteTrack.
-	var best *lineTrack
-	bestDistance := math.MaxFloat64
-	for _, track := range s.tracks {
-		if used[track.id] || track.label != match.candidate.Label {
-			continue
-		}
-		distance := pointDistance(track.center, match.center)
-		if distance <= maxDistance && distance < bestDistance {
-			best = track
-			bestDistance = distance
-		}
-	}
-	if best != nil {
-		if yoloID > 0 {
-			best.yoloTrackID = yoloID // adopt the YOLO ID now that we have one
-		}
-		used[best.id] = true
-		return best, false
+	// Identity first (ByteTrack), geometry second — the shared matcher in track.go.
+	if existing, ok := matchTrack(s.tracks, match.candidate.Label, match.center, yoloID, maxDistance, used); ok {
+		return existing, false
 	}
 
 	s.nextTrackID++
 	track := &lineTrack{
-		id:          s.nextTrackID,
-		yoloTrackID: yoloID,
-		label:       match.candidate.Label,
-		center:      match.center,
-		box:         match.candidate.Box,
-		lastSeen:    now,
+		trackCore: trackCore{
+			id:          s.nextTrackID,
+			yoloTrackID: yoloID,
+			label:       match.candidate.Label,
+			center:      match.center,
+			box:         match.candidate.Box,
+			lastSeen:    now,
+		},
 	}
 	s.tracks[track.id] = track
 	used[track.id] = true

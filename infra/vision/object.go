@@ -85,6 +85,11 @@ type objectRuleState struct {
 	hitsByRule    map[int64]int
 	lastTriggered map[int64]int64
 	lineRules     map[int64]*lineCrossingRuleState
+	// dwellRules holds the per-rule tracks the time-based rules need (loitering,
+	// left-behind, direction). Separate from lineRules because the two keep different
+	// state about the same tracks, and sharing one table would make every dwell rule's
+	// timers depend on which line rules happen to exist on the camera.
+	dwellRules map[int64]*dwellRuleState
 }
 
 // ObjectRuleDetector maps object detector candidates to configured detection rules.
@@ -138,6 +143,7 @@ func (d *ObjectRuleDetector) Detect(ctx context.Context, frame Frame, rules []De
 			hitsByRule:    map[int64]int{},
 			lastTriggered: map[int64]int64{},
 			lineRules:     map[int64]*lineCrossingRuleState{},
+			dwellRules:    map[int64]*dwellRuleState{},
 		}
 		d.byCamera[frame.CameraId] = state
 	}
@@ -154,6 +160,18 @@ func (d *ObjectRuleDetector) Detect(ctx context.Context, frame Frame, rules []De
 				return nil, err
 			}
 			detections = append(detections, lineDetections...)
+			continue
+		}
+		// The time-based rules follow tracks rather than frames, so like line crossing
+		// they keep their own streak and cooldown accounting and skip the min-frames
+		// machinery below: a dwell threshold IS the evidence, and requiring three
+		// consecutive confirmations on top of it would silently add samples to it.
+		if isDwellType(rule.DetectionType) {
+			dwellDetections, err := d.detectDwell(rule, candidates, state, now)
+			if err != nil {
+				return nil, err
+			}
+			detections = append(detections, dwellDetections...)
 			continue
 		}
 		var candidate ObjectCandidate
