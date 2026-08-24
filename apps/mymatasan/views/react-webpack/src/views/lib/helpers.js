@@ -950,6 +950,46 @@ export function applyPTZRecall(ruleConfig, recall) {
   return JSON.stringify(cfg, null, 2);
 }
 
+// relayFromConfig reads the rule's "switch an output when this fires" setting (W3-5b), or
+// null. It rides in ruleConfig beside the destinations and the PTZ recall, for the same
+// reasons: it is what happens BECAUSE the rule fired, and it costs no migration.
+export function relayFromConfig(ruleConfig) {
+  try {
+    const cfg = JSON.parse(ruleConfig || '{}');
+    const relay = cfg.relay;
+    if (!relay || !relay.token) {
+      return null;
+    }
+    return {
+      cameraId: Number(relay.cameraId) || 0,
+      token: String(relay.token),
+      pulseSeconds: Number(relay.pulseSeconds) || 0,
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+// applyRuleRelay sets or clears the rule's relay action, preserving every other field.
+export function applyRuleRelay(ruleConfig, relay) {
+  let cfg;
+  try {
+    cfg = JSON.parse(ruleConfig || '{}');
+  } catch (_) {
+    cfg = {};
+  }
+  if (relay && relay.token) {
+    cfg.relay = {
+      cameraId: Number(relay.cameraId) || 0,
+      token: String(relay.token),
+      pulseSeconds: Number(relay.pulseSeconds) || 0,
+    };
+  } else {
+    delete cfg.relay;
+  }
+  return JSON.stringify(cfg, null, 2);
+}
+
 // ---- Class registry helpers ----
 
 // groupedClassOptions buckets registry classes for the Target picker. Disabled

@@ -52,6 +52,8 @@ type VisionMonitor struct {
 	// ptzRecalled debounces recalls per rule, so a rule firing on consecutive frames
 	// sends one command rather than one per detection.
 	ptzRecalled map[int64]int64
+	// relays fires a camera's output when a rule asks for it (W3-5b). Optional.
+	relays RelayFirer
 }
 
 
@@ -142,6 +144,13 @@ func NewVisionMonitor(camera ICameraService, visionService IVisionService, setti
 // site; nil leaves every rule behaving exactly as it did before.
 func (m *VisionMonitor) WithPTZ(ptz PTZRecaller) *VisionMonitor {
 	m.ptz = ptz
+	return m
+}
+
+// WithRelays lets a rule switch a camera's output when it fires. Optional; nil leaves every
+// rule behaving exactly as it did before.
+func (m *VisionMonitor) WithRelays(relays RelayFirer) *VisionMonitor {
+	m.relays = relays
 	return m
 }
 
@@ -491,6 +500,11 @@ func (m *VisionMonitor) sampleCamera(ctx context.Context, cameraID int64, camera
 		// is not answering takes seconds, and a detection that never reached the log
 		// because the camera was slow to move is a detection that did not happen.
 		m.recallPTZ(ctx, cameraRules, detection.RuleId, detection.CameraId, ruleName)
+		// ...and sound whatever the rule asks for. Same placement and the same reasoning:
+		// after the alert is persisted and the notification sent, because a detection that
+		// never reached the log because a siren was slow to answer is a detection that did
+		// not happen.
+		m.fireRelay(ctx, cameraRules, detection.RuleId, detection.CameraId, ruleName)
 	}
 
 	// Persist each fired rule's trigger time so its cooldown survives a restart. In-memory
@@ -544,6 +558,31 @@ func (m *VisionMonitor) recallPTZ(ctx context.Context, rules []vision.DetectionR
 		// Logged, not swallowed: a rule that says "point the camera at the gate" and
 		// silently does not is worse than one that never claimed to.
 		log.Printf("vision: rule%d: PTZ recall to %q failed: %v", ruleID, recall.Preset, err)
+	}
+}
+
+// fireRelay switches a camera output because a rule fired.
+//
+// It does NOT carry its own debounce, unlike recallPTZ. The relay service is the chokepoint
+// for everything that actuates, and it rate-limits automatic actuations there — which is
+// where the guard has to be, because a second caller added later would otherwise arrive
+// without one. A rule that fires every frame is throttled once, at the thing being
+// protected, rather than once per feature that can reach it.
+func (m *VisionMonitor) fireRelay(ctx context.Context, rules []vision.DetectionRule, ruleID int64, cameraID int64, ruleName string) {
+	if m.relays == nil {
+		return
+	}
+	config := ""
+	for _, rule := range rules {
+		if rule.Id == ruleID {
+			config = rule.RuleConfig
+			break
+		}
+	}
+	if err := ApplyRuleRelay(ctx, m.relays, config, cameraID, ruleName); err != nil {
+		// Logged, not swallowed: a rule that says "sound the siren" and silently does not
+		// is worse than one that never claimed to.
+		log.Printf("vision: rule%d: relay actuation failed: %v", ruleID, err)
 	}
 }
 

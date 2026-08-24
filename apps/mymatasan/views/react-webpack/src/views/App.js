@@ -1944,6 +1944,9 @@ function AppInner({ lang, onLangChange }) {
       title: cameraTitle(device),
       src: liveSource(device.id),
       ptzSupported: Boolean(device.ptzSupported),
+      // Whether the camera is ONVIF-managed, which is what decides whether it can have
+      // relay outputs (W3-5b). The panel itself reports a camera that has none.
+      onvif: Boolean(device.xAddr),
       rtspUrl: device.rtspUrl || '',
       profileToken: device.profileToken || '',
       rtspStatus: device.rtspStatus || '',
@@ -1962,6 +1965,7 @@ function AppInner({ lang, onLangChange }) {
         ...tile,
         title: cameraTitle(device),
         ptzSupported: Boolean(device.ptzSupported),
+        onvif: Boolean(device.xAddr),
         rtspUrl: device.rtspUrl || tile.rtspUrl || '',
         profileToken: device.profileToken || tile.profileToken || '',
         rtspStatus: device.rtspStatus || tile.rtspStatus || '',

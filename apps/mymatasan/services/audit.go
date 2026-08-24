@@ -1,6 +1,10 @@
 package services
 
 import (
+	"context"
+	"fmt"
+	"strconv"
+
 	sharedaudit "github.com/mysayasan/kopiv2/domain/shared/audit"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"github.com/mysayasan/kopiv2/infra/telemetry"
@@ -95,6 +99,12 @@ const (
 	ActionPTZTourDelete   = "ptz.tour_delete"
 	ActionPTZTourRun      = "ptz.tour_run"
 
+	// Relay outputs (W3-5b). EVERY actuation, including the automatic ones and including
+	// the failures — unlike a PTZ preset recall, which an operator generates by the dozen
+	// and which moves nothing but a camera. A relay changes the BUILDING, and "who set the
+	// siren off at 04:12, and did the camera actually do it" has to be answerable.
+	ActionRelayFire = "relay.fire"
+
 	// Cameras. A credential change is recorded; the credential itself never is.
 	ActionCameraCreate           = "camera.create"
 	ActionCameraUpdate           = "camera.update"
@@ -133,6 +143,43 @@ const (
 	TargetCase      = "case"
 	TargetWall      = "wall"
 )
+
+// RelayAuditRecorder adapts the audit service into the recorder the relay chokepoint takes.
+//
+// The relay service is given a FUNCTION rather than the Auditor the handlers use, because
+// most actuations have no HTTP request behind them: a detection rule sounding a siren at
+// 4am has no actor, no client IP and no user agent, and it still has to be in the trail.
+// Threading the API's request-scoped auditor down there would have meant either inventing a
+// fake request or leaving automatic actuations unaudited — and the second is what actually
+// happens when the seam is awkward.
+func RelayAuditRecorder(svc IAuditService) RelayAuditor {
+	return func(ctx context.Context, cameraId int64, token string, action string, reason string, automatic bool, err error) {
+		if svc == nil {
+			return
+		}
+		outcome := "success"
+		detail := fmt.Sprintf("switched output %s %s on camera %d", token, action, cameraId)
+		if automatic {
+			detail = fmt.Sprintf("automatically switched output %s %s on camera %d (%s)",
+				token, action, cameraId, reason)
+		}
+		if err != nil {
+			outcome = "failure"
+			detail += ": " + err.Error()
+		}
+		svc.Record(ctx, sharedaudit.Entry{
+			Action:     ActionRelayFire,
+			TargetType: TargetCamera,
+			TargetId:   strconv.FormatInt(cameraId, 10),
+			Outcome:    outcome,
+			Detail:     detail,
+			Metadata: map[string]any{
+				"cameraId": cameraId, "relayToken": token, "relayAction": action,
+				"reason": reason, "automatic": automatic,
+			},
+		})
+	}
+}
 
 // NewAuditService builds the trail over mymatasan's database. logf receives write-failure
 // diagnostics (may be nil).

@@ -119,6 +119,25 @@ func Pages() sharedservices.PageCatalog {
 							// Arranging the walls, which is the same rung as moving a camera:
 							// it changes what a room sees rather than merely watching it.
 							canUse("/api/walls"),
+							// SEEING a camera's relay outputs, not switching them. The
+							// screen has to list them to offer a button for one, and a list
+							// of outputs is not the ability to fire one. The firing is the
+							// rung above.
+							canRead("/api/cameras/*/relays"),
+						},
+					},
+					{
+						// SWITCHING THE BUILDING'S OUTPUTS: sirens, strobes, gates, door
+						// strikes, lights. Its own rung, above moving cameras and arranging
+						// walls, because it is the only capability in this product that
+						// acts on the world rather than on what is watched — and because an
+						// operator who may point a camera is not automatically somebody who
+						// may open a gate. An administrator grants this deliberately, to
+						// the roles that should have it, and nothing hands it out as a side
+						// effect of anything else.
+						Id: LevelManage,
+						Grants: []sharedservices.PathGrant{
+							canWrite("/api/cameras/*/relays"),
 						},
 					},
 				},

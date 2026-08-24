@@ -30,11 +30,13 @@ type visionApi struct {
 	search    *services.SightingSearch
 	// ptz points a camera at what a rule detected, when the rule asks for one (W3-5).
 	ptz services.PTZRecaller
+	// relays switches a camera output when a rule asks for it (W3-5b).
+	relays services.RelayFirer
 }
 
 // NewVisionApi registers AI detection rule, alert, and class-registry routes.
-func NewVisionApi(router *mux.Router, serv services.IVisionService, classes services.IDetectionClassService, recorder *recording.Manager, notifier services.INotificationService, camera services.ICameraService, settings services.IRuntimeSettingsService, notifDest services.INotificationDestinationsProvider, cipher *atrest.Cipher, search *services.SightingSearch, ptz services.PTZRecaller) {
-	handler := &visionApi{serv: serv, classes: classes, recorder: recorder, notifier: notifier, camera: camera, settings: settings, notifDest: notifDest, cipher: cipher, search: search, ptz: ptz,
+func NewVisionApi(router *mux.Router, serv services.IVisionService, classes services.IDetectionClassService, recorder *recording.Manager, notifier services.INotificationService, camera services.ICameraService, settings services.IRuntimeSettingsService, notifDest services.INotificationDestinationsProvider, cipher *atrest.Cipher, search *services.SightingSearch, ptz services.PTZRecaller, relays services.RelayFirer) {
+	handler := &visionApi{serv: serv, classes: classes, recorder: recorder, notifier: notifier, camera: camera, settings: settings, notifDest: notifDest, cipher: cipher, search: search, ptz: ptz, relays: relays,
 		source: services.NewDetectionSource(camera, recorder, settings, nil)}
 	group := router.PathPrefix("/vision").Subrouter()
 
@@ -282,8 +284,14 @@ func (a *visionApi) createAlert(w http.ResponseWriter, r *http.Request) {
 	// which code raised the alert. It is also what makes the rule editor's Test button
 	// prove anything about the half of the rule that moves a camera.
 	if alert != nil {
-		if err := services.ApplyRulePTZRecall(r.Context(), a.ptz, a.ruleConfig(r.Context(), alert.RuleId), alert.CameraId, ""); err != nil {
+		config := a.ruleConfig(r.Context(), alert.RuleId)
+		if err := services.ApplyRulePTZRecall(r.Context(), a.ptz, config, alert.CameraId, ""); err != nil {
 			log.Printf("vision: rule%d: PTZ recall failed: %v", alert.RuleId, err)
+		}
+		// The relay half of the same parity (W3-5b). A rule that sounds a siren has to
+		// sound it from the Test button too, or the button proves nothing about it.
+		if err := services.ApplyRuleRelay(r.Context(), a.relays, config, alert.CameraId, "manual alert"); err != nil {
+			log.Printf("vision: rule%d: relay actuation failed: %v", alert.RuleId, err)
 		}
 	}
 	controllers.SendResult(w, alert, "succeed")

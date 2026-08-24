@@ -371,3 +371,173 @@ export function PTZRecallField({ authHeader, cameraId, recall, onChange }) {
     </section>
   );
 }
+
+// --- relay outputs (W3-5b) -----------------------------------------------------------
+//
+// A SEPARATE PANEL FROM THE PTZ ONE, and not a section inside it, because they are separate
+// capabilities: the role model grants pointing a camera and switching the building's outputs
+// on different rungs, and a camera can have relays without having PTZ at all. One dialog
+// would have meant one button, behind whichever grant happened to gate it.
+
+export function loadRelays(authHeader, cameraId) {
+  return apiJson(`/api/cameras/${cameraId}/relays`, { authHeader })
+    .then((data) => data?.relays || []);
+}
+
+export function RelayPanel({ authHeader, cameraId, cameraName, onClose, onMessage }) {
+  const t = useT();
+  const [relays, setRelays] = useState([]);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [pulse, setPulse] = useState(5);
+
+  const refresh = useCallback(async () => {
+    try {
+      setRelays(await loadRelays(authHeader, cameraId));
+      setError('');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoaded(true);
+    }
+  }, [authHeader, cameraId]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const fire = useCallback(async (relay, action) => {
+    setBusy(true);
+    setError('');
+    try {
+      await apiJson(`/api/cameras/${cameraId}/relays/${encodeURIComponent(relay.token)}/fire`, {
+        method: 'POST', authHeader,
+        body: { action, pulseSeconds: Number(pulse) || 0, reason: t('relay.operatorReason') },
+      });
+      onMessage?.(t('relay.switched', { token: relay.token }));
+      await refresh();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }, [authHeader, cameraId, pulse, refresh, onMessage, t]);
+
+  return (
+    <div className="modal-backdrop" onClick={busy ? undefined : onClose}>
+      <div className="modal-card ptz-panel relay-panel" onClick={(e) => e.stopPropagation()}
+        role="dialog" aria-modal="true" data-camera-id={cameraId}>
+        <h2 className="ptz-panel-title">{t('relay.title', { name: cameraName })}</h2>
+        {error ? <FormAlert message={error} /> : null}
+
+        {loaded && relays.length === 0 && !error ? (
+          <p className="settings-hint">{t('relay.none')}</p>
+        ) : null}
+
+        <ul className="relay-list">
+          {relays.map((relay) => (
+            <li key={relay.token} data-relay-token={relay.token} className={relay.heldByUs ? 'held' : ''}>
+              <div className="relay-head">
+                <strong>{relay.token}</strong>
+                <span className="relay-meta" data-relay-mode={relay.bistable ? 'bistable' : 'monostable'}>
+                  {relay.bistable ? t('relay.stays') : t('relay.selfReleases', { n: relay.delaySeconds || 0 })}
+                </span>
+              </div>
+              {/* The one state where a restart of the appliance leaves the output
+                  energised. Said out loud, because nothing else would say it. */}
+              {relay.heldByUs ? (
+                <p className="relay-held"><Ico n="warning" sz={14} /> {t('relay.heldByUs')}</p>
+              ) : null}
+              <div className="relay-actions">
+                <button type="button" disabled={busy} onClick={() => fire(relay, 'pulse')}>
+                  {t('relay.pulse')}
+                </button>
+                {relay.bistable ? (
+                  <button type="button" className="quiet" disabled={busy} onClick={() => fire(relay, 'on')}>
+                    {t('relay.on')}
+                  </button>
+                ) : null}
+                {/* OFF is never disabled, not even while another request is in flight.
+                    A button that stops a siren must not be greyed out by the appliance's
+                    own busy state — which is exactly what it would be during the request
+                    that started the siren. */}
+                <button type="button" className="quiet danger-text" onClick={() => fire(relay, 'off')}>
+                  {t('relay.off')}
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+
+        {relays.length > 0 ? (
+          <label className="ptz-dwell relay-pulse">
+            {t('relay.pulseSeconds')}
+            <input type="number" min={1} max={300} value={pulse} disabled={busy}
+              onChange={(e) => setPulse(Number(e.target.value))} />
+          </label>
+        ) : null}
+
+        <p className="settings-hint">{t('relay.auditNote')}</p>
+
+        <div className="modal-actions">
+          <button type="button" className="quiet" onClick={onClose}>{t('common.close')}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// RelayRuleField is the detection rule's "switch something on when this fires" control.
+//
+// It offers only a PULSE, with no latch option, because the service refuses a latching rule
+// anyway — a rule that could leave a siren sounding is, by construction, the one firing at
+// 4am with nobody watching. Offering a control the server will refuse is worse than not
+// offering it.
+export function RelayRuleField({ authHeader, cameraId, relay, onChange }) {
+  const t = useT();
+  const [relays, setRelays] = useState([]);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!cameraId) return undefined;
+    loadRelays(authHeader, cameraId)
+      .then((rows) => { if (!cancelled) { setRelays(rows); setError(''); } })
+      .catch((err) => { if (!cancelled) setError(err.message); });
+    return () => { cancelled = true; };
+  }, [authHeader, cameraId]);
+
+  if (error || relays.length === 0) {
+    return null;
+  }
+  const selected = relay?.token || '';
+  const seconds = relay?.pulseSeconds || 0;
+
+  return (
+    <section className="schedule-panel relay-rule">
+      <header>
+        <h3>{t('relay.ruleTitle')}</h3>
+        <span className="status-pill" data-relay-rule={selected ? 'on' : 'off'}>
+          {selected ? t('relay.ruleOn') : t('relay.ruleOff')}
+        </span>
+      </header>
+      <div className="metadata-row">
+        <label>
+          {t('relay.output')}
+          <select value={selected}
+            onChange={(e) => onChange(e.target.value ? { cameraId: 0, token: e.target.value, pulseSeconds: seconds } : null)}>
+            <option value="">{t('relay.ruleNone')}</option>
+            {relays.map((r) => (<option key={r.token} value={r.token}>{r.token}</option>))}
+          </select>
+        </label>
+        {selected ? (
+          <label>
+            {t('relay.pulseSeconds')}
+            <input type="number" min={1} max={300} value={seconds || 5}
+              onChange={(e) => onChange({ cameraId: 0, token: selected, pulseSeconds: Number(e.target.value) })} />
+          </label>
+        ) : null}
+      </div>
+      {selected ? <p className="field-hint">{t('relay.ruleHint')}</p> : null}
+    </section>
+  );
+}

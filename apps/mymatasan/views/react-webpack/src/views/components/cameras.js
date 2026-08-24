@@ -4,7 +4,7 @@ import { Tabs } from '@shared/Tabs';
 import { CameraHero, statusTone } from '@shared/CameraHero';
 import { useT } from '@shared/i18n';
 import { WallBar, useWallCycling } from './wall';
-import { PTZPanel } from './ptz';
+import { PTZPanel, RelayPanel } from './ptz';
 import { HelpButton } from '@shared/Manual';
 import { FormAlert, FormBusyOverlay, InfoButton, Tracks, LayoutDropdown } from './ui';
 import { CameraAiPanel } from './vision';
@@ -171,6 +171,10 @@ export function ViewsTab({
   // commands a physical device, and two open at once is two operators' worth of buttons
   // on one screen.
   const [ptzCamera, setPtzCamera] = useState(0);
+  // The camera whose relay-output panel is open, or 0. Separate from the PTZ one because
+  // they are separate capabilities: a camera can have outputs and no PTZ, and switching a
+  // gate is granted on a different rung from pointing a camera.
+  const [relayCamera, setRelayCamera] = useState(0);
 
   // The grid size is a per-page size, not a cap: all selected cameras are kept
   // and shown `tileCount` at a time, so changing the grid re-paginates instead of
@@ -386,6 +390,22 @@ export function ViewsTab({
                       {t('cam.aiCount', { n: tileAlerts.length })}
                     </button>
                   ) : null}
+                  {/* Relay outputs (W3-5b). IN THE HEADER, with the other tile controls,
+                      not floating over the picture: the corners of a tile are already
+                      occupied — an absolutely-positioned control at the top of the tile
+                      lands underneath these buttons and cannot be clicked at all, which is
+                      what the screen check found when it was there. */}
+                  {tile.onvif ? (
+                    <button
+                      type="button"
+                      className="icon-button relay-tile-button"
+                      onClick={() => setRelayCamera(Number(tile.id))}
+                      aria-label={t('relay.open', { name: tile.title })}
+                      title={t('relay.openHint')}
+                    >
+                      <Ico n="zap" sz={12} />
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className="icon-button"
@@ -446,6 +466,15 @@ export function ViewsTab({
         })}
       </div>
 
+      {relayCamera ? (
+        <RelayPanel
+          authHeader={authHeader}
+          cameraId={relayCamera}
+          cameraName={(viewTiles.find((tile) => Number(tile.id) === relayCamera) || {}).title || ''}
+          onClose={() => setRelayCamera(0)}
+          onMessage={onMessage}
+        />
+      ) : null}
       {ptzCamera ? (
         <PTZPanel
           authHeader={authHeader}

@@ -35,7 +35,7 @@ lands the work.
 | W3-3b | Video wall (named layouts, sequence cycling, alarm auto-pop, second monitor) | F-18 | `feat/video-wall` | ✅ shipped, benched 2026-08-24 (25/25 API + 21/21 en and 21/21 ar screen passes; found a shipped defect that made MOST cameras undeletable) |
 | W3-4 | Loitering / left-behind / directional rules | F-15 | `feat/dwell-rules` | ✅ shipped, benched 2026-08-24 (23/23 API + 14/14 en and 15/15 ar screen passes; evaluators unit-tested and mutation-checked — the harness has no people to film) |
 | W3-5a | PTZ presets, home, guard tours + alarm recall | F-13 | `feat/ptz-presets` | ✅ shipped, benched 2026-08-24 (60/60 against a real ONVIF device + 26/26 en and 26/26 ar screen passes; found a patrol that moved the camera after being stopped, a tour that outlived its deleted camera, and a control that landed outside its tile in Arabic) |
-| W3-5b | ONVIF events (PullPoint), digital inputs & relay outputs | F-14 | — | ☐ not started |
+| W3-5b | ONVIF events (PullPoint), digital inputs & relay outputs | F-14 | `feat/onvif-events` | ✅ shipped, benched 2026-08-24 (34/34 against a real ONVIF device + 16/16 en and 16/16 ar screen passes; found an alert-log write that silently never happened, and a control that could not be clicked at all) |
 | W3-6 | Privacy masking + export redaction | F-19 | — | ☐ not started |
 | W3-7 | N+1 node failover | F-23 | — | ☐ not started |
 | W3-8 | Tenant isolation | F-24 | — | ✅ CLOSED 2026-08-21 — single-org per install, will not build |
@@ -1364,11 +1364,88 @@ the simulator serves ONVIF and no video, so there is no siphon frame for the mon
 No ONVIF preset TOURS (`tptz:PresetTour`): device support is thin and inconsistent, and a
 tour driven from the appliance works on any camera that has presets at all.
 
-**W3-5b · ONVIF events & relay I/O** (F-14). No event subscription exists at all: adding
-PullPoint unlocks camera-side analytics and tamper alarms, digital **inputs** (door contacts,
-PIRs, panic buttons), and relay **outputs** (sirens, strobes, gates). Relay output is the
-difference between recording an intrusion and responding to one — and the natural mypintusan
-seam.
+**W3-5b · ONVIF events, digital inputs & relay outputs** (F-14) — SHIPPED and benched on
+`feat/onvif-events`. `infra/onvif/events.go` + `relay.go`; `services/camera_events.go` +
+`relay.go`.
+
+**TWO DIRECTIONS THE PRODUCT HAD NEVER GONE.** Everything it detected, it detected itself —
+pull a frame, run a model. A camera has its own senses, and the ones no video analysis can
+substitute for are the DIGITAL INPUTS on its terminal block: a door contact, a PIR, a beam, a
+panic button. And a relay output is the only thing this appliance does that acts on the
+world. The capability pill for events had been rendered on the camera page since long before
+this, and nothing consumed it.
+
+**THE EVENT TRANSPORT'S FAILURE MODE IS SILENCE, and that is the whole design.** PullPoint is
+a subscription with a LEASE; a camera drops it without a word if it is not renewed, and a
+door contact that has stopped reporting looks exactly like a door nobody opened. So a
+subscription that cannot be kept alive is an ALERTABLE FAULT, not a quiet retry — the same
+principle as W1-3 and W1-5. Renewal runs at two thirds of the lease **the device reported**,
+measured on the DEVICE's clock, because a camera whose clock is wrong is common enough that
+this app has a date/time screen.
+
+**INITIALIZED IS NOT AN EVENT.** On subscribing, a camera announces the CURRENT state of
+every property it publishes — so a building with four closed door contacts announces four
+closed door contacts the instant we connect. Treated as alerts, every restart, every renewal
+failure and every network blip raises a burst of alarms for doors nobody touched, at exactly
+the moments an operator is least able to tell a real one from noise. **ASK OF ANY SUBSCRIBE:
+what does it tell you before anything has happened?**
+
+**THE RELAY IS A CHOKEPOINT, AND ONE RULE OUTRANKS THE REST: TURNING SOMETHING OFF IS NEVER
+REFUSED.** The rate limit, the mode lookup and every other check apply only to switching ON;
+the OFF branch sits above all of them, before anything that can fail. A limiter that can
+block an OFF is a siren nobody can silence, and it would refuse exactly when the siren is
+sounding — which is when the limiter is most likely to have been tripped. The screen honours
+the same rule: the off control is never disabled and never dimmed, not even during the
+request that started the siren.
+
+**THE RESPONSIBILITY FOR SWITCHING OFF GOES TO THE DEVICE WHENEVER THE DEVICE WILL TAKE IT.**
+A monostable output releases itself; a bistable one stays put forever. So a pulse first asks
+the camera to BECOME a timed output, and only if the camera refuses does this appliance hold
+it with a timer in memory — and then says so on screen, because that is the one state where a
+crash leaves something in the building energised. An unknown mode counts as bistable: the
+reading where WE are responsible for the off. **PUSH THE OBLIGATION ONTO THE THING THAT
+SURVIVES YOUR PROCESS.**
+
+**WHAT THE BENCH FOUND:**
+
+1. **An alert-log write that silently never happened.** The listener also wrote a row into
+   the AI alert log "so a door contact is searchable next to the detections". `alert_event`
+   requires a RULE ID and a digital input has none, so `ValidateAlertEvent` refused every
+   write: the notification arrived, the log stayed empty, and the only symptom was a line in
+   a log nobody reads. **HALF OF WHAT THE FUNCTION CLAIMED TO DO DID NOT HAPPEN.** The feed
+   is the right home anyway — it is where tamper and both health monitors already publish,
+   and it is filterable by camera. **A VALIDATION GUARD YOU DID NOT READ IS A FEATURE YOU DID
+   NOT SHIP.**
+2. **THE SCREEN PASS: the outputs button could not be clicked at all.** Absolutely positioned
+   at the tile's top corner, it landed underneath the maximize and remove buttons that
+   already live there — perfectly rendered, invisible to a click, `elementFromPoint` returning
+   their `svg`. Moved into the tile header with the other tile controls, where it also has no
+   logical inset to flip in Arabic. **Second sighting in two items of a control that renders
+   and cannot be pressed; the corners of a tile are occupied.**
+3. **A deadlock in the simulator itself** (`note()` taking a non-reentrant lock the caller
+   already held) that presented as the whole device going silent mid-bench — which reads
+   exactly like a product failure. Recorded in the checklist so the next person does not hunt
+   it in the product.
+
+**Also decided:** a rule can only ever PULSE an output, never latch one, because the rule
+that would leave a siren sounding is by construction the one firing at 4am with nobody
+watching. Every actuation is audited, including the automatic ones and the failures — through
+a recorder function rather than the request-scoped Auditor, because a rule sounding a siren
+has no HTTP request behind it and would otherwise have gone unaudited. And `device.alert` is
+now a category mymatasan destinations can subscribe to: without registering it,
+`normalizeCategories` DROPS it, and a destination subscribed to door contacts alone would
+have silently become one subscribed to everything.
+
+**The grant is its own path**, not part of `/api/cameras/*/ptz`: a control-room operator who
+may point a camera is not automatically somebody who may open a gate. Operators read the
+outputs (a screen that cannot list them cannot offer a button); switching them is a third
+rung an administrator grants deliberately.
+
+**Not claimed:** no input→output automation (a door contact cannot yet fire a siren by
+itself) — that is myiotsan's flow engine, and the seam to reach for is its Issue chokepoint.
+An input cannot be bookmarked into a case file, because case evidence points at alert events.
+No real relay hardware; the simulator implements the calls the product makes and the faults a
+device returns.
 
 **W3-6 · Privacy masking + redaction** (F-19). Static pre-record masks, face blur on
 export, redaction workflow. **Promote into Phase 2 if any EU deployment comes into view**

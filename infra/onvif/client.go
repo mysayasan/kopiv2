@@ -1036,9 +1036,23 @@ func (c *Client) httpClient() *http.Client {
 }
 
 func (c *Client) postSOAP(ctx context.Context, endpoint string, body string, credentials Credentials) ([]byte, int, error) {
-	envelope, err := soapEnvelope(body, credentials)
+	return c.postSOAPWithHeader(ctx, endpoint, body, "", credentials, 0)
+}
+
+// postSOAPWithHeader posts with extra SOAP header content and an optional per-call
+// timeout. The timeout override exists for PullMessages, which is a LONG POLL: it is
+// supposed to sit there for tens of seconds and the client's ordinary 5s timeout would
+// abort every single one, producing a subscription that is torn down and rebuilt
+// forever while reporting a network error each time.
+func (c *Client) postSOAPWithHeader(ctx context.Context, endpoint string, body string, extraHeader string, credentials Credentials, timeout time.Duration) ([]byte, int, error) {
+	envelope, err := soapEnvelopeWithHeader(body, credentials, extraHeader)
 	if err != nil {
 		return nil, 0, err
+	}
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(envelope))
 	if err != nil {
@@ -1046,7 +1060,17 @@ func (c *Client) postSOAP(ctx context.Context, endpoint string, body string, cre
 	}
 	req.Header.Set("Content-Type", `application/soap+xml; charset="utf-8"`)
 
-	resp, err := c.httpClient().Do(req)
+	client := c.httpClient()
+	if timeout > 0 {
+		// A COPY with a longer deadline, not a mutation of the shared client: changing
+		// the shared one would silently give every other ONVIF call the long-poll
+		// timeout, and a camera that has gone away would then hang a settings page for
+		// a minute instead of failing in five seconds.
+		longPoll := *client
+		longPoll.Timeout = timeout
+		client = &longPoll
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, 0, fmt.Errorf("send ONVIF SOAP request failed: %w", err)
 	}
@@ -1338,12 +1362,33 @@ func deviceInformationEnvelope() string {
 }
 
 func soapEnvelope(body string, credentials Credentials) (string, error) {
+	return soapEnvelopeWithHeader(body, credentials, "")
+}
+
+// soapEnvelopeWithHeader is soapEnvelope plus caller-supplied SOAP header content.
+//
+// It exists for the event calls, which are the only ones that need WS-Addressing: a
+// PullPoint subscription is addressed by a URL the DEVICE issues, and strict devices
+// reject a request to it that carries no wsa:To / wsa:Action. Lenient ones accept it,
+// which is worse — the feature then works on the camera it was developed against and
+// fails on somebody's site.
+func soapEnvelopeWithHeader(body string, credentials Credentials, extraHeader string) (string, error) {
 	header, err := securityHeader(credentials)
 	if err != nil {
 		return "", err
 	}
+	if strings.TrimSpace(extraHeader) != "" {
+		closing := "\n  </s:Header>"
+		if header == "" {
+			header = "\n  <s:Header>" + extraHeader + closing
+		} else {
+			// securityHeader already emitted a <s:Header> block; fold the extra content
+			// into it rather than emitting a second one, which is not valid SOAP.
+			header = strings.Replace(header, closing, extraHeader+closing, 1)
+		}
+	}
 	return `<?xml version="1.0" encoding="UTF-8"?>
-<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:tds="http://www.onvif.org/ver10/device/wsdl" xmlns:trt="http://www.onvif.org/ver10/media/wsdl" xmlns:tr2="http://www.onvif.org/ver20/media/wsdl" xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema">` + header + `
+<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:tds="http://www.onvif.org/ver10/device/wsdl" xmlns:trt="http://www.onvif.org/ver10/media/wsdl" xmlns:tr2="http://www.onvif.org/ver20/media/wsdl" xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl" xmlns:tev="http://www.onvif.org/ver10/events/wsdl" xmlns:wsnt="http://docs.oasis-open.org/wsn/b-2" xmlns:wsa="http://www.w3.org/2005/08/addressing" xmlns:tt="http://www.onvif.org/ver10/schema">` + header + `
   <s:Body>` + body + `
   </s:Body>
 </s:Envelope>`, nil
