@@ -58,6 +58,23 @@ const (
 	// deleting footage, so it belongs in the same story as the deletions above.
 	ActionRecordingConfigChange = "recording.config_change"
 
+	// Case files. The case's own trail is what the export bundle ships as a chain of
+	// custody, so these are not administrative noise — they are the document.
+	//
+	// Note what is NOT here: exporting a case records ActionRecordingExport, not a
+	// case-specific action, because "footage left the building" has to be answerable by
+	// filtering on one action. A separate case.export would put half the evidence
+	// handling outside the filter every auditor uses.
+	ActionCaseCreate     = "case.create"
+	ActionCaseUpdate     = "case.update"
+	ActionCaseAssign     = "case.assign"
+	ActionCaseClose      = "case.close"
+	ActionCaseReopen     = "case.reopen"
+	ActionCaseDelete     = "case.delete"
+	ActionCaseItemAdd    = "case.item_add"
+	ActionCaseItemUpdate = "case.item_update"
+	ActionCaseItemRemove = "case.item_remove"
+
 	// Cameras. A credential change is recorded; the credential itself never is.
 	ActionCameraCreate           = "camera.create"
 	ActionCameraUpdate           = "camera.update"
@@ -93,6 +110,7 @@ const (
 	TargetSettings  = "settings"
 	TargetSystem    = "system"
 	TargetVision    = "vision"
+	TargetCase      = "case"
 )
 
 // NewAuditService builds the trail over mymatasan's database. logf receives write-failure

@@ -35,3 +35,19 @@ Defines the shared contracts and configuration types for the reusable recording 
 - The package deliberately does not import any app-specific or database packages; apps implement `SegmentSink` and pass the concrete implementation into the manager.
 - `FallbackRTSPURI` is intended for cameras that expose a sub-stream on a different RTSP path than the main stream; the manager automatically toggles between primary and fallback after repeated connection failures.
 - `RecorderConfig.countMetric(name, labels)` is nil-safe (a no-op when `Metrics` is nil) and always adds a `camera` label from `CameraId`, so call sites never need a guard or need to remember the camera label themselves.
+
+## `RecorderConfig.RetentionHold` (W3-3)
+
+An optional predicate `(cameraId, startedAt, endedAt) -> bool`, asked before the recorder's own
+retention sweep deletes an expired segment FILE, and keeping it when the answer is true.
+
+It exists because that sweep (`rtsp.go` `purgeOldFiles`) deletes by filename age with no view
+of the database, so mymatasan's case files — which hold the footage an open investigation
+points at past its retention date — would have their hold undone within the hour, leaving
+segment rows pointing at files that no longer exist. The predicate belongs to the app, so
+`infra/recording` never learns what a case is; it only knows some footage is spoken for. nil
+means nothing is held.
+
+Because a segment's end is not knowable from its filename, the sweep asks about
+`[start, start + one segment length)` — over-estimating the span, which errs towards keeping a
+file slightly too long rather than shredding evidence.

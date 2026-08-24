@@ -494,8 +494,13 @@ type IRecordingService interface {
 	SaveConfig(ctx context.Context, req SaveRecordingConfigRequest) (*entities.RecordingConfig, error)
 	PurgeOldSegments(ctx context.Context) (int, error)
 	// PurgeAllForCamera deletes every recorded segment for one camera regardless of
-	// expiry (files + rows). Powers the per-camera "Purge now" action.
+	// expiry OR of any case hold (files + rows). This is the camera-delete cascade's
+	// purge: the camera is going away, so footage held by a case nobody could then find
+	// or release would be held forever.
 	PurgeAllForCamera(ctx context.Context, cameraId int64) (int, error)
+	// PurgeCameraFootage is the operator-facing "Purge now": the same destruction, except
+	// footage an OPEN case file is holding is kept and reported back.
+	PurgeCameraFootage(ctx context.Context, cameraId int64) (PurgeFootageResult, error)
 	// DeleteConfigForCamera removes a camera's recording config. Part of the
 	// camera-delete cascade; call it only after that camera's segments are purged,
 	// since retention is driven off this row.

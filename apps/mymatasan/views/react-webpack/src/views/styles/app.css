@@ -7410,3 +7410,259 @@ input.input-error:focus,
   line-height: 1.45;
   color: var(--text-muted);
 }
+
+
+/* --- Case files (W3-3) ---------------------------------------------------------------
+   Logical properties throughout (inline-start/end, not left/right) so the screen mirrors
+   correctly in Arabic without a second stylesheet. */
+.cases-panel .cases-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) 1fr;
+  gap: 18px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .cases-panel .cases-layout { grid-template-columns: 1fr; }
+}
+
+.cases-list-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.cases-list-head select { flex: 1 1 auto; }
+
+.cases-new {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.cases-new input { flex: 1 1 140px; }
+
+.cases-list ul,
+.case-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.cases-list-item {
+  display: block;
+  inline-size: 100%;
+  text-align: start;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  color: var(--text-primary);
+}
+
+.cases-list-item:hover { background: var(--bg-subtle2); }
+.cases-list-item.active { border-color: var(--accent); }
+
+.cases-list-title { display: block; font-weight: 600; }
+
+.cases-list-meta {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.case-status {
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.case-status--open { background: var(--status-ok-bg, var(--bg-subtle2)); color: var(--text-secondary); }
+.case-status--closed { background: var(--status-neutral-bg); color: var(--text-muted); }
+
+.cases-detail-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.cases-detail-head h4 { margin: 0 0 2px; }
+
+/* The hold is the claim the whole screen rests on, so it is stated at the top of the case
+   rather than as a footnote under the evidence. */
+.case-hold-panel {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-soft);
+  border-inline-start: 3px solid var(--accent);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 12px 0;
+}
+
+.case-hold-panel p { margin: 4px 0 0; font-size: 12px; }
+.case-hold-beyond { color: var(--warn-text, var(--text-secondary)); }
+.case-hold-missing { color: var(--danger-text, var(--text-secondary)); }
+
+.case-field {
+  display: block;
+  margin-bottom: 10px;
+}
+
+.case-field > span {
+  display: block;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 3px;
+}
+
+.case-field textarea,
+.case-field input,
+.case-field select { inline-size: 100%; }
+
+.case-hint {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-muted);
+  margin: 4px 0 10px;
+}
+
+.case-evidence-heading { margin: 16px 0 8px; }
+
+.case-item {
+  display: flex;
+  gap: 10px;
+  padding: 10px 0;
+  border-block-start: 1px solid var(--border-soft);
+}
+
+.case-item--note { opacity: 0.95; }
+
+.case-thumb {
+  inline-size: 100px;
+  block-size: 60px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: var(--bg-video);
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+}
+
+.case-item-body { flex: 1 1 auto; min-inline-size: 0; }
+
+.case-item-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.case-item-where { color: var(--text-secondary); }
+
+.case-item-label {
+  background: var(--bg-subtle2);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
+}
+
+.case-item-missing {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  color: var(--danger-text, var(--text-secondary));
+  font-size: 11px;
+}
+
+.case-item-note { margin: 4px 0; font-size: 13px; }
+.case-item-note em { color: var(--text-faint); }
+
+.case-item-edit {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  margin: 4px 0;
+}
+
+.case-item-edit textarea { flex: 1 1 220px; }
+
+.case-item-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.case-add-note {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin: 10px 0 16px;
+}
+
+.case-add-note textarea { flex: 1 1 auto; }
+
+.case-outcome {
+  background: var(--bg-subtle);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 12px 0;
+}
+
+.case-outcome p { margin: 4px 0 0; }
+
+.case-export {
+  border-block-start: 1px solid var(--border-soft);
+  padding-block-start: 12px;
+  margin-block-start: 12px;
+}
+
+.case-export h4 { margin: 0 0 8px; }
+.case-export-status { font-size: 12px; color: var(--text-muted); }
+.case-export-ready p { margin: 0 0 6px; }
+
+.case-detail-actions {
+  display: flex;
+  gap: 8px;
+  margin-block-start: 14px;
+}
+
+.case-dialog { max-inline-size: 520px; }
+
+.case-evidence-lines {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.case-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-block-start: 12px;
+}
+
+.case-item-partial {
+  font-size: 11px;
+  color: var(--text-muted);
+}

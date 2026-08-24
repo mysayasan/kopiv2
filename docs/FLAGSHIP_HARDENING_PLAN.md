@@ -31,7 +31,8 @@ lands the work.
 | **Phase 3 — Win the bake-off** |
 | W3-1 | Timeline playback | F-12 | `feat/timeline-playback` | ✅ shipped, benched 2026-08-23 (29/29 on real recorded footage + 25/25 en and 26/26 ar screen passes; the screen pass found 4 defects the API bench could not) |
 | W3-2 | Appearance search across cameras/nodes | F-16 | `feat/appearance-search` | ✅ shipped, benched 2026-08-23 (11/11 on the real model, 34/34 on a real two-node fleet, 17/17 en and 18/18 ar screen passes) |
-| W3-3 | Cases + video wall | F-17, F-18 | — | ☐ not started |
+| W3-3a | Case files (bookmarks, annotation, assignment, closure, bundle export, footage hold) | F-17 | `feat/case-files` | ✅ shipped, benched 2026-08-24 (48/48 on real recorded footage + 31/31 en and 32/32 ar screen passes; the bench found 4 defects, one of them in W1-4's shipped export) |
+| W3-3b | Video wall (named layouts, sequence cycling, alarm auto-pop) | F-18 | — | ☐ not started |
 | W3-4 | Loitering / left-behind / directional rules | F-15 | — | ☐ not started |
 | W3-5 | PTZ presets + ONVIF events & relay I/O | F-13, F-14 | — | ☐ not started |
 | W3-6 | Privacy masking + export redaction | F-19 | — | ☐ not started |
@@ -1134,10 +1135,73 @@ pixels, the unit tests cover the recorder's hand-off, and the join between them 
 exercised. Also not built: searching by an uploaded photograph, which is a different feature
 with a different risk profile — it turns a review tool into a watchlist.
 
-**W3-3 · Cases + video wall** (F-17, F-18). Bookmarks, annotation, multi-clip incident
-packaging, assignment, closure — the natural home for W1-4's export bundle and W1-2's
-audit trail; the three want to be one feature. Video wall: named layouts, sequence
-cycling, multi-monitor, alarm-driven auto-pop. The fleet-level wall spanning nodes is
+**W3-3 · Cases + video wall** (F-17, F-18) was SPLIT into two PR-sized items. They share a
+row on the original register and nothing else: one is an investigation container, the other
+is a wall of live tiles.
+
+**W3-3a · Case files** (F-17) — SHIPPED and benched on `feat/case-files`. Bookmark a
+moment or a sighting into a case from the Timeline or Objects, annotate it, assign it, close
+it with a stated outcome, and export the whole thing as one bundle. This is the natural home
+for W1-4's export bundle and W1-2's audit trail, and the three did want to be one feature: the
+case bundle reuses `plan`/`materialize`/`concat` unchanged, and ships the case's own audit
+entries as `chain-of-custody.csv`.
+
+**The design decision that makes it a product rather than a demo: an OPEN case holds its
+footage.** Retention, the per-camera "Purge now" and the disk-pressure sweeper all refuse to
+delete footage a case's evidence points at. Without it, on a box with seven-day retention, a
+case opened today is a list of broken links next week — silently, because nothing about the
+case changes. Footage leaves this appliance by FOUR paths and the fourth is the trap: the
+recorder runs its own hourly sweep over the live directory, deleting by filename age with no
+view of the database, so a hold enforced only in the service layer is undone within the hour
+and leaves rows pointing at nothing. It is wired through a predicate on `RecorderConfig`.
+Secure wipe, factory reset and deleting a camera still destroy footage regardless — a hold
+that could block those would turn a case into a way to make footage undeletable. The hold
+FAILS CLOSED: a hold that cannot be read means everything is held.
+
+Also fixed in passing, found by reading the path rather than by a test: **the operator role
+could start an evidence export and could not download it.** `/api/evidence` was granted POST
+only, and a bundle is built asynchronously — so the rung the role model describes as "may
+export footage" conferred the right to begin an export and nothing else. W1-4's bench never
+caught it because it ran as an administrator.
+
+**WHAT THE BENCH FOUND — four, and the first is in code that shipped in Phase 1.**
+
+1. **The bundle's media was longer than the bundle said.** An eighteen-second bookmark
+   exported as sixty seconds of video. An export is whole stored segments joined without
+   re-encoding, and the manifest described only the REQUEST (`requestedRange`,
+   `coveredSeconds`) — nothing in the bundle said what the file actually contains. A
+   recipient counting wall-clock times from the first frame, which is the only thing a
+   recipient can do, was out by the difference. **This is in the shipped single-clip export
+   too (W1-4), whose bench never ffprobed the media.** The manifest now carries
+   `output.startsAt` / `endsAt` / `mediaSeconds` / `requestedOffsetSeconds` and `VERIFY.txt`
+   says it in words. The footage is deliberately NOT cut to fit: a stream-copy cut lands on
+   a keyframe rather than the requested instant and can break the leading GOP, and handing
+   over less than was recorded is a worse answer than handing over more and describing it
+   exactly. **ffprobe the media — a manifest can claim anything, and this one was claiming
+   it about evidence.**
+2. **The chain of custody ended one event before the one that matters.** The custody list is
+   read from the audit trail while the bundle is assembled and this export's own row is
+   written afterwards, so the bundle never contained "who took a copy of this out of the
+   system". Appended explicitly now.
+3. **A case bundle could be collected through the single-clip route.** `/api/evidence` and
+   `/api/cases` are governed by different page grants and the evidence download never
+   checked which kind of job it had, so a role with Recordings-use and no Cases grant could
+   pull a whole investigation's footage. Both routes now refuse the other's jobs, and export
+   ids gained a random suffix — `exp-<unix>-<counter>` was enumerable inside the six-hour
+   retention window by anybody who could call the route at all.
+4. **The screen said "Footage gone" about footage the same screen was holding** — found by
+   the browser pass, not by the 48 API checks. An item's play link and its missing-footage
+   label were resolved from the START INSTANT while the hold and the export work on the
+   SPAN, so a bookmark whose opening seconds predated the recording was reported as having
+   no footage at all, on a case that was correctly reporting four held clips of it. It now
+   snaps FORWARD to the first footage inside the span, the same thing the timeline's seek
+   does with a gap, and says when the recording actually starts. **Same shape as W2-4's
+   "Recording…" label: a fact computed at one resolution and rendered as the answer to a
+   different question.**
+
+**W3-3b · Video wall** (F-18) — not started. Named layouts, sequence cycling, multi-monitor,
+alarm-driven auto-pop. `Live Views` already exists with cookie-persisted tiles, so this is an
+extension of a real screen rather than new ground. The fleet-level wall spanning nodes is
 something no appliance vendor can match.
 
 **W3-4 · Loitering / left-behind / directional** (F-15). New rule evaluators over the

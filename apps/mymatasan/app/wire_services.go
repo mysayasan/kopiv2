@@ -53,10 +53,10 @@ type wiring struct {
 	sightingSearch *services.SightingSearch
 	// appearance ranks recorded sightings by how much they look alike (W3-2).
 	appearance *services.AppearanceService
-	metadata       *services.MetadataRecorder
-	localUser      services.ILocalUserService
-	setupState     sharedservices.ISetupStateService
-	pairing        services.IPairingService
+	metadata   *services.MetadataRecorder
+	localUser  services.ILocalUserService
+	setupState sharedservices.ISetupStateService
+	pairing    services.IPairingService
 
 	// Settings services.
 	settings              services.IRuntimeSettingsService
@@ -100,6 +100,8 @@ type wiring struct {
 
 	// evidence builds verifiable export bundles of recorded footage.
 	evidence services.IEvidenceExportService
+	// cases is the investigation container, and the authority on what footage is held.
+	cases services.ICaseService
 
 	// tamperSettings backs the camera tamper monitor — the third health question, after
 	// "does it answer" and "is it recording": is it still showing its scene?
@@ -167,6 +169,7 @@ func (w *wiring) validate() error {
 	check("audit", w.audit != nil)
 	check("continuitySettings", w.continuitySettings != nil)
 	check("evidence", w.evidence != nil)
+	check("cases", w.cases != nil)
 	check("tamperSettings", w.tamperSettings != nil)
 	check("accessPerms", w.accessPerms != nil)
 	check("ffmpegInstaller", w.ffmpegInstaller != nil)

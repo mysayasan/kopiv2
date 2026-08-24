@@ -415,6 +415,7 @@ const TAB_HELP = {
   teach: ['teach-mode', ''],
   faces: ['people', 'consent'],
   objects: ['object-search', ''],
+  cases: ['case-files', ''],
   notifications: ['notifications', ''],
   settings: ['settings-reference', ''],
   manual: ['using-this-manual', ''],
@@ -617,6 +618,10 @@ export function SideNav({ activeTab, isAdmin, busy, cameras, managingCameraId, t
         // role exists to do, and the server gates it on the Recordings page grant that
         // already governs /api/recording.
         navItem('timeline', t('tab.timeline'), 'film', 'violet'),
+        // Cases sit with Timeline and Live View because they are the same job — reviewing
+        // what happened. Not gated on isAdmin: opening and working a case is exactly what
+        // the operator role exists for, and the server gates it on the Cases page grant.
+        navItem('cases', t('tab.cases'), 'folder', 'amber'),
       ],
     },
     {

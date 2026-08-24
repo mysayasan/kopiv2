@@ -18,3 +18,12 @@
 - Exists specifically because the three-site duplication cost two real bugs: `ShredPasses` was missing from the settings-save site, so secure shred silently degraded to a plain unlink the moment an operator saved any recording setting; and the at-rest storage codec was captured once at boot by the startup site, so a Settings → Recording codec change never applied until a restart despite the code claiming otherwise. Reading the decoder/storage settings live on every build (rather than once at construction) is what fixes the second bug — a `RecorderConfigBuilder` is built once in `app.go` and reused for the process lifetime, but each `ForRecording`/`ForDetectOnly` call re-reads `IRuntimeSettingsService`.
 - Wired in `app.go`: one `RecorderConfigBuilder` is constructed after `recordingService` and passed to the startup fan-out, `apis.NewRecordingApi` (`recorderCfg` field, used by `saveConfig`'s hot-reload), and `monitorSettings.DetectStreamConfig = recorderConfigBuilder.ForDetectOnly`. See `docs/modules/apps/mymatasan/app/app.go.md` and `docs/modules/apps/mymatasan/apis/recording.go.md`.
 - Covered by `recorder_config_test.go` (7 tests) using the narrow fakes this file's own interfaces make possible: every `RecorderConfig` field surviving a build (the regression test for the whole file), the storage codec being read live rather than cached, stream URL/credential resolution, the enabled-with-no-stream warning (and its absence when disabled), and the `ForDetectOnly` stream-preference/no-storage-settings behavior.
+
+## `SetFootageHold` (W3-3)
+
+Installs the case-file hold predicate onto every `RecorderConfig` the builder produces, so the
+recorder's OWN retention sweep — which walks the live directory and deletes by filename age,
+knowing nothing about the database — cannot shred footage an open case is holding. Set after
+construction, because the case service is built from the recording service which is built
+before this. A builder without it holds nothing, which is right for an app that has no cases.
+See `apps/mymatasan/services/case_hold.go.md`.

@@ -25,3 +25,19 @@ mymatasan shipped without an audit trail at all — the worst place in the suite
 - Not every constant declared here is used yet by a handler (e.g. `ActionVisionRuleChange`, `ActionTeachSkillActivate`, `ActionCameraCreate/Update/Delete`, `ActionSystemReset`, `ActionSystemUpdate`, `ActionBackupExport/Restore`) — they exist so the vocabulary is complete and reviewable in one place even as call sites are added incrementally. See `apis/audit.go.md`'s "What is recorded" table for what is wired today.
 - Action vocabularies stay per-app by design (see `domain/shared/audit/service.go.md`): the verbs are what each app does, and one shared list of every app's actions would be a list nobody can read.
 - Wired from `app.go`'s `RegisterAppRoutes`, built before the `wiring` struct so the handlers constructed from that struct can already record into it — see `apps/mymatasan/app/app.go.md`.
+
+## Case-file actions (W3-3)
+
+`case.create`, `case.update`, `case.assign`, `case.close`, `case.reopen`, `case.delete`,
+`case.item_add`, `case.item_update`, `case.item_remove`, against a new `TargetCase`
+(`"case"`) target type. These are not administrative noise: a case's own entries are what the
+export bundle ships as its chain of custody, so the trail IS part of the document.
+
+Reassignment is its own action rather than a field inside `case.update` — "who was this handed
+to, and when" is asked on its own, and a trail that buries it in a generic update cannot answer
+it.
+
+**Exporting a case is deliberately NOT in this list.** It records `ActionRecordingExport`
+against `TargetCase`, because "what footage left this appliance" has to be answerable by
+filtering on one action; a separate `case.export` would put half the evidence handling outside
+the filter every auditor uses.

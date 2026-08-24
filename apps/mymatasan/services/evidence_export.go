@@ -3,6 +3,7 @@ package services
 import (
 	"archive/zip"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -53,6 +54,22 @@ const exportBundleVersion = 1
 // exportMaxRangeSeconds bounds one export. A day of one camera is already a large file;
 // beyond that an operator wants several exports, each with its own stated reason.
 const exportMaxRangeSeconds = int64(24 * 3600)
+
+// exportNonce makes an export id unguessable.
+//
+// The id is the only thing between a caller holding SOME export grant and a bundle they did
+// not create: the job is looked up by id alone. A timestamp and a counter are enumerable
+// inside the six-hour retention window by anybody who can call the route at all, which is a
+// cheap thing to fix and an embarrassing one to explain. Falls back to the counter-only
+// shape if the system's randomness is unavailable, because refusing to export because a
+// suffix could not be generated is the worse failure.
+func exportNonce() string {
+	buf := make([]byte, 8)
+	if _, err := rand.Read(buf); err != nil {
+		return "x"
+	}
+	return hex.EncodeToString(buf)
+}
 
 // exportRetention is how long a finished bundle stays on disk before the janitor removes
 // it. Long enough to download, short enough that a bundle of decrypted evidence is not
@@ -126,20 +143,51 @@ type ExportManifest struct {
 		SizeBytes  int64  `json:"sizeBytes"`
 		Codec      string `json:"codec"`
 		Transcoded bool   `json:"transcoded"`
+		// WHAT THE FILE ACTUALLY CONTAINS, which is not the same as the range that was
+		// asked for and until this was nowhere in the bundle.
+		//
+		// An export is whole stored segments joined without re-encoding, so a request for
+		// 14:05-14:40 against fifteen-minute segments produces a file whose first frame is
+		// 14:00. The manifest described the REQUEST (`requestedRange`, `coveredSeconds`)
+		// and said nothing about the media, so a recipient counting from the start of the
+		// file — which is the only thing a recipient can do — was five minutes out on every
+		// timestamp they derived. Found by ffprobing the bundle in the W3-3a bench: an
+		// eighteen-second clip that was sixty seconds of video.
+		//
+		// The footage is NOT cut to fit. A stream-copy cut lands on a keyframe rather than
+		// on the requested instant and can break the leading GOP, and handing over less
+		// than was recorded is a worse answer than handing over more and describing it
+		// exactly.
+		//
+		// StartsAt is the wall-clock moment of the file's first frame; MediaSeconds is how
+		// many seconds of video it holds (the sum of the source spans, so gaps between
+		// sources are NOT counted — they are listed under `gaps`, and the file jumps across
+		// them); RequestedOffsetSeconds is how far into the file the requested range
+		// begins.
+		StartsAt               int64 `json:"startsAt"`
+		EndsAt                 int64 `json:"endsAt"`
+		MediaSeconds           int64 `json:"mediaSeconds"`
+		RequestedOffsetSeconds int64 `json:"requestedOffsetSeconds"`
 	} `json:"output"`
 }
 
 // ExportJob is one export's live state.
 type ExportJob struct {
-	Id        string         `json:"id"`
-	Status    ExportStatus   `json:"status"`
-	CameraId  int64          `json:"cameraId"`
-	From      int64          `json:"from"`
-	To        int64          `json:"to"`
-	Reason    string         `json:"reason"`
-	CreatedAt int64          `json:"createdAt"`
-	Error     string         `json:"error,omitempty"`
+	Id     string       `json:"id"`
+	Status ExportStatus `json:"status"`
+	// CaseId is set on a CASE bundle and 0 on a single-clip one. The two share this job
+	// type because they share the whole build pipeline; which manifest is populated is
+	// what tells them apart.
+	CaseId    int64           `json:"caseId,omitempty"`
+	CameraId  int64           `json:"cameraId"`
+	From      int64           `json:"from"`
+	To        int64           `json:"to"`
+	Reason    string          `json:"reason"`
+	CreatedAt int64           `json:"createdAt"`
+	Error     string          `json:"error,omitempty"`
 	Manifest  *ExportManifest `json:"manifest,omitempty"`
+	// CaseManifest is the case bundle's manifest; nil on a single-clip export.
+	CaseManifest *CaseManifest `json:"caseManifest,omitempty"`
 	// BundlePath is server-side only.
 	BundlePath string `json:"-"`
 	// GapWarning surfaces the headline fact to the UI without it having to read the
@@ -164,6 +212,9 @@ type IEvidenceExportService interface {
 	// Preview reports what an export WOULD contain, so the UI can warn about gaps
 	// before the operator commits to producing a bundle.
 	Preview(ctx context.Context, cameraId, from, to int64) (*ExportManifest, error)
+	// CreateCase builds a bundle out of a whole case file — every clip, the notes, and
+	// the case's chain of custody. See case_export.go.
+	CreateCase(ctx context.Context, req CaseExportRequest) (*ExportJob, error)
 }
 
 type evidenceExportService struct {
@@ -303,13 +354,38 @@ func (s *evidenceExportService) plan(ctx context.Context, cameraId, from, to int
 		man.CoveredRange.To = merged[len(merged)-1].end
 	}
 
+	// What the joined file will physically contain. Stated from the SOURCES, not from the
+	// request: the file starts where the first source starts, not where the operator asked.
+	if len(inRange) > 0 {
+		man.Output.StartsAt = inRange[0].StartedAt
+		var media int64
+		last := int64(0)
+		for _, seg := range inRange {
+			end := seg.EndedAt
+			if end <= 0 {
+				end = to
+			}
+			if end > seg.StartedAt {
+				media += end - seg.StartedAt
+			}
+			if end > last {
+				last = end
+			}
+		}
+		man.Output.EndsAt = last
+		man.Output.MediaSeconds = media
+		if off := from - man.Output.StartsAt; off > 0 {
+			man.Output.RequestedOffsetSeconds = off
+		}
+	}
+
 	for _, seg := range inRange {
 		src := SourceSegment{
-			SegmentId: seg.Id,
-			File:      filepath.Base(seg.FilePath),
-			StartedAt: seg.StartedAt,
-			EndedAt:   seg.EndedAt,
-			Sha256:    strings.TrimSpace(seg.Sha256),
+			SegmentId:  seg.Id,
+			File:       filepath.Base(seg.FilePath),
+			StartedAt:  seg.StartedAt,
+			EndedAt:    seg.EndedAt,
+			Sha256:     strings.TrimSpace(seg.Sha256),
 			HashOrigin: "recorded",
 		}
 		if src.Sha256 == "" {
@@ -348,11 +424,11 @@ func (s *evidenceExportService) Create(ctx context.Context, req ExportRequest) (
 
 	s.mu.Lock()
 	s.seq++
-	id := fmt.Sprintf("exp-%d-%d", time.Now().UTC().Unix(), s.seq)
+	id := fmt.Sprintf("exp-%d-%d-%s", time.Now().UTC().Unix(), s.seq, exportNonce())
 	job := &ExportJob{
 		Id: id, Status: ExportPending, CameraId: req.CameraId,
 		From: req.From, To: req.To, Reason: man.Reason,
-		CreatedAt: time.Now().UTC().Unix(),
+		CreatedAt:  time.Now().UTC().Unix(),
 		GapWarning: len(man.Gaps) > 0,
 	}
 	s.jobs[id] = job
@@ -589,7 +665,23 @@ func verifyNote(man *ExportManifest, mediaName string) string {
 	sb.WriteString("     Windows:      certutil -hashfile \"" + mediaName + "\" SHA256\n\n")
 	sb.WriteString("   Expected: " + man.Output.Sha256 + "\n\n")
 
-	sb.WriteString("2. UNDERSTAND WHAT THE SOURCE DIGESTS MEAN\n\n")
+	sb.WriteString("2. WHAT THE VIDEO ACTUALLY COVERS\n\n")
+	sb.WriteString("   The footage is NOT cut to the requested range. It is the stored\n")
+	sb.WriteString("   recordings covering that range, joined without re-encoding, so the\n")
+	sb.WriteString("   file begins and ends on recording boundaries.\n\n")
+	sb.WriteString("     Requested:        " + time.Unix(man.RequestedRange.From, 0).UTC().Format(time.RFC3339) +
+		"  to  " + time.Unix(man.RequestedRange.To, 0).UTC().Format(time.RFC3339) + "\n")
+	sb.WriteString("     The video covers: " + time.Unix(man.Output.StartsAt, 0).UTC().Format(time.RFC3339) +
+		"  to  " + time.Unix(man.Output.EndsAt, 0).UTC().Format(time.RFC3339) + "\n")
+	sb.WriteString(fmt.Sprintf("     Video length:     %d seconds\n", man.Output.MediaSeconds))
+	if man.Output.RequestedOffsetSeconds > 0 {
+		sb.WriteString(fmt.Sprintf(
+			"\n   THE REQUESTED RANGE BEGINS %d SECOND(S) INTO THE FILE.\n"+
+				"   Do not read wall-clock times by counting from the start of the video\n"+
+				"   without applying that offset.\n",
+			man.Output.RequestedOffsetSeconds))
+	}
+	sb.WriteString("\n3. UNDERSTAND WHAT THE SOURCE DIGESTS MEAN\n\n")
 	sb.WriteString("   Each entry in manifest.json's \"sources\" has a hashOrigin:\n\n")
 	sb.WriteString("     \"recorded\"            the digest was taken when the segment was\n")
 	sb.WriteString("                           written, before it was stored. The footage has\n")
@@ -601,7 +693,7 @@ func verifyNote(man *ExportManifest, mediaName string) string {
 	sb.WriteString("                           evidence about the period before it.\n\n")
 
 	if len(man.Gaps) > 0 {
-		sb.WriteString("3. THIS EXPORT IS NOT CONTINUOUS\n\n")
+		sb.WriteString("4. THIS EXPORT IS NOT CONTINUOUS\n\n")
 		sb.WriteString(fmt.Sprintf("   %d period(s) inside the requested range have no footage.\n", len(man.Gaps)))
 		sb.WriteString("   The video jumps across them. They are listed in manifest.json\n")
 		sb.WriteString("   under \"gaps\", and repeated here:\n\n")
@@ -613,7 +705,7 @@ func verifyNote(man *ExportManifest, mediaName string) string {
 		}
 		sb.WriteString(fmt.Sprintf("\n   The range is %.1f%% covered.\n\n", man.CoveragePct))
 	} else {
-		sb.WriteString("3. COVERAGE\n\n")
+		sb.WriteString("4. COVERAGE\n\n")
 		sb.WriteString("   The requested range is fully covered: no gaps were found.\n\n")
 	}
 

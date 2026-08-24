@@ -37,7 +37,18 @@ python tools/fleetbench/bench_w32_embedding.py            # W3-2: does the MODEL
 python tools/fleetbench/bench_w32_appearance.py           # W3-2: search + federation
 node   tools/fleetbench/uicheck_appearance.js .artifacts/fleetbench en
 node   tools/fleetbench/uicheck_appearance.js .artifacts/fleetbench ar
+KOPIV2_NODE_IMAGE=debian-ffmpeg:bench python tools/fleetbench/bench_w33_cases.py  # W3-3a: cases
+node   tools/fleetbench/uicheck_cases.js .artifacts/fleetbench en
+node   tools/fleetbench/uicheck_cases.js .artifacts/fleetbench ar
 ```
+
+`bench_w33_cases.py` (W3-3a, case files) needs the **ffmpeg node image** and runs for about
+nine minutes: it records real footage on two cameras, opens a case over some of it, then
+moves both the segments and the case items three days into the past so the shipped one-day
+retention policy considers them expired, and drives every deletion path at them. It leaves
+two camera sources behind (`casesrc-one`, `casesrc-two`) and writes `w33_context.json`.
+`uicheck_cases.js` does not depend on that file — it creates its own case through the UI —
+but it does need footage on the node, so run the bench first.
 
 `bench_w32_embedding.py` (W3-2) runs on the HOST interpreter rather than in a container: the
 appearance stage rides torch + torchvision, which the anomaly feature already requires and
@@ -63,7 +74,7 @@ The same applies to any bench that attaches its own containers to `benchnet`.
 `bench_w31_timeline.py` leaves two camera sources behind:
 
 ```
-docker rm -f smtp-sink camsrc tlsrc-steady tlsrc-gappy
+docker rm -f smtp-sink camsrc tlsrc-steady tlsrc-gappy casesrc-one casesrc-two
 ```
 
 **Swapping a node's binary needs the per-node copy.** `node_binary()` gives each container
@@ -87,7 +98,10 @@ to squint at is not one.
 Container data dirs and bench output go to `.artifacts/fleetbench/` (gitignored); override
 with `KOPIV2_BENCH_DIR`. **Point it at a roomy drive**: the node's disk guard reads the
 HOST volume through the bind mount, so a nearly-full disk pauses recording fleet-wide and
-any bench that needs footage measures nothing. The guard working is a feature.
+any bench that needs footage measures nothing. The guard working is a feature. This bit
+W3-3a on a drive at 95%: the nodes paused recording within a minute of boot, and the
+symptom — no segments, ever — is indistinguishable from ffmpeg not running. The `bin/`
+directory the containers mount lives under the bench dir too, so it moves with it.
 
 A bench that needs the nodes to RECORD must also run them on an image that has ffmpeg —
 `KOPIV2_NODE_IMAGE=debian-ffmpeg:bench python tools/fleetbench/fleet_harness.py`. Without

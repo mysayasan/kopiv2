@@ -1251,14 +1251,23 @@ func (r *rtspRecorder) purgeOldFiles(ctx context.Context) {
 			return
 		case <-ticker.C:
 			cutoff := time.Now().AddDate(0, 0, -r.cfg.RetentionDays)
+			// A segment's end is not knowable from the filename, so the hold is asked
+			// about [start, start+one segment length). That over-estimates rather than
+			// under-estimates the span, which is the right direction: the cost of being
+			// wrong is keeping a file slightly too long, not shredding evidence.
+			span := int64(segMinutes(r.cfg)) * 60
 			for _, f := range r.listLiveSegments() {
-				if time.Unix(f.startedAt, 0).Before(cutoff) {
-					// Retention purge is a real deletion of footage, so honour the
-					// shred setting (overwrite before unlink) rather than a plain remove.
-					_ = SecureRemove(f.path, r.cfg.ShredPasses)
-					if f.tsPath != "" {
-						_ = SecureRemove(f.tsPath, r.cfg.ShredPasses)
-					}
+				if !time.Unix(f.startedAt, 0).Before(cutoff) {
+					continue
+				}
+				if r.cfg.RetentionHold != nil && r.cfg.RetentionHold(r.cfg.CameraId, f.startedAt, f.startedAt+span) {
+					continue
+				}
+				// Retention purge is a real deletion of footage, so honour the
+				// shred setting (overwrite before unlink) rather than a plain remove.
+				_ = SecureRemove(f.path, r.cfg.ShredPasses)
+				if f.tsPath != "" {
+					_ = SecureRemove(f.tsPath, r.cfg.ShredPasses)
 				}
 			}
 			r.purgeQuarantine(cutoff)

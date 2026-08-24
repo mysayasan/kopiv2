@@ -34,3 +34,37 @@ A bundle is a `.zip` containing one video file, `manifest.json`, and `VERIFY.txt
 - Audited twice on purpose (`recording.export`): at request time, because deciding to take a copy out of the system is the auditable act and a build that later fails must still leave a record; and at download, because requesting a bundle and collecting it can be minutes and one shift apart.
 - Covered by `evidence_export_test.go`: gaps mid-range and at both edges, `"gaps":[]` surviving JSON encoding, honest hash-origin labelling, a required reason, range validation, out-of-range segments excluded, a straddling segment counted, and the verification note stating the digest and any gaps.
 - **Live-benched 2026-08-19 and passing.** Real ffmpeg-produced H.264 clips, hashed as plaintext and sealed with the app's own cipher, registered across an hour with a deliberate 15-minute gap: the concat produced a 12.02s file ffprobe reads cleanly, its SHA-256 matched the manifest, the gap was reported in the preview, the manifest and `VERIFY.txt`, and corrupting one stored digest made the export refuse to run. See `docs/FLAGSHIP_BENCH_CHECKLIST.md`.
+
+## `CreateCase` (W3-3)
+
+The same service also builds **case bundles** — every clip in a case file, one manifest, and
+the case's chain of custody — reusing `plan`/`materialize`/`concat` unchanged so there is one
+implementation of "what footage covers this range". `ExportJob` gained `CaseId` and
+`CaseManifest`; which manifest is populated is what tells the two bundle kinds apart. See
+`apps/mymatasan/services/case_export.go.md`.
+
+## What the file contains, versus what was asked for (W3-3a)
+
+An export is whole stored segments joined without re-encoding, so a request for 14:05-14:40
+against fifteen-minute segments produces a file whose first frame is 14:00. The manifest used
+to describe only the REQUEST — `requestedRange`, `coveredSeconds`, `gaps` — and said nothing
+about the media, so a recipient counting wall-clock times from the start of the file (the only
+thing a recipient can do) was out by the difference. Found by ffprobing a bundle in the W3-3a
+bench: an eighteen-second clip that was sixty seconds of video.
+
+`Output` now carries `startsAt`, `endsAt`, `mediaSeconds` and `requestedOffsetSeconds`,
+computed in `plan()` from the sources, and `VERIFY.txt` states them in words.
+
+**The footage is not cut to fit, and that is the decision, not an omission.** A stream-copy
+cut lands on a keyframe rather than on the requested instant and can break the leading GOP;
+handing over less footage than was recorded is a worse answer for evidence than handing over
+more and describing it exactly.
+
+`mediaSeconds` is the SUM of the source spans, not `endsAt - startsAt`: gaps between sources
+are not in the file, and the file jumps across them. They are listed under `gaps`.
+
+## Export ids are unguessable (W3-3a)
+
+A job is looked up by id alone, so the id is the only thing between a caller holding some
+export grant and a bundle they did not create. `exp-<unix>-<counter>` was enumerable inside
+the six-hour retention window; ids now carry 8 random bytes (`exportNonce`).

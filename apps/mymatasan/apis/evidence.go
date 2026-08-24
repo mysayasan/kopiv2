@@ -103,10 +103,21 @@ func (a *evidenceApi) create(w http.ResponseWriter, r *http.Request) {
 	controllers.SendResult(w, job, "succeed")
 }
 
+// A CASE bundle is not collectable here. The two routes are governed by different page
+// grants — this one by Recordings, the case routes by Cases — so serving a case bundle
+// from under /api/evidence hands it to a role that was never granted cases. Found by the
+// W3-3a bench, which asked for a case export id through this route and got the zip.
+func (a *evidenceApi) notThisRoute(w http.ResponseWriter, job *services.ExportJob, ok bool) bool {
+	if !ok || job == nil || job.CaseId > 0 {
+		controllers.SendError(w, controllers.ErrBadRequest, "that export is not available (it may have expired)")
+		return true
+	}
+	return false
+}
+
 func (a *evidenceApi) status(w http.ResponseWriter, r *http.Request) {
 	job, ok := a.serv.Get(mux.Vars(r)["id"])
-	if !ok {
-		controllers.SendError(w, controllers.ErrBadRequest, "that export is not available (it may have expired)")
+	if a.notThisRoute(w, job, ok) {
 		return
 	}
 	controllers.SendResult(w, job, "succeed")
@@ -114,7 +125,10 @@ func (a *evidenceApi) status(w http.ResponseWriter, r *http.Request) {
 
 func (a *evidenceApi) download(w http.ResponseWriter, r *http.Request) {
 	job, ok := a.serv.Get(mux.Vars(r)["id"])
-	if !ok || job.Status != services.ExportReady || job.BundlePath == "" {
+	if a.notThisRoute(w, job, ok) {
+		return
+	}
+	if job.Status != services.ExportReady || job.BundlePath == "" {
 		controllers.SendError(w, controllers.ErrBadRequest, "that export is not ready")
 		return
 	}
