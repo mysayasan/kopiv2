@@ -328,8 +328,26 @@ func defaultStr(v, fallback string) string {
 }
 
 // isNoRows tolerates a "no rows" delete on an already-absent row.
+// isNoRows reports the repository's ways of saying "there was nothing to do".
+//
+// The generic repo treats BOTH as errors: a read that matched nothing ("no result found"),
+// and a DELETE or UPDATE that affected no rows ("total affected: 0"). For a purge, the
+// second is not an error at all — it is the normal case, and the whole point of a purge is
+// that it is safe to run when there is nothing to purge.
+//
+// "total affected: 0" was missing, and it cost a camera delete. Deleting a camera runs a
+// cascade of purges, one of which clears its appearance descriptors; a camera that had never
+// produced one failed that purge, the failure aborted the cascade by design, and the delete
+// came back as a bare 500. Appearance search is off by default, so that was MOST cameras on
+// MOST installs. Found by the W3-3b bench, which is the first one that ever deleted a camera.
 func isNoRows(err error) bool {
-	return err != nil && strings.Contains(strings.ToLower(err.Error()), "no ")
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "no result found") ||
+		strings.Contains(msg, "no rows") ||
+		strings.Contains(msg, "total affected: 0")
 }
 
 // stablePeopleSort keeps the roster deterministic where an ordered slice is handed out.

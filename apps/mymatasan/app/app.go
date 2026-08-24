@@ -160,6 +160,8 @@ func (m *module) Entities() []any {
 		// reserved word on every engine — see entities/case_file.go.
 		appentities.CaseFile{},
 		appentities.CaseItem{},
+		// Named video walls (W3-3b). New table; the auto-migrator creates it.
+		appentities.WallLayout{},
 		sharedentities.Notification{},
 		sharedentities.NotificationRollup{},
 		// The append-only audit trail, shared with myidsan and myseliasan. New table on
@@ -368,6 +370,9 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// Objects grid would open, and it is what the footage guard above asks.
 	caseService := services.NewCaseService(repo.CaseFile, repo.CaseItem, recordingService, observationService, cameraService)
 	footageGuard.SetCases(caseService)
+	// Video walls (W3-3b): named, shared camera arrangements, replacing the per-browser
+	// cookie Live View used to remember a grid in.
+	wallService := services.NewWallService(repo.WallLayout, cameraService)
 	notificationService := notification.NewService(repo.Notification, notificationOptionsFromAppConfig(deps.Config, deps.Logger, deps.Metrics))
 	// Incrementally aggregate the notifications feed into the hourly rollup table
 	// that powers the dashboard's baseline/anomaly analytics (Phase 0). The cursor
@@ -692,6 +697,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		auditService: auditService,
 
 		cases: caseService,
+		walls: wallService,
 
 		continuitySettings: services.NewContinuitySettingsService(repo.RuntimeSetting),
 		tamperSettings:     services.NewTamperSettingsService(repo.RuntimeSetting),

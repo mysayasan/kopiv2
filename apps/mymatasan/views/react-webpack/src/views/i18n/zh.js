@@ -1900,4 +1900,21 @@ export default {
   'cases.exportDownload': '下载打包文件',
   'cases.exportDownloading': '正在下载案件打包文件...',
   'cases.footageFrom': '录像从 {time} 开始',
+
+  // Video wall (W3-3b)
+  'wall.wall': '电视墙',
+  'wall.unsaved': '未保存',
+  'wall.defaultSuffix': '（默认）',
+  'wall.name': '电视墙名称',
+  'wall.namePlaceholder': '周界、装卸区、夜间…',
+  'wall.save': '保存电视墙',
+  'wall.saveAs': '另存为新的',
+  'wall.delete': '删除电视墙',
+  'wall.saved': '已保存电视墙 {name}。',
+  'wall.cycle': '轮播（秒）',
+  'wall.autoPop': '告警弹出（秒）',
+  'wall.secondMonitor': '第二显示器',
+  'wall.missing': '{n} 台摄像机已不存在',
+  'wall.missingHint': '此电视墙引用了已不存在的摄像机。重新保存即可移除它们。',
+  'wall.makeDefault': '默认打开',
 };

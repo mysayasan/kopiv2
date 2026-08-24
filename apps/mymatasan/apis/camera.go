@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -895,6 +896,12 @@ func (a *cameraApi) delete(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := a.serv.Delete(r.Context(), id)
 	if err != nil {
+		// LOGGED, because the client will not be told. SendError hides 5xx detail outside
+		// dev by policy — correct, internal failures should not leak — but this path
+		// discarded the reason entirely: a delete aborted by a cleanup failure reached the
+		// operator as "internal server Error" and reached nobody else at all. The cascade
+		// is the most likely thing to fail here and the least guessable.
+		log.Printf("camera %d delete failed: %v", id, err)
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}

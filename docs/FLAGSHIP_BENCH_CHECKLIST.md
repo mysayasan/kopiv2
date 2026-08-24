@@ -1111,3 +1111,68 @@ frame without co-firing covered. Scene choices matter and are recorded in the pl
 problem: it compares consecutive samples (transient) while requiring a 3-sample streak
 (persistent), and no test in the repo drives it to an alert. Fix it before re-benching;
 there is nothing to observe until then.
+
+
+## W3-3b · Video wall  ⟨ DONE (2026-08-24), 25/25 + 21/21 en and 21/21 ar screen passes
+
+```
+python tools/fleetbench/fleet_harness.py            # no footage needed, plain node image
+python tools/fleetbench/bench_w33b_walls.py
+node   tools/fleetbench/uicheck_wall.js .artifacts/fleetbench en
+node   tools/fleetbench/uicheck_wall.js .artifacts/fleetbench ar
+```
+
+About a minute for the API half. It needs no footage: a wall is an arrangement of camera ids,
+and the tiles are the screen check's problem.
+
+**THE SCREEN CHECK RUNS TWO CHROME PROFILES, AND THE SECOND ONE IS THE POINT.** What this
+feature replaces was a cookie, so a check that saves a wall and reads it back in the same
+profile proves nothing at all. The second profile has never seen the app.
+
+### What it found
+
+**1. DELETING A CAMERA FAILED WITH A 500 ON MOST CAMERAS — shipped in W3-2.** The
+camera-delete cascade clears appearance descriptors; clearing none was treated as an error
+(the generic repo reports a zero-row DELETE as a failure and `isNoRows` matched only the READ
+sentinel), and the failure aborted the cascade. Appearance search is off by default, so this
+was nearly every camera. **No bench had ever deleted a camera — a bench only covers the verbs
+it uses.** The wall bench deletes one solely to check that walls report the loss, and found
+this on the way.
+
+**2. The failure told nobody why.** `SendError` hides 5xx detail from the caller by policy,
+and this path did not log it either, so the reason existed nowhere. The delete handler now
+logs it. **When a policy hides an error from the client, the server has to keep it.**
+
+**3. "Save as new" stole the default wall** — a personal variant silently changed what every
+other operator's screen opens with. Found by the screen pass, which read the picker's labels
+back and saw "(default)" move.
+
+**4. The landing route dropped the query string.** `/` redirected to `/app` without
+`location.search`, so `?wall=<id>` never reached the app and the second-monitor window
+rendered the ordinary workspace. It broke every deep link, not only this one.
+
+### What it proves
+
+Refusals come back as sentences, including the grid list, which is the one thing a client
+cannot guess. Camera ORDER survives a round trip (it is the arrangement; sorting it would
+rearrange somebody's wall). Only one wall is ever the default. Every wall survives the
+appliance restarting, unchanged — the claim the cookie could not make. A viewer can read a
+wall and cannot change one. And on the screen: cycling advances the page on a timer with
+nothing touched, a REAL alert raised through the API brings that camera onto the wall and
+marks it, and the second-monitor URL renders the wall with no rail, no picker and no add
+strip.
+
+### The traps this one added
+
+- **A screen check that reads a picker must not compare labels for equality.** The default
+  wall's option carries a "(default)" suffix, so an exact-match assertion failed on a passing
+  case. `startsWith`.
+- **Do not assume which row a screen opens with.** The missing-camera check first asserted
+  against whichever wall the picker happened to select, which was the previous run's
+  leftover; it now asks the API which wall has a deleted camera and selects that one.
+- **The Arabic label for Live Views is العروض المباشرة**, and a nav regex that guessed
+  البث المباشر failed every check downstream of it for a reason that had nothing to do with
+  the product. Match on the distinctive word, not the whole phrase.
+- **The SPA holds its credentials in memory**, so a new window is a new sign-in. The
+  second-monitor check signs in ON the `?wall=` URL, because navigating away to log in is
+  what dropped the parameter in the first place.

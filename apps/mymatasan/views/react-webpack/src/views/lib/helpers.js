@@ -185,6 +185,29 @@ export function apiBase() {
   return origin;
 }
 
+// apiJson is the one-call JSON fetch the newer screens share (cases, walls).
+//
+// It exists to make the SERVER'S OWN WORDS the error. "This case is closed — reopen it
+// before adding evidence" and "there is already a wall called Perimeter" tell an operator
+// what to do next; "something went wrong" does not, and a screen that throws away a
+// message the API took the trouble to write is a screen nobody can use unaided.
+export async function apiJson(path, { method = 'GET', body, authHeader } = {}) {
+  const headers = { ...(authHeader ? { Authorization: authHeader } : {}) };
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  const response = await fetch(`${apiBase()}${path}`, {
+    method,
+    credentials: 'include',
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const payload = await response.json().catch(() => null);
+  const data = payload?.data?.result ?? payload?.result ?? payload?.data ?? payload;
+  if (!response.ok) {
+    throw new Error(payload?.message || payload?.data?.message || `HTTP ${response.status}`);
+  }
+  return data;
+}
+
 export function fieldValue(value) {
   return value === undefined || value === null || value === '' ? '-' : value;
 }

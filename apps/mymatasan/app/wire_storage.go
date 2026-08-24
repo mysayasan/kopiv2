@@ -22,6 +22,7 @@ type repos struct {
 	ObjectAppearance  dbsql.IGenericRepo[appentities.ObjectAppearance]
 	CaseFile          dbsql.IGenericRepo[appentities.CaseFile]
 	CaseItem          dbsql.IGenericRepo[appentities.CaseItem]
+	WallLayout        dbsql.IGenericRepo[appentities.WallLayout]
 	RecordingConfig   dbsql.IGenericRepo[appentities.RecordingConfig]
 	RecordingSegment  dbsql.IGenericRepo[appentities.RecordingSegment]
 	TrainingDataset   dbsql.IGenericRepo[appentities.TrainingDataset]
@@ -50,6 +51,7 @@ func newRepos(db dbsql.IDbCrud) repos {
 		ObjectAppearance:  dbsql.NewGenericRepo[appentities.ObjectAppearance](db),
 		CaseFile:          dbsql.NewGenericRepo[appentities.CaseFile](db),
 		CaseItem:          dbsql.NewGenericRepo[appentities.CaseItem](db),
+		WallLayout:        dbsql.NewGenericRepo[appentities.WallLayout](db),
 		RecordingConfig:   dbsql.NewGenericRepo[appentities.RecordingConfig](db),
 		RecordingSegment:  dbsql.NewGenericRepo[appentities.RecordingSegment](db),
 		TrainingDataset:   dbsql.NewGenericRepo[appentities.TrainingDataset](db),

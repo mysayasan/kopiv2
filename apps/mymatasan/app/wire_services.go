@@ -102,6 +102,8 @@ type wiring struct {
 	evidence services.IEvidenceExportService
 	// cases is the investigation container, and the authority on what footage is held.
 	cases services.ICaseService
+	// walls are the named video-wall arrangements Live View renders.
+	walls services.IWallService
 
 	// tamperSettings backs the camera tamper monitor — the third health question, after
 	// "does it answer" and "is it recording": is it still showing its scene?
@@ -170,6 +172,7 @@ func (w *wiring) validate() error {
 	check("continuitySettings", w.continuitySettings != nil)
 	check("evidence", w.evidence != nil)
 	check("cases", w.cases != nil)
+	check("walls", w.walls != nil)
 	check("tamperSettings", w.tamperSettings != nil)
 	check("accessPerms", w.accessPerms != nil)
 	check("ffmpegInstaller", w.ffmpegInstaller != nil)
