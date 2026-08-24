@@ -107,6 +107,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-24 — mymatasan 1.137.0, core 1.101.0 (0d1317e)
+
+### Added
+
+- **core,mymatasan**: A PTZ camera can now be told WHERE to look, not just which way to nudge. Save a position on the camera under a name you choose — Front gate, Loading bay — and send the camera there with one press, from the same place you drive it. Set a home position and send it back. Build a guard tour: an ordered route of those positions, with however long you want the camera to hold each one, running on its own and coming back after a power cut without anybody restarting it. And point a camera at trouble automatically: any detection rule can name a saved position, so a rule that spots someone at the fence swings the dome onto the gate and holds it there while somebody looks. The saved positions live ON THE CAMERA, where the camera's own web page put them, so the two can never disagree about where it can point — and if a position is deleted from the camera, the tour that used it says so instead of quietly skipping it. When three things want the same camera at once, the order is fixed and deliberate: the person at the controls always wins, because they are watching something the appliance cannot see; an alarm outranks the patrol; and the patrol runs when nobody else wants the camera. An alarm arriving while you are driving the camera is reported to you rather than taking it out of your hands. A patrol that can no longer walk its route — because its positions were deleted from the camera — stops and raises an alert, rather than reporting itself as running while nothing moves.
 ## 2026-08-24 — mymatasan 1.136.0, core 1.100.0 (94b2d4a)
 
 ### Added
