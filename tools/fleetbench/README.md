@@ -43,7 +43,21 @@ node   tools/fleetbench/uicheck_cases.js .artifacts/fleetbench ar
 python tools/fleetbench/bench_w33b_walls.py       # W3-3b: video walls (no footage needed)
 node   tools/fleetbench/uicheck_wall.js .artifacts/fleetbench en
 node   tools/fleetbench/uicheck_wall.js .artifacts/fleetbench ar
+python tools/fleetbench/bench_w34_dwell.py        # W3-4: time-based rules (no footage needed)
+node   tools/fleetbench/uicheck_dwell.js .artifacts/fleetbench en
+node   tools/fleetbench/uicheck_dwell.js .artifacts/fleetbench ar
 ```
+
+`bench_w34_dwell.py` (W3-4) states at the top of the file what it does NOT claim: no
+evaluator is driven end to end, because the harness films test patterns and the detector
+finds no person, bag or vehicle to track. It benches everything around them — creation,
+refusals, persistence across a restart, the alert and notification path, the role model — and
+the evaluators are unit-tested and mutation-checked instead.
+
+**`result_list(response, *keys)`** is in the harness now. `result_of` re-wraps a bare array as
+`{"result": [...]}`, and three benches have iterated the dict instead, got the string
+`"result"`, and reported that the fleet had no nodes / no roles / no rules. Use `result_list`
+for any endpoint that answers with a list.
 
 `bench_w33b_walls.py` (W3-3b) runs on the plain node image in about a minute: a wall is an
 arrangement of camera ids, so it needs no footage. It restarts node-a to prove walls survive

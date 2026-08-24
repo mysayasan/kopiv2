@@ -693,8 +693,22 @@ export const detectionModes = [
   ['intrusion', 'Intrusion (zone)'],
   ['line_crossing', 'Line crossing'],
   ['multi_line_crossing', 'Multi-line crossing'],
+  // The time-based modes (W3-4). They ask a question no single frame can answer, which is
+  // why they carry durations rather than only classes and a zone.
+  ['loitering', 'Loitering (dwell)'],
+  ['left_behind', 'Left behind'],
+  ['direction', 'Direction of travel'],
   ['lpr', 'License plate (LPR)'],
 ];
+
+// dwellModes are the modes whose configuration is a DURATION. Grouped because the editor,
+// the parser and the mode test all need the same list, and three copies of it would drift.
+export const dwellModes = ['loitering', 'left_behind', 'direction'];
+
+// headingOptions are the directions a direction rule can watch for. "Up" means up the
+// IMAGE, not north: the rule is drawn on a picture and the operator is thinking about the
+// picture.
+export const headingOptions = ['up', 'right', 'down', 'left'];
 
 // Legacy single-object detection types map to presence mode with that class as
 // the sole target, so existing rules open correctly in the two-axis editor.
@@ -714,6 +728,9 @@ export function modeFromDetectionType(type) {
     return 'presence';
   }
   if (['crowd', 'intrusion', 'line_crossing', 'multi_line_crossing', 'lpr'].includes(value)) {
+    return value;
+  }
+  if (dwellModes.includes(value)) {
     return value;
   }
   return 'presence';
@@ -791,8 +808,56 @@ function parseRuleClasses(value) {
 // buildRuleConfigForMode produces the ruleConfig JSON string for a given mode and
 // target classes, preserving mode-specific fields (crowd minCount, line geometry)
 // from the existing config.
+// parseDwellRuleConfig reads a time-based rule's config into a normalized shape, filling in
+// the same defaults the server applies so the editor never shows a blank where the server
+// will use a number.
+export function parseDwellRuleConfig(value, mode) {
+  let cfg = {};
+  if (value) {
+    try { cfg = JSON.parse(value) || {}; } catch (_) { cfg = {}; }
+  }
+  const num = (v, fallback) => (Number(v) > 0 ? Number(v) : fallback);
+  return {
+    dwellSeconds: num(cfg.dwellSeconds, 30),
+    stillSeconds: num(cfg.stillSeconds, 60),
+    driftTolerance: num(cfg.driftTolerance, 0.05),
+    // Unattended defaults to ON: a bag with its owner beside it is not abandoned, and a
+    // rule that alerted on every waiting passenger would be switched off within a day.
+    requireUnattended: cfg.requireUnattended !== false,
+    personRadius: num(cfg.personRadius, 0.18),
+    heading: headingOptions.includes(String(cfg.heading || '').toLowerCase())
+      ? String(cfg.heading).toLowerCase()
+      : (mode === 'direction' ? 'up' : ''),
+    toleranceDegrees: num(cfg.toleranceDegrees, 45),
+    minTravel: num(cfg.minTravel, 0.15),
+  };
+}
+
+// dwellRuleConfigText renders only the keys the mode actually uses, so a loitering rule does
+// not carry a heading nobody set and a reviewer reading the JSON sees the rule, not the
+// union of every rule type.
+export function dwellRuleConfigText(cfg, classes, mode) {
+  const out = { classes };
+  if (mode === 'loitering') {
+    out.dwellSeconds = cfg.dwellSeconds;
+  } else if (mode === 'left_behind') {
+    out.stillSeconds = cfg.stillSeconds;
+    out.driftTolerance = cfg.driftTolerance;
+    out.requireUnattended = cfg.requireUnattended;
+    out.personRadius = cfg.personRadius;
+  } else if (mode === 'direction') {
+    out.heading = cfg.heading || 'up';
+    out.toleranceDegrees = cfg.toleranceDegrees;
+    out.minTravel = cfg.minTravel;
+  }
+  return JSON.stringify(out, null, 2);
+}
+
 export function buildRuleConfigForMode(mode, targetClasses, existingConfig) {
   const classes = (targetClasses || []).map((c) => String(c).trim().toLowerCase()).filter(Boolean);
+  if (dwellModes.includes(mode)) {
+    return dwellRuleConfigText(parseDwellRuleConfig(existingConfig, mode), classes, mode);
+  }
   if (mode === 'line_crossing' || mode === 'multi_line_crossing') {
     const cfg = normalizeLineConfig(parseLineRuleConfig(existingConfig, mode), mode);
     cfg.classes = classes.length ? classes : defaultLineClasses;
@@ -1085,23 +1150,35 @@ export function datetimeLocalToRFC3339(value) {
   return date.toISOString();
 }
 
-export function scheduleSummary(value) {
+// scheduleSummary describes a rule's schedule in one line.
+//
+// It takes `t` because it returns USER-FACING TEXT. It used to return hard-coded English,
+// which is what an Arabic operator saw beside every rule in the list and inside the editor —
+// found by the W3-4 screen pass, which read the pills back in Arabic and saw one still
+// saying "Always active". A pure helper that returns a sentence is a translation gap
+// waiting to happen; `t` is optional here only so a non-rendering caller (a test, a sort
+// key) keeps working, and it falls back to the same English as before.
+export function scheduleSummary(value, t) {
   const draft = scheduleDraftFromPolicy(value);
+  const say = (key, fallback, vars) => (typeof t === 'function' ? t(key, vars) : fallback);
+  const mode = draft.mode === 'deny'
+    ? say('sched.paused', 'Paused')
+    : say('sched.active', 'Active');
   switch (draft.preset) {
     case 'daytime':
-      return 'Daytime only';
+      return say('sched.daytime', 'Daytime only');
     case 'nighttime':
-      return 'Nighttime only';
+      return say('sched.nighttime', 'Nighttime only');
     case 'weekdays':
-      return 'Weekdays only';
+      return say('sched.weekdays', 'Weekdays only');
     case 'weekends':
-      return 'Weekends only';
+      return say('sched.weekends', 'Weekends only');
     case 'custom':
-      return `${draft.mode === 'deny' ? 'Paused' : 'Active'} ${draft.days.join(', ')} ${draft.start}-${draft.end} ${draft.timezone}`;
+      return `${mode} ${draft.days.join(', ')} ${draft.start}-${draft.end} ${draft.timezone}`;
     case 'range':
-      return `${draft.mode === 'deny' ? 'Paused' : 'Active'} for selected datetime range`;
+      return say('sched.rangeSummary', `${mode} for selected datetime range`, { mode });
     default:
-      return 'Always active';
+      return say('sched.always', 'Always active');
   }
 }
 

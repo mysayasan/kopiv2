@@ -23,6 +23,9 @@ several narrow rules is usually better than one broad one.
 | **Intrusion (zone)** | The object enters a drawn area. |
 | **Line crossing** | The object crosses a drawn line, optionally only one way. |
 | **Multi-line crossing** | The object crosses several lines in order, within a time limit. |
+| **Loitering (dwell)** | The object stays inside the zone for longer than you allow. |
+| **Left behind** | The object stops moving and stays put, with nobody beside it. |
+| **Direction of travel** | The object crosses the zone heading a particular way. |
 | **Licence plate (LPR)** | A readable plate is seen — see [Fire, smoke and plates](fire-smoke-and-plates#lpr). |
 
 Choose by the question you are actually asking. "Is anyone in the yard?" is presence. "Did anyone
@@ -124,3 +127,41 @@ For most sites, on most cameras:
 
 Run it for a day, read the alert log, then narrow. That sequence beats getting it right in
 advance, because you will not.
+
+## Rules about time {#time-rules}
+
+Three modes ask a question no single frame can answer, so they watch an object across many.
+
+**Loitering (dwell)** fires when something of the chosen type has been inside the zone for longer
+than you allow. Stepping out of the zone starts the clock again — being seen somewhere else is
+information. A briefly missed frame does not: a confidence dip or somebody walking in front is
+missing information, not an exit, and treating the two the same would mean a thirty-second rule
+never fired on a real camera.
+
+The alert records **when the dwell began**, not only when it fired. That matters when you go
+looking: the alert arrives at 14:05 and the interesting thirty seconds start at 14:04:30.
+
+**Left behind** fires when something of the chosen type stops moving and stays put. The
+distinction is movement, not presence — a bag being carried through the frame is not a bag left
+behind, and a rule that fired on presence would alert on every passenger. Two settings shape it:
+how long it must be still, and how much movement still counts as still (a fraction of the frame,
+to absorb the box jitter every detector produces).
+
+By default it only fires when **nobody is standing beside it**. A bag with its owner next to it is
+not abandoned. Turn that off only if you want to know about every object that stops.
+
+**Direction of travel** fires when something crosses the zone heading a particular way — the
+wrong-way rule. Directions are relative to the **picture**, not the compass: "up" means up the
+image. It needs a minimum distance travelled before it will judge a heading, because a stationary
+object jitters in a random direction and would otherwise eventually satisfy any rule by accident.
+
+> [!NOTE]
+> A time rule needs the object to be **tracked** across frames. Where two people cross paths in
+> front of a camera, the tracker can swap them; the dwell then follows the wrong person. Draw the
+> zone where that is least likely, and prefer a longer threshold over a short one.
+
+### Choosing a threshold {#time-thresholds}
+
+Start longer than feels right. A thirty-second loitering rule on a doorway fires on anybody
+reading their phone; two minutes fires on somebody waiting for a person who is not coming. The
+alert you act on is the one that is rare.

@@ -6,7 +6,7 @@ import { HelpButton } from '@shared/Manual';
 import { FormBusyOverlay } from './ui';
 import { useSnapshotBlob } from '../hooks';
 import { scheduleDayOptions } from '../lib/constants';
-import {apiBase,fieldValue,formatTimestamp,parseMetadata,formatPercent,parseBoundingBox,formatSourceLabel,cameraTitle,parseZonePolygons,defaultZonePolygon,normalizeLineConfig,parseLineRuleConfig,lineRuleConfigText,lineCountFromRule,parseCrowdRuleConfig,parseLPRRuleConfig,lprRuleConfigText,detectionModes,modeFromDetectionType,detectionTypeForMode,targetClassesFromRule,buildRuleConfigForMode,ruleDestinationsFromConfig,applyRuleDestinations,groupedClassOptions,classDisplayName,defaultVisionRuleDraft,weeklySchedulePolicy,rangeSchedulePolicy,schedulePresetPolicy,scheduleDraftFromPolicy,scheduleSummary } from '../lib/helpers';
+import {apiBase,fieldValue,formatTimestamp,parseMetadata,formatPercent,parseBoundingBox,formatSourceLabel,cameraTitle,parseZonePolygons,defaultZonePolygon,normalizeLineConfig,parseLineRuleConfig,lineRuleConfigText,lineCountFromRule,parseCrowdRuleConfig,parseLPRRuleConfig,lprRuleConfigText,parseDwellRuleConfig,dwellRuleConfigText,dwellModes,headingOptions,detectionModes,modeFromDetectionType,detectionTypeForMode,targetClassesFromRule,buildRuleConfigForMode,ruleDestinationsFromConfig,applyRuleDestinations,groupedClassOptions,classDisplayName,defaultVisionRuleDraft,weeklySchedulePolicy,rangeSchedulePolicy,schedulePresetPolicy,scheduleDraftFromPolicy,scheduleSummary } from '../lib/helpers';
 import { ZoneDrawingPreview, LineDrawingPreview } from './previews';
 
 // classIsLive reports whether a registry class can actually be detected right
@@ -62,9 +62,11 @@ export function CameraAiPanel({
   const lineRule = mode === 'line_crossing' || mode === 'multi_line_crossing';
   const crowdRule = mode === 'crowd';
   const lprRule = mode === 'lpr';
+  const dwellRule = dwellModes.includes(mode);
   const lineRuleConfig = parseLineRuleConfig(ruleDraft.ruleConfig, mode === 'multi_line_crossing' ? 'multi_line_crossing' : 'line_crossing');
   const crowdRuleConfig = parseCrowdRuleConfig(ruleDraft.ruleConfig);
   const lprRuleConfig = parseLPRRuleConfig(ruleDraft.ruleConfig);
+  const dwellRuleConfig = parseDwellRuleConfig(ruleDraft.ruleConfig, mode);
   const targetClasses = targetClassesFromRule(ruleDraft);
   const ruleDestinations = ruleDestinationsFromConfig(ruleDraft.ruleConfig);
   const destinationOptions = (destinations || []).filter((d) => d && d.id);
@@ -269,6 +271,14 @@ export function CameraAiPanel({
     onRuleDraft({ ...ruleDraft, ruleConfig: applyRuleDestinations(buildRuleConfigForMode('crowd', targetClasses, JSON.stringify({ minCount })), ruleDestinations) });
   }
 
+  function changeDwellConfig(patch) {
+    const next = { ...dwellRuleConfig, ...patch };
+    onRuleDraft({
+      ...ruleDraft,
+      ruleConfig: applyRuleDestinations(dwellRuleConfigText(next, targetClasses, mode), ruleDestinations),
+    });
+  }
+
   function changeLprConfig(patch) {
     const next = { ...lprRuleConfig, ...patch };
     onRuleDraft({ ...ruleDraft, ruleConfig: applyRuleDestinations(lprRuleConfigText(next), ruleDestinations) });
@@ -453,6 +463,78 @@ export function CameraAiPanel({
                       </div>
                     </section>
                   ) : null}
+                  {dwellRule ? (
+                    <section className="schedule-panel">
+                      <header>
+                        <h3>{t(`vi.dwell_${mode}_title`)}</h3>
+                        <span className="status-pill">
+                          {mode === 'loitering' ? t('vi.dwellAfter', { n: dwellRuleConfig.dwellSeconds })
+                            : mode === 'left_behind' ? t('vi.dwellStill', { n: dwellRuleConfig.stillSeconds })
+                            : t(`vi.heading_${dwellRuleConfig.heading || 'up'}`)}
+                        </span>
+                      </header>
+                      {/* Said before the numbers, because the numbers only make sense once
+                          you know the rule is watching a stretch of time rather than a
+                          frame. */}
+                      <span className="field-hint">{t(`vi.dwell_${mode}_hint`)}</span>
+                      <div className="metadata-row">
+                        {mode === 'loitering' ? (
+                          <label>
+                            {t('vi.dwellSeconds')}
+                            <input type="number" min="1" max="3600" step="1"
+                              value={dwellRuleConfig.dwellSeconds}
+                              onChange={(e) => changeDwellConfig({ dwellSeconds: Number(e.target.value) })} />
+                          </label>
+                        ) : null}
+                        {mode === 'left_behind' ? (
+                          <>
+                            <label>
+                              {t('vi.stillSeconds')}
+                              <input type="number" min="1" max="3600" step="1"
+                                value={dwellRuleConfig.stillSeconds}
+                                onChange={(e) => changeDwellConfig({ stillSeconds: Number(e.target.value) })} />
+                            </label>
+                            <label>
+                              {t('vi.driftTolerance')}
+                              <input type="number" min="0.01" max="0.5" step="0.01"
+                                value={dwellRuleConfig.driftTolerance}
+                                onChange={(e) => changeDwellConfig({ driftTolerance: Number(e.target.value) })} />
+                            </label>
+                            <label className="checkbox-label">
+                              <input type="checkbox" checked={dwellRuleConfig.requireUnattended}
+                                onChange={(e) => changeDwellConfig({ requireUnattended: e.target.checked })} />
+                              {t('vi.requireUnattended')}
+                            </label>
+                          </>
+                        ) : null}
+                        {mode === 'direction' ? (
+                          <>
+                            <label>
+                              {t('vi.heading')}
+                              <select value={dwellRuleConfig.heading || 'up'}
+                                onChange={(e) => changeDwellConfig({ heading: e.target.value })}>
+                                {headingOptions.map((h) => (
+                                  <option key={h} value={h}>{t(`vi.heading_${h}`)}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <label>
+                              {t('vi.toleranceDegrees')}
+                              <input type="number" min="5" max="180" step="5"
+                                value={dwellRuleConfig.toleranceDegrees}
+                                onChange={(e) => changeDwellConfig({ toleranceDegrees: Number(e.target.value) })} />
+                            </label>
+                            <label>
+                              {t('vi.minTravel')}
+                              <input type="number" min="0.02" max="1" step="0.01"
+                                value={dwellRuleConfig.minTravel}
+                                onChange={(e) => changeDwellConfig({ minTravel: Number(e.target.value) })} />
+                            </label>
+                          </>
+                        ) : null}
+                      </div>
+                    </section>
+                  ) : null}
                   {lprRule ? (
                     <section className="schedule-panel">
                       <header>
@@ -623,7 +705,7 @@ export function CameraAiPanel({
                   <section className="schedule-panel">
                     <header>
                       <h3>{t('vi.schedule')}</h3>
-                      <span className="status-pill">{scheduleSummary(ruleDraft.schedulePolicy)}</span>
+                      <span className="status-pill">{scheduleSummary(ruleDraft.schedulePolicy, t)}</span>
                     </header>
                     <div className="metadata-row">
                       <label>
@@ -808,7 +890,7 @@ export function CameraAiPanel({
                               </span>
                             ) : null}
                           </span>
-                          <span className="rule-list-meta">{rule.detectionType}{lineCountFromRule(rule) ? ` · ${lineCountFromRule(rule)}` : ''} · {scheduleSummary(rule.schedulePolicy)}</span>
+                          <span className="rule-list-meta">{rule.detectionType}{lineCountFromRule(rule) ? ` · ${lineCountFromRule(rule)}` : ''} · {scheduleSummary(rule.schedulePolicy, t)}</span>
                         </button>
                         <span className={`status-pill ${rule.isEnabled ? 'online' : 'unknown'}`}>{rule.isEnabled ? t('vi.enabled') : t('vi.disabled')}</span>
                         <div className="rule-list-actions">

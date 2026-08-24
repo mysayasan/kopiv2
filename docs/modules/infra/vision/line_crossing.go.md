@@ -23,3 +23,10 @@ Adds object-backed line crossing and ordered multi-line crossing rule behavior f
 - `maxSecondsBetweenLines`, `maxTrackDistance`, and `trackTtlSeconds` tune sequence timing and track matching.
 - `lineMatches` gates candidates by the rule's `ZonePolygon` zone(s) (`parseZones` + `pointInAnyZone`, shared with every other detector in this package) before line-crossing geometry is evaluated, so a rule's line only fires for candidates whose box center is inside one of its zones.
 - `ruleCooldownElapsed(state, rule DetectionRule, now, cooldown)` takes the whole rule (not just its ID) and delegates to `cooldownActive` (`cooldown.go`), so a rule's persisted `LastTriggeredAt` seeds the in-process cooldown map the first time this process sees it — a restart no longer resets every rule's cooldown to zero.
+
+## The tracker moved out (W3-4)
+
+`lineTrack` now embeds `trackCore` and the matcher lives in `infra/vision/track.go.md`,
+shared with the dwell rules. Field access is unchanged (embedded fields are promoted); the
+matching semantics are identical — ByteTrack id first, nearest centre within
+`maxTrackDistance` second, one candidate per track per pass.

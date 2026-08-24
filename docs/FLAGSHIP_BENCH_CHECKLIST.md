@@ -1176,3 +1176,53 @@ strip.
 - **The SPA holds its credentials in memory**, so a new window is a new sign-in. The
   second-monitor check signs in ON the `?wall=` URL, because navigating away to log in is
   what dropped the parameter in the first place.
+
+
+## W3-4 · Loitering / left-behind / direction  ⟨ DONE (2026-08-24), 23/23 + 14/14 en and 15/15 ar
+
+```
+python tools/fleetbench/fleet_harness.py          # no footage needed, plain node image
+python tools/fleetbench/bench_w34_dwell.py
+node   tools/fleetbench/uicheck_dwell.js .artifacts/fleetbench en
+node   tools/fleetbench/uicheck_dwell.js .artifacts/fleetbench ar
+```
+
+### What is NOT claimed, and why it is written at the top of the bench file
+
+**No evaluator is driven end to end.** The harness films synthetic test patterns, so the
+object detector finds no person, no bag and no vehicle to track. Buying that check needs
+footage of real people; a drawn rectangle is not a person to a COCO model. The evaluators are
+covered by unit tests that drive a clock across many samples, and by three mutations — the
+zone-exit reset, the unattended check, the bearing negation — each of which the tests caught.
+
+Saying so in the bench itself, not only here: the next person to read a green run has to know
+which half of the feature it covers.
+
+### What IS claimed
+
+Creation of all three types; four refusals and the wording an operator will meet (including
+the one that lists the headings that work); the config surviving a round trip; every rule
+surviving an appliance restart; an alert of each type reaching the alert log and the
+notification feed with its metadata intact — including `dwellStartedAt`, without which an
+operator opens the footage thirty seconds after the interesting part; and the role model
+(detection rules stay administrator-only, alerts stay readable).
+
+On the screen: the three modes are OFFERED and TRANSLATED, choosing loitering reveals its own
+field with a real default, and the value typed there reaches the draft that will be posted
+(read back out of the panel's own summary pill, which is rendered from the parsed config).
+
+### The traps this one added
+
+- **A page-size dropdown is a `<select>` too.** The check first decided the rule editor was
+  "already open" because it found one, and then failed every assertion after it. Look for the
+  select that has the option you mean.
+- **Arabic labels are not the words you guessed.** The Detection tab is
+  كشف الذكاء الاصطناعي and the add button is إضافة قاعدة; matching الكشف and أضف قاعدة
+  failed everything downstream for a reason that had nothing to do with the product. Print
+  the candidate labels in the failure message so one run tells you the answer.
+- **`\d` inside a JS template string in a Python patch is a literal backslash-d.** An
+  assertion that could never match reported a product failure that did not exist. Prefer
+  `[0-9]` in generated regexes.
+- **`result_of` re-wraps a bare array — third sighting.** The harness now has
+  `result_list(response, *keys)`; use it for any list endpoint. Iterating the dict instead
+  yields the string `"result"` and a failure that never mentions the envelope.
