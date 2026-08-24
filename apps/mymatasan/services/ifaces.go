@@ -123,6 +123,14 @@ type ICameraService interface {
 	SetRelayState(ctx context.Context, id uint64, token string, active bool) error
 	SetRelayPulseMode(ctx context.Context, id uint64, token string, seconds int) error
 	EventEndpoint(ctx context.Context, id uint64) (string, onvif.Credentials, error)
+	// Privacy masks (W3-6). The zones themselves live in IPrivacyService; these are the
+	// raw legs it drives, and the read-back it verifies with.
+	MaskOptions(ctx context.Context, id uint64) (*onvif.MaskOptions, error)
+	CameraMasks(ctx context.Context, id uint64) ([]onvif.Mask, error)
+	CreateCameraMask(ctx context.Context, id uint64, mask onvif.Mask) (string, error)
+	SetCameraMask(ctx context.Context, id uint64, mask onvif.Mask) error
+	DeleteCameraMask(ctx context.Context, id uint64, token string) error
+	VideoSourceToken(ctx context.Context, id uint64) (string, error)
 	GetCameraEncoder(ctx context.Context, id uint64) (*onvif.VideoEncoderConfig, error)
 	ApplyCameraEncoder(ctx context.Context, id uint64, req ApplyCameraEncoderRequest) (*onvif.VideoEncoderConfig, error)
 	SnapshotSource(ctx context.Context, id uint64) (SnapshotSource, error)

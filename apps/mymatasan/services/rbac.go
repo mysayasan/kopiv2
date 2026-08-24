@@ -138,6 +138,13 @@ func Policy() []PolicyRule {
 		// per role, by adding the Use rung of the relay page; nothing hands it out as a
 		// side effect of being allowed to move a camera.
 		{Path: "/api/cameras/*/relays", Description: "See and switch a camera's relay outputs (sirens, strobes, gates)", Viewer: none, Operator: read},
+		// Privacy zones (W3-6). ADMINISTRATOR ONLY, at every level. Deciding what a camera
+		// must never record is a policy decision about the site, and an operator who could
+		// draw a zone could also remove one — quietly turning off a protection somebody
+		// outside this building is relying on. Listed here with no grants so the catalog
+		// stays a COMPLETE description of the API surface: an area missing from it is an
+		// area nobody can see they are not granting.
+		{Path: "/api/cameras/*/privacy", Description: "Areas a camera must never record, and whether the camera is enforcing them", Viewer: none, Operator: none},
 
 		// --- Admin only -------------------------------------------------------------------
 		// Listed with no grants so the catalog is a COMPLETE description of the API surface.

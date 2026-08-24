@@ -69,6 +69,8 @@ func (a *evidenceApi) create(w http.ResponseWriter, r *http.Request) {
 		From     int64  `json:"from"`
 		To       int64  `json:"to"`
 		Reason   string `json:"reason"`
+		// Redact burns the camera's privacy zones into the exported video (W3-6).
+		Redact bool `json:"redact"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		controllers.SendError(w, controllers.ErrParseFailed, "invalid request body")
@@ -83,6 +85,12 @@ func (a *evidenceApi) create(w http.ResponseWriter, r *http.Request) {
 	job, err := a.serv.Create(r.Context(), services.ExportRequest{
 		CameraId: body.CameraId, From: body.From, To: body.To,
 		Reason: body.Reason, ExporterId: actorID, Exporter: actorName,
+		// Threaded through explicitly. This handler builds the service request field by
+		// field rather than passing the decoded body, and the redact flag was silently
+		// dropped here: it existed on the screen, it existed in the service, and the
+		// export came out unredacted with a manifest that correctly said so. The bench
+		// caught it because it asserted the MANIFEST, not just that the export succeeded.
+		Redact: body.Redact,
 	})
 	target := strconv.FormatInt(body.CameraId, 10)
 	if err != nil {
@@ -99,6 +107,10 @@ func (a *evidenceApi) create(w http.ResponseWriter, r *http.Request) {
 		map[string]any{
 			"exportId": job.Id, "from": body.From, "to": body.To,
 			"reason": body.Reason, "hasGaps": job.GapWarning,
+			// WHICH KIND of bundle left the building. A redacted copy and a full one are
+			// different disclosures, and "which one did they take" is exactly the question
+			// asked afterwards.
+			"redacted": body.Redact,
 		})
 	controllers.SendResult(w, job, "succeed")
 }

@@ -52,6 +52,9 @@ node   tools/fleetbench/uicheck_ptz.js .artifacts/fleetbench ar
 python tools/fleetbench/bench_w35b_events.py      # W3-5b: events, inputs and relay outputs
 node   tools/fleetbench/uicheck_relay.js .artifacts/fleetbench en
 node   tools/fleetbench/uicheck_relay.js .artifacts/fleetbench ar
+KOPIV2_NODE_IMAGE=debian-ffmpeg:bench python tools/fleetbench/bench_w36_privacy.py  # W3-6
+node   tools/fleetbench/uicheck_privacy.js .artifacts/fleetbench en
+node   tools/fleetbench/uicheck_privacy.js .artifacts/fleetbench ar
 ```
 
 ## `onvifsim.py` — a real ONVIF device, on demand
@@ -79,6 +82,16 @@ It now also speaks the W3-5b surface, with two controls a real camera will not g
 * `POST /subscriptions/expire` — drop every subscription **without telling anybody**, which
   is exactly what a camera does when a lease is not renewed, and the whole reason the event
   listener treats silence as a fault.
+
+For W3-6 it also speaks **Media2 privacy masks**, and it can be told to LIE about them,
+which is the whole reason that bench is worth running:
+
+* `POST /masks/mode/<honest|shifted|rectangle|drop>` — store something OTHER than what it was
+  sent: a different coordinate space, a squared-off polygon, or nothing at all. A camera that
+  accepts a mask with HTTP 200 and applies something else is a real device behaviour, and the
+  product's read-back verification exists for exactly it.
+* `POST /masks/support/<on|off>` — a camera with no mask support at all.
+* `POST /masks/limit/<n>` — how many masks it will hold.
 
 `LOCK` is an **RLock**, not a Lock: `note()` takes it to append to the journal and several
 handlers record something while already holding it. With a plain Lock that is a deadlock, and

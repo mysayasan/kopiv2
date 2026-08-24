@@ -32,6 +32,12 @@
 #   POST /inputs/<token>         flip a digital input, as a door contact would
 #   POST /subscriptions/expire   drop every subscription WITHOUT telling anybody, which is
 #                                exactly what a camera does when a lease is not renewed
+#   POST /onvif/media2_service   Media2: privacy masks (W3-6)
+#   POST /masks/mode/<mode>      honest | shifted | rectangle | drop - make the camera store
+#                                something OTHER than what it was sent, which is the case
+#                                the product's read-back verification exists to catch
+#   POST /masks/support/<on|off> turn Media2 mask support off entirely
+#   POST /masks/limit/<n>        how many masks the camera will hold
 import json
 import re
 import sys
@@ -69,6 +75,25 @@ RELAYS = {
 
 # INPUTS are what a door contact, a beam or a panic button looks like from here.
 INPUTS = {"DIGIT_INPUT_000": False, "DIGIT_INPUT_001": False}
+
+# --- W3-6: privacy masks ------------------------------------------------------------------
+#
+# MASK_MODE is the knob that makes this simulator worth having for W3-6. A real camera can
+# accept a mask with HTTP 200 and store something else, and the product's whole camera-side
+# guarantee rests on noticing that. The bench flips this to reproduce it on demand:
+#
+#   "honest"    stores what it was sent (the confirmed case)
+#   "shifted"   stores a DIFFERENT coordinate space - accepted, applied to the wrong part of
+#               the picture, and indistinguishable from success without a read-back
+#   "rectangle" reduces any polygon to its bounding box, as a rectangle-only camera does
+#   "drop"      accepts the write and stores NOTHING, the loudest silent failure
+MASK_MODE = ["honest"]
+MASKS = {}
+NEXT_MASK = [1]
+# MASK_SUPPORT lets the bench turn a camera into one with no Media2 mask support at all,
+# which is the case the product has to REPORT rather than retry.
+MASK_SUPPORT = [True]
+MAX_MASKS = [4]
 
 # SUBSCRIPTIONS is the PullPoint state. Each holds a QUEUE of pending notification messages
 # and a termination time, because the lease is the thing the product has to keep alive and
@@ -146,7 +171,11 @@ def device_response(body, host):
             "</tds:Capabilities></tds:GetCapabilitiesResponse>" % (url, url, url)
         ) + ENV_CLOSE
     if "GetServices" in body:
-        return ENV_OPEN + (
+        # Built by concatenation rather than one big format string: the Media2 entry is
+        # CONDITIONAL (the bench turns mask support off to test the unsupported path), and
+        # `%` binds tighter than `+`, so folding a conditional into the literal chain
+        # silently applies the arguments to only the last fragment.
+        services = (
             "<tds:GetServicesResponse>"
             "<tds:Service><tds:Namespace>http://www.onvif.org/ver10/media/wsdl</tds:Namespace>"
             "<tds:XAddr>%s/onvif/media_service</tds:XAddr></tds:Service>"
@@ -156,8 +185,14 @@ def device_response(body, host):
             "<tds:XAddr>%s/onvif/device_service</tds:XAddr></tds:Service>"
             "<tds:Service><tds:Namespace>http://www.onvif.org/ver10/events/wsdl</tds:Namespace>"
             "<tds:XAddr>%s/onvif/event_service</tds:XAddr></tds:Service>"
-            "</tds:GetServicesResponse>" % (url, url, url, url)
-        ) + ENV_CLOSE
+        ) % (url, url, url, url)
+        if MASK_SUPPORT[0]:
+            services += (
+                "<tds:Service><tds:Namespace>http://www.onvif.org/ver20/media/wsdl</tds:Namespace>"
+                "<tds:XAddr>%s/onvif/media2_service</tds:XAddr></tds:Service>" % url
+            )
+        services += "</tds:GetServicesResponse>"
+        return ENV_OPEN + services + ENV_CLOSE
     if "GetDeviceInformation" in body:
         return ENV_OPEN + (
             "<tds:GetDeviceInformationResponse>"
@@ -217,6 +252,98 @@ def device_response(body, host):
             queue_for_all("tns1:Device/Trigger/Relay", "Changed",
                           {"RelayToken": token}, {"LogicalState": state})
         return ENV_OPEN + "<tds:SetRelayOutputStateResponse/>" + ENV_CLOSE
+
+    return ENV_OPEN + ENV_CLOSE
+
+
+def store_mask(polygon):
+    """Apply MASK_MODE, modelling a camera that keeps something other than what it was sent."""
+    mode = MASK_MODE[0]
+    if mode == "drop":
+        return []
+    if mode == "shifted":
+        return [(x / 2, y / 2) for x, y in polygon]
+    if mode == "rectangle" and polygon:
+        xs = [p[0] for p in polygon]
+        ys = [p[1] for p in polygon]
+        return [(min(xs), min(ys)), (max(xs), min(ys)), (max(xs), max(ys)), (min(xs), max(ys))]
+    return list(polygon)
+
+
+def mask_points(body):
+    out = []
+    for m in re.finditer(r'<(?:\w+:)?Point\s+x="([-\d.]+)"\s+y="([-\d.]+)"', body):
+        out.append((float(m.group(1)), float(m.group(2))))
+    return out
+
+
+def media2_response(body):
+    """ONVIF Media2: privacy masks (W3-6)."""
+    if not MASK_SUPPORT[0]:
+        return fault("The Media2 service is not supported", "ter:ActionNotSupported")
+
+    if "GetMaskOptions" in body:
+        note("GetMaskOptions")
+        return ENV_OPEN + (
+            "<tr2:GetMaskOptionsResponse><tr2:Options>"
+            "<tr2:MaxMasks>%d</tr2:MaxMasks><tr2:MaxPoints>8</tr2:MaxPoints>"
+            "<tr2:RectangleOnly>%s</tr2:RectangleOnly>"
+            "<tr2:Types>Color</tr2:Types><tr2:Types>Blurred</tr2:Types>"
+            "</tr2:Options></tr2:GetMaskOptionsResponse>"
+            % (MAX_MASKS[0], "true" if MASK_MODE[0] == "rectangle" else "false")
+        ) + ENV_CLOSE
+
+    if "GetMasks" in body:
+        note("GetMasks")
+        with LOCK:
+            items = "".join(
+                '<tr2:Masks token="%s"><tr2:ConfigurationToken>%s</tr2:ConfigurationToken>'
+                "<tr2:Polygon>%s</tr2:Polygon><tr2:Type>%s</tr2:Type>"
+                "<tr2:Enabled>%s</tr2:Enabled></tr2:Masks>"
+                % (token, m["config"],
+                   "".join('<tt:Point x="%.4f" y="%.4f"/>' % (x, y) for x, y in m["polygon"]),
+                   m["type"], "true" if m["enabled"] else "false")
+                for token, m in sorted(MASKS.items())
+            )
+        return ENV_OPEN + "<tr2:GetMasksResponse>%s</tr2:GetMasksResponse>" % items + ENV_CLOSE
+
+    if "CreateMask" in body:
+        with LOCK:
+            if len(MASKS) >= MAX_MASKS[0]:
+                note("CreateMask", {"refused": "full"})
+                return fault("The maximum number of masks has been reached", "ter:TooManyItems")
+            token = "MASK_%d" % NEXT_MASK[0]
+            NEXT_MASK[0] += 1
+            MASKS[token] = {
+                "config": element(body, "ConfigurationToken") or "VSC_1",
+                "polygon": store_mask(mask_points(body)),
+                "type": element(body, "Type") or "Color",
+                "enabled": "true" in element(body, "Enabled").lower(),
+            }
+        note("CreateMask", {"token": token, "mode": MASK_MODE[0]})
+        return ENV_OPEN + (
+            "<tr2:CreateMaskResponse><tr2:Token>%s</tr2:Token></tr2:CreateMaskResponse>" % token
+        ) + ENV_CLOSE
+
+    if "SetMask" in body:
+        m = re.search(r'<(?:\w+:)?Mask\s+token="([^"]+)"', body)
+        token = m.group(1) if m else ""
+        with LOCK:
+            if token not in MASKS:
+                note("SetMask", {"token": token, "refused": True})
+                return fault("No mask with that token", "ter:NoConfig")
+            MASKS[token]["polygon"] = store_mask(mask_points(body))
+            MASKS[token]["type"] = element(body, "Type") or MASKS[token]["type"]
+            MASKS[token]["enabled"] = "true" in element(body, "Enabled").lower()
+        note("SetMask", {"token": token, "mode": MASK_MODE[0]})
+        return ENV_OPEN + "<tr2:SetMaskResponse/>" + ENV_CLOSE
+
+    if "DeleteMask" in body:
+        token = element(body, "Token")
+        with LOCK:
+            MASKS.pop(token, None)
+        note("DeleteMask", {"token": token})
+        return ENV_OPEN + "<tr2:DeleteMaskResponse/>" + ENV_CLOSE
 
     return ENV_OPEN + ENV_CLOSE
 
@@ -340,6 +467,10 @@ def media_response(body):
         return ENV_OPEN + (
             '<trt:GetProfilesResponse><trt:Profiles token="MainProfile" fixed="true">'
             "<tt:Name>Main</tt:Name>"
+            # A mask attaches to a video source CONFIGURATION, not to a profile - which is
+            # what the product resolves before it can write one.
+            '<tt:VideoSourceConfiguration token="VSC_1"><tt:Name>VSC</tt:Name>'
+            "<tt:SourceToken>VS_1</tt:SourceToken></tt:VideoSourceConfiguration>"
             "<tt:VideoEncoderConfiguration><tt:Encoding>H264</tt:Encoding>"
             "<tt:Resolution><tt:Width>1920</tt:Width><tt:Height>1080</tt:Height></tt:Resolution>"
             "</tt:VideoEncoderConfiguration>"
@@ -475,7 +606,12 @@ class Handler(BaseHTTPRequestHandler):
                                    "position": dict(POSITION), "home": dict(HOME),
                                    "relays": {k: dict(v) for k, v in RELAYS.items()},
                                    "inputs": dict(INPUTS),
-                                   "subscriptions": len(SUBSCRIPTIONS)})
+                                   "subscriptions": len(SUBSCRIPTIONS),
+                                   "masks": {k: {"polygon": v["polygon"], "type": v["type"],
+                                                 "enabled": v["enabled"]}
+                                             for k, v in MASKS.items()},
+                                   "maskMode": MASK_MODE[0],
+                                   "maskSupport": MASK_SUPPORT[0]})
             self._send(200, body, "application/json")
             return
         self._send(404, "not found", "text/plain")
@@ -511,6 +647,28 @@ class Handler(BaseHTTPRequestHandler):
                               {"InputToken": token}, {"LogicalState": state})
             self._send(200, json.dumps({"token": token, "state": state}), "application/json")
             return
+        if self.path.startswith("/masks/mode/"):
+            # Make the camera dishonest on demand. This is the whole reason the product
+            # reads its masks back instead of trusting a 200.
+            mode = self.path.rsplit("/", 1)[-1]
+            if mode not in ("honest", "shifted", "rectangle", "drop"):
+                self._send(400, "{}", "application/json")
+                return
+            MASK_MODE[0] = mode
+            self._send(200, json.dumps({"mode": mode}), "application/json")
+            return
+        if self.path.startswith("/masks/support/"):
+            MASK_SUPPORT[0] = self.path.rsplit("/", 1)[-1] == "on"
+            self._send(200, json.dumps({"support": MASK_SUPPORT[0]}), "application/json")
+            return
+        if self.path.startswith("/masks/limit/"):
+            try:
+                MAX_MASKS[0] = int(self.path.rsplit("/", 1)[-1])
+            except ValueError:
+                self._send(400, "{}", "application/json")
+                return
+            self._send(200, json.dumps({"maxMasks": MAX_MASKS[0]}), "application/json")
+            return
         if self.path.startswith("/subscriptions/expire"):
             # Drop every subscription without telling anybody, which is precisely what a
             # camera does when a lease is not renewed — and the failure the product has to
@@ -524,6 +682,8 @@ class Handler(BaseHTTPRequestHandler):
             out = ptz_response(body)
         elif "media_service" in self.path:
             out = media_response(body)
+        elif "media2_service" in self.path:
+            out = media2_response(body)
         elif "event_service" in self.path:
             out = event_response(body)
         elif "/onvif/subscription/" in self.path:

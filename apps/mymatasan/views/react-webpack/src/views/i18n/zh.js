@@ -2035,4 +2035,38 @@ export default {
   'st.eventsIncludeMotionHint': '通常保持关闭。本录像机已在同一画面上运行自己的检测，带有摄像机并不知晓的规则、区域和时间表；第二条未经过滤的“有东西在动”会把第一条淹没。门磁和输出不受影响，始终会上报。',
   'st.eventsSaved': '摄像机事件设置已保存',
   'st.eventsSaveFailed': '无法保存摄像机事件设置',
+
+  // Privacy zones and export redaction (W3-6)
+  'cam.detailPrivacy': '隐私',
+  'privacy.title': '此摄像机不得显示的区域',
+  'privacy.intro': '圈出不应被任何人看到的画面区域——邻居的窗户、人行道、密码键盘。摄像机支持时，这些区域根本不会被录制；否则，它们会在导出的录像中被涂黑。',
+  'privacy.recheck': '重新检查摄像机',
+  'privacy.rechecked': '已核对摄像机实际遮蔽的内容',
+  'privacy.none': '此摄像机尚未隐藏任何内容。',
+  'privacy.add': '隐藏一个区域',
+  'privacy.name': '该区域是什么？',
+  'privacy.style': '隐藏方式',
+  'privacy.style.color': '纯色遮挡',
+  'privacy.style.blurred': '模糊',
+  'privacy.style.pixelated': '马赛克',
+  'privacy.styleHint': '这是摄像机隐藏该区域的方式，只有部分摄像机提供选择。导出的录像始终以纯黑遮挡，因为模糊会让人质疑仍可从中还原信息。',
+  'privacy.active': '已隐藏',
+  'privacy.switchedOff': '未隐藏',
+  'privacy.onCamera': '由摄像机隐藏',
+  'privacy.exportOnly': '仅在导出时隐藏',
+  'privacy.turnOn': '隐藏',
+  'privacy.turnOff': '停止隐藏',
+  'privacy.saved': '已保存 {name}',
+  'privacy.removed': '已移除 {name}',
+  'ev.redact': '在此副本中隐藏隐私区域',
+  'ev.redactHint': '会在导出的视频中涂黑该摄像机的隐私区域。为此副本需重新编码，因此它会被标记为“已脱敏副本”，且不会与录像机原始校验值一致——这一点已在包内说明。',
+  'ev.redactedBundle': '已脱敏副本',
+
+  // The privacy status sentence, composed on the CLIENT (W3-6) - the server's
+  // `detail` is English and is for the API and the log, not for this screen.
+  'privacy.status.ready': '此摄像机可自行隐藏区域。目前尚未隐藏任何内容。',
+  'privacy.status.confirmed': '摄像机正在自行隐藏这些区域，因此它们根本不会被录制。',
+  'privacy.status.unconfirmed': '摄像机接受了这些区域但未予确认（{zones}），因此应视为录像中仍包含它们。导出的录像仍会被涂黑。',
+  'privacy.status.unsupported': '此摄像机无法自行隐藏任何内容，因此录像中会包含这些区域。导出的录像仍会被涂黑。',
+  'privacy.status.unreachable': '无法连接到摄像机，因此无法确定它是否隐藏了任何内容。导出的录像仍会被涂黑。',
 };

@@ -5,6 +5,7 @@ import { CameraHero, statusTone } from '@shared/CameraHero';
 import { useT } from '@shared/i18n';
 import { WallBar, useWallCycling } from './wall';
 import { PTZPanel, RelayPanel } from './ptz';
+import { PrivacyPanel } from './privacy';
 import { HelpButton } from '@shared/Manual';
 import { FormAlert, FormBusyOverlay, InfoButton, Tracks, LayoutDropdown } from './ui';
 import { CameraAiPanel } from './vision';
@@ -2162,6 +2163,7 @@ export function CamerasTab({
                     { id: 'liveview', label: t('cam.detailLive'), icon: 'video' },
                     { id: 'ai', label: t('cam.detailDetection'), icon: 'cpu' },
                     { id: 'recordings', label: t('tab.recording'), icon: 'film' },
+                    { id: 'privacy', label: t('cam.detailPrivacy'), icon: 'shield' },
                     { id: 'settings', label: t('cam.detailSettings'), icon: 'sliders' },
                   ]}
                 />
@@ -2177,6 +2179,15 @@ export function CamerasTab({
                     onRemoveFromViews={onRemoveFromViews}
                     onPTZMove={onPTZMove}
                     onPTZStop={onPTZStop}
+                  />
+                ) : cameraDetailTab === 'privacy' ? (
+                  <PrivacyPanel
+                    key={`privacy-${selectedSaved.id}`}
+                    camera={selectedSaved}
+                    authHeader={authHeader}
+                    streamConfig={streamConfig}
+                    busy={busy}
+                    onMessage={onMessage}
                   />
                 ) : cameraDetailTab === 'settings' ? (
                   <section className="camera-settings-panel">

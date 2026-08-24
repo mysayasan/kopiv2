@@ -119,6 +119,20 @@ func (f *fakeCameraService) SetRelayPulseMode(_ context.Context, _ uint64, _ str
 func (f *fakeCameraService) EventEndpoint(_ context.Context, _ uint64) (string, onvif.Credentials, error) {
 	return "", onvif.Credentials{}, nil
 }
+func (f *fakeCameraService) MaskOptions(_ context.Context, _ uint64) (*onvif.MaskOptions, error) {
+	return &onvif.MaskOptions{}, nil
+}
+func (f *fakeCameraService) CameraMasks(_ context.Context, _ uint64) ([]onvif.Mask, error) {
+	return nil, nil
+}
+func (f *fakeCameraService) CreateCameraMask(_ context.Context, _ uint64, _ onvif.Mask) (string, error) {
+	return "", nil
+}
+func (f *fakeCameraService) SetCameraMask(_ context.Context, _ uint64, _ onvif.Mask) error { return nil }
+func (f *fakeCameraService) DeleteCameraMask(_ context.Context, _ uint64, _ string) error  { return nil }
+func (f *fakeCameraService) VideoSourceToken(_ context.Context, _ uint64) (string, error) {
+	return "", nil
+}
 func (f *fakeCameraService) PTZSetHome(_ context.Context, _ uint64) error { return nil }
 func (f *fakeCameraService) PTZStatus(_ context.Context, _ uint64) (*onvif.PTZStatus, error) {
 	return nil, nil

@@ -344,6 +344,11 @@ export function EvidenceExportDialog({ camera, authHeader, onClose, onMessage })
   const [from, setFrom] = useState(unixToLocalInput(now - 3600));
   const [to, setTo] = useState(unixToLocalInput(now));
   const [reason, setReason] = useState('');
+  // Whether this copy hides the camera's privacy areas (W3-6). A REQUEST-TIME choice,
+  // because the same operator makes both kinds of bundle from the same footage: an
+  // investigator working the incident wants everything, and a copy handed outside the
+  // organisation must not carry the window next door.
+  const [redact, setRedact] = useState(false);
   const [preview, setPreview] = useState(null);
   const [job, setJob] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -389,7 +394,7 @@ export function EvidenceExportDialog({ camera, authHeader, onClose, onMessage })
     try {
       let current = await call('/api/evidence/exports', {
         method: 'POST',
-        body: JSON.stringify({ cameraId, from: fromUnix, to: toUnix, reason }),
+        body: JSON.stringify({ cameraId, from: fromUnix, to: toUnix, reason, redact }),
       });
       setJob(current);
       // Poll: decrypting and joining a long range takes minutes, and the server builds
@@ -442,6 +447,15 @@ export function EvidenceExportDialog({ camera, authHeader, onClose, onMessage })
           />
           <span className="field-hint">{t('rec.exportReasonHint')}</span>
         </label>
+
+        <label className="check-row">
+          <input type="checkbox" checked={redact} onChange={(e) => setRedact(e.target.checked)} />
+          {t('ev.redact')}
+        </label>
+        {/* Said next to the box, not after the fact: a redacted copy is deliberately not
+            bit-identical footage, and somebody handing it over has to know that before
+            they make it rather than when the other side points it out. */}
+        <p className="field-hint">{t('ev.redactHint')}</p>
 
         {error ? <FormAlert message={error} /> : null}
 

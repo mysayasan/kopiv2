@@ -68,3 +68,48 @@ are not in the file, and the file jumps across them. They are listed under `gaps
 A job is looked up by id alone, so the id is the only thing between a caller holding some
 export grant and a bundle they did not create. `exp-<unix>-<counter>` was enumerable inside
 the six-hour retention window; ids now carry 8 random bytes (`exportNonce`).
+
+## Redaction (W3-6)
+
+`ExportRequest.Redact` burns the camera's privacy zones into the exported video.
+
+**This is the one place in the product that deliberately breaks the rule stated on
+`concat`** - *"an export must not re-encode, because re-encoding changes every pixel and
+hands the other side an obvious argument that the footage was processed"*. Redacting **is**
+re-encoding; it changes pixels on purpose.
+
+The answer is not to pretend otherwise. A redacted bundle:
+
+- **says so in its filename** (`camera-REDACTED<id>_...`), which is the first thing anybody
+  sees and often the only thing that survives being forwarded;
+- **declares itself in the manifest** (`redaction.applied`, the region names, the method,
+  and a note saying in words that it will not match the source digests);
+- **says it again in VERIFY.txt**, first, before the verification steps - that file is the
+  one a person reads, and "you are not being shown everything that was recorded" is not a
+  footnote;
+- **still carries the source digests**, so the derivation is traceable back to footage that
+  remains on the recorder and can be exported separately by somebody entitled to it.
+
+**Solid black, not blur.** Blurring is reversible-looking: it invites the argument that
+something could be recovered, and on a low-detail region it sometimes can be. The
+camera-side mask may blur if an operator prefers, because there the original never existed.
+
+The filter is `drawbox` over each zone's **bounding rectangle**, expressed in fractions of
+the frame - so the same zone is correct at any resolution, including after somebody changes
+it. Erring towards covering **more** is the only safe direction for a privacy control: too
+much black is a complaint, too little is a disclosure.
+
+**A redaction that was asked for and finds no zones does not mark the bundle as redacted.**
+A bundle that claims to be redacted with nothing burned into it is a false statement about
+what the recipient is being protected from.
+
+The flag is threaded explicitly from the handler into `ExportRequest`. It was not, at first:
+this handler builds the service request field by field rather than passing the decoded body,
+and the flag was silently dropped - the screen offered it, the service supported it, and the
+export came out unredacted with a manifest that correctly said so. The live bench caught it
+because it asserted the **manifest**, not merely that the export succeeded.
+
+The bench also measures the pixels (`signalstats` YAVG inside the zone and outside it),
+because a bundle that *says* it was redacted and a bundle that *was* are different claims -
+and the first version of that check, which guessed from a PNG's file size, passed on
+unredacted footage.

@@ -8012,3 +8012,97 @@ input.input-error:focus,
 .relay-rule .metadata-row {
   gap: 10px;
 }
+
+/* --- Privacy zones (W3-6) --- */
+
+/* The status is the most important thing on the page, so it looks like it. Which of the two
+   protections a camera actually gives depends on its hardware, and a screen that listed
+   zones without saying so would imply the stronger claim on every camera. */
+.privacy-status {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin-block: 10px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+/* Confirmed is the only state that earns a calm colour. Everything else is a warning,
+   including "the camera could not be asked" — not knowing whether a privacy control is
+   working is not a neutral state. */
+.privacy-status-confirmed {
+  border-inline-start: 3px solid var(--ok-text, #2e7d32);
+}
+
+.privacy-status-unconfirmed,
+.privacy-status-unsupported,
+.privacy-status-unreachable {
+  border-inline-start: 3px solid var(--danger-text, #c0392b);
+  color: var(--text-primary);
+}
+
+.privacy-zone-list {
+  list-style: none;
+  margin: 12px 0;
+  padding: 0;
+}
+
+.privacy-zone-list li {
+  padding: 10px;
+  margin-block-end: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+}
+
+/* A zone that is switched off is dimmed but still legible: it is a drawing somebody kept
+   on purpose, not a mistake. */
+.privacy-zone-list li.is-off {
+  opacity: 0.72;
+}
+
+.privacy-zone-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.privacy-zone-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.privacy-zone-actions {
+  display: flex;
+  gap: 6px;
+  margin-block-start: 8px;
+}
+
+.privacy-zone-editor {
+  margin-block-start: 10px;
+  padding: 12px;
+  border: 1px dashed var(--border-subtle);
+  border-radius: 6px;
+}
+
+.privacy-editor-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-block-start: 10px;
+}
+
+.privacy-editor-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.privacy-editor-row input,
+.privacy-editor-row select {
+  min-inline-size: 200px;
+}

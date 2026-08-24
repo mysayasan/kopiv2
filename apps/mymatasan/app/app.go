@@ -165,6 +165,9 @@ func (m *module) Entities() []any {
 		// PTZ guard tours (W3-5). New table; the auto-migrator creates it. It stores an
 		// itinerary of preset TOKENS the camera owns, never the positions themselves.
 		appentities.PtzTour{},
+		// Privacy zones (W3-6). New table; the auto-migrator creates it. It stores the
+		// region and the CAMERA's mask token — a handle we do not own.
+		appentities.PrivacyZone{},
 		sharedentities.Notification{},
 		sharedentities.NotificationRollup{},
 		// The append-only audit trail, shared with myidsan and myseliasan. New table on
@@ -386,6 +389,10 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// monitors use, because "the patrol stopped" is a health fact: a tour that has quietly
 	// stopped visiting its route leaves a screen saying "running" and nobody watching.
 	ptzService := services.NewPTZService(repo.PtzTour, cameraService, ptzJournal, notificationService)
+	// Privacy zones (W3-6): regions that must not be seen. Pushed to the camera as real
+	// ONVIF masks where the camera will take them — and verified by reading them back,
+	// because a mask believed to be applied and not applied is worse than none.
+	privacyService := services.NewPrivacyService(repo.PrivacyZone, cameraService)
 	// Incrementally aggregate the notifications feed into the hourly rollup table
 	// that powers the dashboard's baseline/anomaly analytics (Phase 0). The cursor
 	// persists the last-folded notification id so sweeps are exactly-once and the
@@ -525,6 +532,14 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		// failure every dwell, forever, under an id nothing can render.
 		cascade.AddCameraCleanup(func(ctx context.Context, cameraId int64) error {
 			_, err := ptzService.DeleteToursForCamera(ctx, cameraId)
+			return err
+		})
+		// The camera's privacy zones (W3-6). Our ROWS go; the camera's own masks are left
+		// alone, because the camera is being removed from this appliance rather than
+		// decommissioned, and stripping a privacy control on the way out is not this
+		// product's decision to make.
+		cascade.AddCameraCleanup(func(ctx context.Context, cameraId int64) error {
+			_, err := privacyService.DeleteZonesForCamera(ctx, cameraId)
 			return err
 		})
 		// Last: the config row that the purges above are driven from.
@@ -728,6 +743,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 		ptz:        ptzService,
 		ptzJournal: ptzJournal,
+		privacy:    privacyService,
 		relays:     relayService,
 
 		eventSettings: services.NewOnvifEventSettingsService(repo.RuntimeSetting),
@@ -751,6 +767,8 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 			},
 			evidenceExportDir,
 			currentVersion,
+			// The privacy zones a redacted export burns in (W3-6).
+			privacyService,
 		),
 
 		ffmpegInstaller: services.NewFFmpegInstaller(ffmpegBinDir, settingsService),
@@ -1446,6 +1464,22 @@ func (m *module) APIDocs() apidocs.SpecConfig {
 			},
 			// Saved positions and guard tours (W3-5). Under the same /ptz path the role
 			// model already grants as "may move a camera".
+			// Privacy zones (W3-6).
+			"GET /api/cameras/{id}/privacy": {
+				Summary:     "Areas this camera must not show, and whether it is enforcing them",
+				Description: "Returns the zones plus a status: confirmed (the camera is masking them, so they are not recorded), unconfirmed (it accepted them and read back something else), unsupported (it cannot mask), or unreachable. Exports redact the zones in every case.",
+				Tags:        []string{"privacy"},
+			},
+			"POST /api/cameras/{id}/privacy": {
+				Summary:     "Draw or change an area the camera must not show",
+				Description: "Points are normalized 0..1 with the origin top-left, the same space detection zones use. Pushed to the camera immediately and verified by reading it back.",
+				Tags:        []string{"privacy"},
+			},
+			"POST /api/cameras/{id}/privacy/apply": {
+				Summary:     "Re-push the zones to the camera and re-check them",
+				Description: "For a camera that was offline, rebooted or factory-reset since the zones were drawn and has lost its masks.",
+				Tags:        []string{"privacy"},
+			},
 			// Relay outputs and the camera event listener (W3-5b).
 			"GET /api/cameras/{id}/relays": {
 				Summary:     "List a camera's relay outputs",

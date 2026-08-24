@@ -1413,3 +1413,83 @@ camera will not give you:
   myiotsan's flow engine, and the seam is its Issue chokepoint.
 * An input cannot be bookmarked into a case file — case evidence points at alert events, and
   camera events deliberately do not create those. A change to W3-3a, not to this.
+
+## W3-6 - Privacy zones: camera masks and export redaction  DONE (2026-08-24), 51/51 + 22/22 en and 25/25 ar
+
+    GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o .artifacts/fleetbench/bin/mymatasan ./cmd/mymatasan
+    KOPIV2_NODE_IMAGE=debian-ffmpeg:bench python tools/fleetbench/fleet_harness.py
+    KOPIV2_NODE_IMAGE=debian-ffmpeg:bench python tools/fleetbench/bench_w36_privacy.py   # 51/51, ~7 min
+    node tools/fleetbench/uicheck_privacy.js .artifacts/fleetbench en
+    node tools/fleetbench/uicheck_privacy.js .artifacts/fleetbench ar
+
+**THE FFMPEG IMAGE IS REQUIRED** - the redaction half records real footage. Without it the
+bench says so and stops rather than passing a half it did not run.
+
+### The simulator can now LIE, and that is the point
+
+`onvifsim.py` grew ONVIF Media2 privacy masks plus three bench controls that no real camera
+gives you:
+
+* `POST /masks/mode/<honest|shifted|rectangle|drop>` - make the camera store something OTHER
+  than what it was sent. `shifted` is a different coordinate space, `rectangle` squares off a
+  polygon, `drop` accepts the write with HTTP 200 and stores nothing. **This is the case the
+  product's read-back verification exists for**, and it is the reason this bench is worth
+  more than a status-code check.
+* `POST /masks/support/<on|off>` - a camera with no Media2 mask support at all.
+* `POST /masks/limit/<n>` - how many masks it will hold.
+
+### What the bench found
+
+1. **A redact flag the API silently dropped.** The evidence handler builds the service
+   request field by field rather than passing the decoded body, so `redact` existed on the
+   screen, existed in the service, and never crossed the middle. **The bench caught it
+   because it asserted the MANIFEST rather than that the export succeeded** - the obvious
+   check would have passed.
+2. **THE ARABIC SCREEN PASS: the status sentence was hard-coded English.** The one line that
+   distinguishes "never recorded" from "only the exports are protected", printed in English
+   in an Arabic UI. **Same shape as W3-4's rule-schedule summaries** - a server-composed
+   sentence rendered directly. The server now returns a STATE plus the zone names and the
+   screen composes its own; the check asserts, in any non-English run, that the banner is not
+   the API's English text. **Grep for any other server-composed sentence a screen prints.**
+3. **A camera with no ONVIF was reported as "could not be reached"**, sending somebody to
+   check a network for a fact about the camera.
+
+### THE CHECK I WROTE THAT PASSED ON BROKEN OUTPUT - read this one
+
+The first version of "the redacted copy is black where the zone was" decided by **the file
+size of a cropped PNG**. The crop landed on a flat colour band of the test pattern, which
+compresses to almost nothing, so it **passed on completely unredacted footage** - and it was
+the only green tick on a run whose manifest correctly reported that nothing had been
+redacted.
+
+It is now MEASURED, with `ffmpeg ... signalstats ... YAVG`, and it takes **two** readings:
+inside the zone must be black **and** outside it must not be. One reading alone passes just
+as happily on a video that is black everywhere, on a crop that silently failed, and on a
+source that was never a picture.
+
+**BLACK IS 16, NOT 0.** H.264 here is limited ("TV") range, luma 16-235. The first threshold
+was "near zero" and failed on a perfectly black rectangle. Measured values on this bench:
+16.0 inside, ~116 outside - not a close call in either direction.
+
+### Harness traps this bench re-learned
+
+* **The ffmpeg path is captured into `runtime_setting` at FIRST boot, from the config on the
+  HOST** - a Windows path. A node on the ffmpeg image records NOTHING, quietly, and the only
+  symptom is "0 segments" five minutes later. It is in this checklist already; it cost two
+  runs anyway. Patch `/api/settings/runtime` before enabling recording.
+* **Wait for the RTSP source.** Adding a camera whose mediamtx has not finished starting
+  gives a camera the recorder cannot open, and the symptom arrives minutes later as a
+  recorder bug.
+* **Saving a camera is keyed on its ONVIF address**, so a second run of a screen check reuses
+  the SAME camera row - with the zones the previous run drew still on it. The check now
+  DELETES them first: establish the precondition, do not assume it.
+* **Rebuild the LINUX binary after every fix.** A run against a stale `.artifacts` binary
+  reports the bug you just fixed, which is an excellent way to spend twenty minutes.
+
+### Not claimed
+
+* No face blur on export (W3-6b). The redacting pipeline now exists; per-frame detection is
+  a different order of cost.
+* No real camera. `onvifsim.py` implements the calls the product makes and can be told to
+  lie, but it is not any vendor's firmware, and no real device's coordinate-space quirks are
+  reproduced.

@@ -114,6 +114,9 @@ type wiring struct {
 	// operator's button, a detection rule, anything added later. It is the only thing in
 	// this appliance that acts on the world, so it audits and rate-limits in one place.
 	relays services.IRelayService
+	// privacy owns the regions of a camera's view that must not be seen (W3-6), and the
+	// question of whether the CAMERA is actually masking them or only the exports are.
+	privacy services.IPrivacyService
 	// eventSettings backs the camera event listener (W3-5b): what the CAMERA noticed,
 	// including whatever is wired into its terminal block.
 	eventSettings services.IOnvifEventSettingsService
@@ -189,6 +192,7 @@ func (w *wiring) validate() error {
 	check("ptz", w.ptz != nil)
 	check("ptzJournal", w.ptzJournal != nil)
 	check("relays", w.relays != nil)
+	check("privacy", w.privacy != nil)
 	check("eventSettings", w.eventSettings != nil)
 	check("tamperSettings", w.tamperSettings != nil)
 	check("accessPerms", w.accessPerms != nil)

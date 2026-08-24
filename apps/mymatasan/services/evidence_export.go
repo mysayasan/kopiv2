@@ -7,8 +7,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -169,6 +172,38 @@ type ExportManifest struct {
 		MediaSeconds           int64 `json:"mediaSeconds"`
 		RequestedOffsetSeconds int64 `json:"requestedOffsetSeconds"`
 	} `json:"output"`
+
+	// Redaction declares that this bundle is a DERIVATIVE, not a pristine copy (W3-6).
+	//
+	// It exists because redaction and the rest of this file are in direct tension, and the
+	// tension is written down a few hundred lines below: "an export must not re-encode,
+	// because re-encoding changes every pixel and hands the other side an obvious argument
+	// that the footage was processed". Redacting IS re-encoding — it changes pixels on
+	// purpose.
+	//
+	// The answer is not to pretend otherwise. A redacted bundle SAYS it was redacted, in
+	// the manifest, in the filename and in VERIFY.txt; it still carries the digests of the
+	// SOURCE segments, so a recipient can see exactly what it derives from; and it names
+	// the regions that were obscured. The unredacted footage stays on the appliance with
+	// its own chain of custody, and can be exported separately by somebody entitled to it.
+	//
+	// Absent (nil) on an ordinary export, so a bundle that says nothing about redaction is
+	// one that was not redacted — rather than one built before the field existed.
+	Redaction *ExportRedaction `json:"redaction,omitempty"`
+}
+
+// ExportRedaction records what was obscured and why the file is not bit-identical footage.
+type ExportRedaction struct {
+	// Applied is always true when this block is present; it is spelled out so a reader
+	// scanning the JSON cannot mistake the block's presence for a configuration option.
+	Applied bool `json:"applied"`
+	// Regions are the privacy zones burned in, by name, so the recipient knows what they
+	// are NOT being shown rather than merely that something is missing.
+	Regions []string `json:"regions"`
+	// Method is how the pixels were destroyed, in plain words.
+	Method string `json:"method"`
+	// Note is the sentence for a human reading the manifest.
+	Note string `json:"note"`
 }
 
 // ExportJob is one export's live state.
@@ -197,12 +232,26 @@ type ExportJob struct {
 
 // ExportRequest is what a caller asks for.
 type ExportRequest struct {
-	CameraId   int64  `json:"cameraId"`
-	From       int64  `json:"from"`
-	To         int64  `json:"to"`
-	Reason     string `json:"reason"`
+	CameraId int64  `json:"cameraId"`
+	From     int64  `json:"from"`
+	To       int64  `json:"to"`
+	Reason   string `json:"reason"`
+	// Redact burns the camera's privacy zones into the exported video (W3-6).
+	//
+	// It is a REQUEST-TIME choice rather than a per-camera setting, because the two
+	// bundles answer different questions: an investigator working the incident wants
+	// everything that was recorded, and a copy handed outside the organisation must not
+	// carry the neighbour's window. The same operator makes both, from the same footage,
+	// on different days.
+	Redact     bool   `json:"redact"`
 	ExporterId int64  `json:"-"`
 	Exporter   string `json:"-"`
+}
+
+// exportPrivacySource is the slice of IPrivacyService this needs: which regions of a
+// camera's view must not leave the building.
+type exportPrivacySource interface {
+	ExportRegions(ctx context.Context, cameraId int64) ([]PrivacyRegion, error)
 }
 
 // IEvidenceExportService creates and tracks evidence bundles.
@@ -228,6 +277,9 @@ type evidenceExportService struct {
 	ffmpegPath func() string
 	workDir    string
 	appVersion string
+	// privacy supplies the regions a redacted export must obscure (W3-6). Optional: nil
+	// means no zones, and every export behaves exactly as it did before.
+	privacy exportPrivacySource
 
 	mu   sync.Mutex
 	jobs map[string]*ExportJob
@@ -241,11 +293,13 @@ func NewEvidenceExportService(
 	ffmpegPath func() string,
 	workDir string,
 	appVersion string,
+	privacy exportPrivacySource,
 ) IEvidenceExportService {
 	return &evidenceExportService{
 		recording:  rec,
 		camera:     camera,
 		cipher:     cipher,
+		privacy:    privacy,
 		ffmpegPath: ffmpegPath,
 		workDir:    workDir,
 		appVersion: appVersion,
@@ -439,7 +493,7 @@ func (s *evidenceExportService) Create(ctx context.Context, req ExportRequest) (
 	safego.Go("mymatasan.evidence.export", func() {
 		buildCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Minute)
 		defer cancel()
-		s.build(buildCtx, id, man, segs)
+		s.build(buildCtx, id, man, segs, req.Redact)
 	})
 	cp := *job
 	return &cp, nil
@@ -453,7 +507,7 @@ func (s *evidenceExportService) setStatus(id string, fn func(*ExportJob)) {
 	}
 }
 
-func (s *evidenceExportService) build(ctx context.Context, id string, man *ExportManifest, segs []*entities.RecordingSegment) {
+func (s *evidenceExportService) build(ctx context.Context, id string, man *ExportManifest, segs []*entities.RecordingSegment, redact bool) {
 	s.setStatus(id, func(j *ExportJob) { j.Status = ExportRunning })
 
 	fail := func(err error) {
@@ -491,11 +545,26 @@ func (s *evidenceExportService) build(ctx context.Context, id string, man *Expor
 		parts = append(parts, part)
 	}
 
-	outName := fmt.Sprintf("camera%d_%s-%s.mp4", man.Camera.Id,
+	// A redacted bundle is NAMED as one. The filename is the first thing anybody sees and
+	// often the only thing that survives being forwarded, so it carries the fact rather
+	// than leaving it to a manifest nobody opens.
+	redaction := s.redactionFor(ctx, redact, man.Camera.Id)
+	prefix := "camera"
+	if redaction != nil {
+		prefix = "camera-REDACTED"
+	}
+	outName := fmt.Sprintf("%s%d_%s-%s.mp4", prefix, man.Camera.Id,
 		time.Unix(man.RequestedRange.From, 0).UTC().Format("20060102T150405Z"),
 		time.Unix(man.RequestedRange.To, 0).UTC().Format("150405Z"))
 	outPath := filepath.Join(dir, outName)
-	if err := s.concat(ctx, parts, outPath); err != nil {
+	if redaction != nil {
+		if err := s.redact(ctx, parts, outPath, redaction.regions); err != nil {
+			fail(err)
+			return
+		}
+		man.Output.Transcoded = true
+		man.Redaction = redaction.manifest
+	} else if err := s.concat(ctx, parts, outPath); err != nil {
 		fail(err)
 		return
 	}
@@ -567,9 +636,135 @@ func (s *evidenceExportService) materialize(src, dst string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// redactionPlan is what a redacted export needs: the regions, and the manifest block that
+// declares the result a derivative.
+type redactionPlan struct {
+	regions  []PrivacyRegion
+	manifest *ExportRedaction
+}
+
+// redactionFor decides whether this export is redacted, and what it obscures.
+//
+// A redaction that was ASKED FOR and finds no zones is NOT silently downgraded to an
+// ordinary export — but it is also not an error: a camera with nothing to hide has nothing
+// to redact, and the bundle simply is not marked as redacted. What must never happen is the
+// reverse: a bundle MARKED redacted that had nothing burned into it, which is a false claim
+// about what a recipient is being protected from.
+func (s *evidenceExportService) redactionFor(ctx context.Context, want bool, cameraId int64) *redactionPlan {
+	if !want || s.privacy == nil {
+		return nil
+	}
+	regions, err := s.privacy.ExportRegions(ctx, cameraId)
+	if err != nil || len(regions) == 0 {
+		if err != nil {
+			log.Printf("evidence: cam%d: could not read privacy zones for redaction: %v", cameraId, err)
+		}
+		return nil
+	}
+	names := make([]string, 0, len(regions))
+	for _, r := range regions {
+		names = append(names, r.Name)
+	}
+	return &redactionPlan{
+		regions: regions,
+		manifest: &ExportRedaction{
+			Applied: true,
+			Regions: names,
+			Method:  "the listed regions were filled with solid black and the video re-encoded",
+			Note: "This file is a REDACTED DERIVATIVE of the recorded footage, not a copy of it. " +
+				"The regions listed above have been destroyed in this file and cannot be recovered from it. " +
+				"Every other pixel has also been re-encoded, so this file will not match the digests of the " +
+				"source segments listed under `sources` — those digests describe the ORIGINAL footage, which " +
+				"remains on the recorder and can be exported separately by somebody entitled to see it.",
+		},
+	}
+}
+
+// redact joins the parts and burns the privacy regions into the result.
+//
+// THIS IS THE ONE PLACE IN THE PRODUCT THAT DELIBERATELY BREAKS THE RULE STATED ON concat
+// BELOW, and it does so loudly. Redaction re-encodes by definition; the answer is not to
+// pretend the output is pristine footage but to declare it a derivative — see
+// ExportManifest.Redaction and VERIFY.txt.
+//
+// SOLID BLACK, not blur or pixelation. Blurring is reversible-looking: it invites the
+// argument that something could be recovered, and on a low-detail region it sometimes can
+// be. A filled box destroys the pixels and looks like what it is. The camera-side mask can
+// blur if an operator prefers, because there the original never existed in the first place.
+func (s *evidenceExportService) redact(ctx context.Context, parts []string, out string, regions []PrivacyRegion) error {
+	ffmpeg := ""
+	if s.ffmpegPath != nil {
+		ffmpeg = strings.TrimSpace(s.ffmpegPath())
+	}
+	if ffmpeg == "" {
+		return fmt.Errorf("no ffmpeg is configured — set it in Settings before exporting footage")
+	}
+
+	listPath := out + ".list"
+	var sb strings.Builder
+	for _, p := range parts {
+		sb.WriteString("file '" + filepath.ToSlash(p) + "'\n")
+	}
+	if err := os.WriteFile(listPath, []byte(sb.String()), 0o600); err != nil {
+		return err
+	}
+	defer os.Remove(listPath)
+
+	filter := redactionFilter(regions)
+	if filter == "" {
+		return errors.New("the privacy zones could not be turned into a redaction")
+	}
+	cmd := exec.CommandContext(ctx, ffmpeg,
+		"-hide_banner", "-loglevel", "error",
+		"-f", "concat", "-safe", "0", "-i", filepath.ToSlash(listPath),
+		"-vf", filter,
+		// A visually lossless re-encode. The pixels change either way; there is no reason
+		// for them to also get worse.
+		"-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+		"-c:a", "copy",
+		"-movflags", "+faststart", "-f", "mp4", "-y", filepath.ToSlash(out))
+	procutil.HideWindow(cmd)
+	if outBytes, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("redacting the footage failed: %v: %s", err, strings.TrimSpace(string(outBytes)))
+	}
+	return nil
+}
+
+// redactionFilter builds the ffmpeg filter that fills each region.
+//
+// drawbox over each zone's BOUNDING RECTANGLE. A polygon would need a generated mask image
+// per export, and every extra step here is a step that can fail silently on a stream whose
+// dimensions are not what the manifest thought — while a bounding box always covers AT
+// LEAST the drawn region. Erring towards covering MORE is the only safe direction for a
+// privacy control: too much black is a complaint, too little is a disclosure.
+func redactionFilter(regions []PrivacyRegion) string {
+	parts := make([]string, 0, len(regions))
+	for _, region := range regions {
+		if len(region.Points) < 3 {
+			continue
+		}
+		minX, minY := region.Points[0][0], region.Points[0][1]
+		maxX, maxY := minX, minY
+		for _, p := range region.Points[1:] {
+			minX, maxX = math.Min(minX, p[0]), math.Max(maxX, p[0])
+			minY, maxY = math.Min(minY, p[1]), math.Max(maxY, p[1])
+		}
+		// Expressed as fractions of the real frame size, so the same zone is correct
+		// whatever resolution the camera happens to be recording at — including after
+		// somebody changes it, which is the case a pixel rectangle silently gets wrong.
+		parts = append(parts, fmt.Sprintf(
+			"drawbox=x=iw*%.4f:y=ih*%.4f:w=iw*%.4f:h=ih*%.4f:color=black@1.0:t=fill",
+			minX, minY, maxX-minX, maxY-minY))
+	}
+	return strings.Join(parts, ",")
+}
+
 // concat joins the parts. Stream-copy: an export must not re-encode, because re-encoding
 // changes every pixel and hands the other side an obvious argument that the footage was
 // processed.
+//
+// A REDACTED export deliberately does the opposite; see redact() above, which declares the
+// result a derivative rather than presenting a re-encode as untouched footage.
 func (s *evidenceExportService) concat(ctx context.Context, parts []string, out string) error {
 	if len(parts) == 1 {
 		return os.Rename(parts[0], out)
@@ -657,6 +852,26 @@ func verifyNote(man *ExportManifest, mediaName string) string {
 	sb.WriteString("  " + mediaName + "   the exported video\n")
 	sb.WriteString("  manifest.json      what it is, where it came from, and what is missing\n")
 	sb.WriteString("  VERIFY.txt         this file\n\n")
+
+	// SAID FIRST, and in words, when it applies. The manifest carries the same fact in
+	// JSON, but this file is the one a person reads — and "you are not being shown
+	// everything that was recorded" is not a footnote.
+	if man.Redaction != nil && man.Redaction.Applied {
+		sb.WriteString("!! THIS IS A REDACTED COPY, NOT THE ORIGINAL FOOTAGE !!\n")
+		sb.WriteString("-------------------------------------------------------\n\n")
+		sb.WriteString("   Parts of the picture have been permanently blacked out in this file:\n")
+		for _, region := range man.Redaction.Regions {
+			sb.WriteString("     - " + region + "\n")
+		}
+		sb.WriteString("\n   They cannot be recovered from this file. The whole video has also been\n")
+		sb.WriteString("   re-encoded to do it, so THIS FILE WILL NOT MATCH the digests listed\n")
+		sb.WriteString("   under `sources` in manifest.json — those describe the original\n")
+		sb.WriteString("   recordings, which are still on the recorder and can be exported\n")
+		sb.WriteString("   separately by somebody entitled to see them.\n\n")
+		sb.WriteString("   Step 1 below still applies: it proves this file is the one this\n")
+		sb.WriteString("   manifest describes, which is a different claim from proving it is\n")
+		sb.WriteString("   unaltered footage.\n\n")
+	}
 
 	sb.WriteString("1. CHECK THE VIDEO IS THE ONE THIS MANIFEST DESCRIBES\n\n")
 	sb.WriteString("   Compute the SHA-256 of the video file and compare it with\n")
