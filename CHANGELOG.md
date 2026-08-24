@@ -106,6 +106,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-24 — mymatasan 1.136.0, core 1.100.0 (94b2d4a)
+
+### Added
+
+- **core,mymatasan**: Three new detection rules that ask a question no single frame can answer. LOITERING alerts when a person (or whatever you choose) has been inside a zone longer than you allow. LEFT BEHIND alerts when a bag, case or box stops moving and stays put — and, by default, only when nobody is standing beside it, because a bag with its owner next to it is not abandoned and a rule that alerted on every waiting passenger would be switched off within a day. DIRECTION OF TRAVEL alerts when something crosses a zone heading a particular way: the wrong-way rule, with directions relative to the picture rather than to the compass. None of them adds a second AI pass. They read the same detections and the same object tracking the existing line-crossing rules use, so a camera already running detection pays nothing extra to gain them. The care went into the difference between a rule about a moment and a rule about a stretch of time. A frame rule that is wrong for one frame is corrected by the next one; a time rule that is wrong for one frame loses its clock, and a thirty-second threshold then never fires on a real camera where people walk behind pillars. So a missed detection is forgiven for a few passes, while being SEEN somewhere else is not: stepping out of the zone restarts the clock immediately, because that is information rather than the absence of it. The forgiveness is counted in missed detections rather than in seconds, so it means the same thing on a camera sampled once a second and one sampled once a minute. A loitering alert records WHEN THE DWELL BEGAN, not only when the alert fired — the alert arrives at 14:05 and the thirty seconds worth watching start at 14:04:30. And a rule that could never fire is refused at the point of saving rather than accepted and left silent: no object classes, or a direction rule with no direction, are both errors that say what is missing.
 ## 2026-08-24 — mymatasan 1.135.0 (e75be00)
 
 ### Added
