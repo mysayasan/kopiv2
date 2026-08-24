@@ -108,6 +108,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-24 — mymatasan 1.138.0, core 1.102.0 (def29f4)
+
+### Added
+
+- **core,mymatasan**: Your cameras can now tell the recorder what THEY noticed, and the recorder can switch things on. Most cameras have a terminal block with a couple of inputs and one or two relay outputs, and until now this product ignored both. Wire a door contact, a beam across a gateway, a PIR or a panic button under a counter into a camera's input and it appears in the notification feed the moment it trips, named — 'a device wired to Loading bay (input 1) is active' — filterable to that camera, and routable to email, webhook, Telegram or MQTT like any other alert. It is filed as a sensor reading rather than as an AI detection, so you can send door contacts to the people who care about doors without also sending them every person the AI sees. The other direction is the one that changes what the product is for: an output can drive a siren, a strobe, a gate, a door strike or a light, from a button beside the camera or automatically when a detection rule fires. That is the difference between recording an intrusion and responding to one. Switching something on briefly is the normal gesture, and the recorder hands the job of switching it back off to the CAMERA wherever the camera will take it, so a power cut or a restart here cannot leave a siren sounding; where a camera refuses, the screen says plainly that the recorder is the one holding it. A detection rule can only ever switch an output on briefly, never latch it — the rule that would leave a siren sounding is the one firing at four in the morning with nobody watching. And the button that switches something OFF is never refused, never disabled and never greyed out, not even while the recorder is busy doing something else: an appliance that can decline to stop a siren is worse than one that cannot start one.
 ## 2026-08-24 — mymatasan 1.137.0, core 1.101.0 (0d1317e)
 
 ### Added
