@@ -106,6 +106,16 @@ type ICameraService interface {
 	ResolveLiveView(ctx context.Context, id uint64, credentials onvif.Credentials) (*CameraDetail, error)
 	PTZMove(ctx context.Context, id uint64, req PTZMoveRequest) (*CameraDetail, error)
 	PTZStop(ctx context.Context, id uint64) (*CameraDetail, error)
+	// Named positions, stored on the camera (W3-5). They are read live rather than
+	// mirrored into a table: see infra/onvif/ptz.go for why the device is the only
+	// authority on where it can point.
+	PTZPresets(ctx context.Context, id uint64) ([]onvif.PTZPreset, error)
+	PTZSavePreset(ctx context.Context, id uint64, name string, presetToken string) (string, error)
+	PTZDeletePreset(ctx context.Context, id uint64, presetToken string) error
+	PTZGotoPreset(ctx context.Context, id uint64, presetToken string, speed float64) error
+	PTZHome(ctx context.Context, id uint64) error
+	PTZSetHome(ctx context.Context, id uint64) error
+	PTZStatus(ctx context.Context, id uint64) (*onvif.PTZStatus, error)
 	GetCameraEncoder(ctx context.Context, id uint64) (*onvif.VideoEncoderConfig, error)
 	ApplyCameraEncoder(ctx context.Context, id uint64, req ApplyCameraEncoderRequest) (*onvif.VideoEncoderConfig, error)
 	SnapshotSource(ctx context.Context, id uint64) (SnapshotSource, error)

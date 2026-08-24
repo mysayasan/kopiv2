@@ -66,7 +66,7 @@ func TestResolveStreamPersistsWorkingFallbackCandidate(t *testing.T) {
 		snapshotURI: "http://192.168.1.40/snapshot.jpg",
 	}
 	rtspClient := &fakeResolveRTSPClient{workingPath: "/stream2"}
-	service := NewCameraService(camRepo, ovRepo, client, rtspClient)
+	service := NewCameraService(camRepo, ovRepo, client, rtspClient, NewPTZJournal())
 
 	device, err := service.ResolveStream(context.Background(), 7, StreamSelectionRequest{
 		Credentials:  onvif.Credentials{Username: "camera-user", Password: "camera-password"},
@@ -117,7 +117,7 @@ func TestResolveStreamCanSwitchBackAndForth(t *testing.T) {
 		"/stream1": "H265",
 		"/stream2": "H264",
 	}}
-	service := NewCameraService(camRepo, ovRepo, client, rtspClient)
+	service := NewCameraService(camRepo, ovRepo, client, rtspClient, NewPTZJournal())
 
 	main, err := service.ResolveStream(context.Background(), 9, StreamSelectionRequest{ProfileToken: "MainStream"})
 	if err != nil {
@@ -322,6 +322,23 @@ func (f *fakeResolveStreamClient) GetServices(context.Context, onvif.DeviceReque
 }
 func (f *fakeResolveStreamClient) PTZMove(context.Context, onvif.PTZMoveRequest) error { return nil }
 func (f *fakeResolveStreamClient) PTZStop(context.Context, onvif.PTZMoveRequest) error { return nil }
+func (f *fakeResolveStreamClient) GetPresets(context.Context, onvif.PTZPresetRequest) ([]onvif.PTZPreset, error) {
+	return nil, nil
+}
+func (f *fakeResolveStreamClient) SetPreset(context.Context, onvif.PTZPresetRequest) (string, error) {
+	return "", nil
+}
+func (f *fakeResolveStreamClient) RemovePreset(context.Context, onvif.PTZPresetRequest) error {
+	return nil
+}
+func (f *fakeResolveStreamClient) GotoPreset(context.Context, onvif.PTZPresetRequest) error {
+	return nil
+}
+func (f *fakeResolveStreamClient) GotoHome(context.Context, onvif.PTZPresetRequest) error { return nil }
+func (f *fakeResolveStreamClient) SetHome(context.Context, onvif.PTZPresetRequest) error  { return nil }
+func (f *fakeResolveStreamClient) PTZGetStatus(context.Context, onvif.PTZPresetRequest) (*onvif.PTZStatus, error) {
+	return nil, nil
+}
 func (f *fakeResolveStreamClient) GetVideoEncoderConfig(context.Context, onvif.StreamURIRequest) (*onvif.VideoEncoderConfig, error) {
 	return nil, nil
 }

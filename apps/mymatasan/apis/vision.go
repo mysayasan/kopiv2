@@ -3,6 +3,7 @@ package apis
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -27,11 +28,13 @@ type visionApi struct {
 	source    *services.DetectionSource
 	cipher    *atrest.Cipher
 	search    *services.SightingSearch
+	// ptz points a camera at what a rule detected, when the rule asks for one (W3-5).
+	ptz services.PTZRecaller
 }
 
 // NewVisionApi registers AI detection rule, alert, and class-registry routes.
-func NewVisionApi(router *mux.Router, serv services.IVisionService, classes services.IDetectionClassService, recorder *recording.Manager, notifier services.INotificationService, camera services.ICameraService, settings services.IRuntimeSettingsService, notifDest services.INotificationDestinationsProvider, cipher *atrest.Cipher, search *services.SightingSearch) {
-	handler := &visionApi{serv: serv, classes: classes, recorder: recorder, notifier: notifier, camera: camera, settings: settings, notifDest: notifDest, cipher: cipher, search: search,
+func NewVisionApi(router *mux.Router, serv services.IVisionService, classes services.IDetectionClassService, recorder *recording.Manager, notifier services.INotificationService, camera services.ICameraService, settings services.IRuntimeSettingsService, notifDest services.INotificationDestinationsProvider, cipher *atrest.Cipher, search *services.SightingSearch, ptz services.PTZRecaller) {
+	handler := &visionApi{serv: serv, classes: classes, recorder: recorder, notifier: notifier, camera: camera, settings: settings, notifDest: notifDest, cipher: cipher, search: search, ptz: ptz,
 		source: services.NewDetectionSource(camera, recorder, settings, nil)}
 	group := router.PathPrefix("/vision").Subrouter()
 
@@ -272,6 +275,17 @@ func (a *visionApi) createAlert(w http.ResponseWriter, r *http.Request) {
 		a.recorder.TriggerEvent(alert.CameraId, alert.Id, 0)
 	}
 	services.NotifyVisionAlert(r.Context(), a.notifier, alert, a.cameraName(r.Context(), alert), a.alertOptions(r.Context(), alert))
+	// ...and point a camera at it, if the rule asks for one (W3-5). This path exists to
+	// give a hand-raised alert PARITY with the background monitor — the recorder trigger
+	// and the notification above are both here for that reason — and a recall missing from
+	// it would leave "what happens when this rule fires" with two answers depending on
+	// which code raised the alert. It is also what makes the rule editor's Test button
+	// prove anything about the half of the rule that moves a camera.
+	if alert != nil {
+		if err := services.ApplyRulePTZRecall(r.Context(), a.ptz, a.ruleConfig(r.Context(), alert.RuleId), alert.CameraId, ""); err != nil {
+			log.Printf("vision: rule%d: PTZ recall failed: %v", alert.RuleId, err)
+		}
+	}
 	controllers.SendResult(w, alert, "succeed")
 }
 
@@ -323,6 +337,23 @@ func (a *visionApi) ruleInfo(ctx context.Context, ruleID int64) (string, []strin
 		}
 	}
 	return "", nil, false
+}
+
+// ruleConfig returns one rule's raw config JSON, or "" when the rule is gone.
+func (a *visionApi) ruleConfig(ctx context.Context, ruleID int64) string {
+	if a.serv == nil || ruleID <= 0 {
+		return ""
+	}
+	rules, _, err := a.serv.GetRules(ctx, 1000, 0)
+	if err != nil {
+		return ""
+	}
+	for _, rule := range rules {
+		if rule != nil && rule.Id == ruleID {
+			return rule.RuleConfig
+		}
+	}
+	return ""
 }
 
 // readSnapshot reads a stored alert snapshot, decrypting it when encryption-at-rest is

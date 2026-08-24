@@ -905,6 +905,51 @@ export function applyRuleDestinations(ruleConfig, destinationIds) {
   return JSON.stringify(cfg, null, 2);
 }
 
+// ptzRecallFromConfig reads the rule's "point a camera at this" setting (W3-5), or null.
+//
+// It rides in ruleConfig beside destinations rather than in a column, for the same reason:
+// it is routing for the rule's OUTCOME, edited with the rule, and costs no migration on an
+// appliance already in the field.
+export function ptzRecallFromConfig(ruleConfig) {
+  try {
+    const cfg = JSON.parse(ruleConfig || '{}');
+    const recall = cfg.ptzRecall;
+    if (!recall || !recall.preset) {
+      return null;
+    }
+    return {
+      cameraId: Number(recall.cameraId) || 0,
+      preset: String(recall.preset),
+      holdSeconds: Number(recall.holdSeconds) || 0,
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+// applyPTZRecall sets or clears the rule's PTZ recall, preserving every other config field.
+export function applyPTZRecall(ruleConfig, recall) {
+  let cfg;
+  try {
+    cfg = JSON.parse(ruleConfig || '{}');
+  } catch (_) {
+    cfg = {};
+  }
+  if (recall && recall.preset) {
+    cfg.ptzRecall = {
+      cameraId: Number(recall.cameraId) || 0,
+      preset: String(recall.preset),
+      holdSeconds: Number(recall.holdSeconds) || 0,
+    };
+  } else {
+    // Cleared rather than left as an empty object: a recall with no preset names nowhere
+    // to go, and the server would treat it as absent anyway — two representations of the
+    // same state is how a screen and a server come to disagree.
+    delete cfg.ptzRecall;
+  }
+  return JSON.stringify(cfg, null, 2);
+}
+
 // ---- Class registry helpers ----
 
 // groupedClassOptions buckets registry classes for the Target picker. Disabled

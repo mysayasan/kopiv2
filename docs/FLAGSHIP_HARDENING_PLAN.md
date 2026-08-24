@@ -34,7 +34,8 @@ lands the work.
 | W3-3a | Case files (bookmarks, annotation, assignment, closure, bundle export, footage hold) | F-17 | `feat/case-files` | ✅ shipped, benched 2026-08-24 (48/48 on real recorded footage + 31/31 en and 32/32 ar screen passes; the bench found 4 defects, one of them in W1-4's shipped export) |
 | W3-3b | Video wall (named layouts, sequence cycling, alarm auto-pop, second monitor) | F-18 | `feat/video-wall` | ✅ shipped, benched 2026-08-24 (25/25 API + 21/21 en and 21/21 ar screen passes; found a shipped defect that made MOST cameras undeletable) |
 | W3-4 | Loitering / left-behind / directional rules | F-15 | `feat/dwell-rules` | ✅ shipped, benched 2026-08-24 (23/23 API + 14/14 en and 15/15 ar screen passes; evaluators unit-tested and mutation-checked — the harness has no people to film) |
-| W3-5 | PTZ presets + ONVIF events & relay I/O | F-13, F-14 | — | ☐ not started |
+| W3-5a | PTZ presets, home, guard tours + alarm recall | F-13 | `feat/ptz-presets` | ✅ shipped, benched 2026-08-24 (60/60 against a real ONVIF device + 26/26 en and 26/26 ar screen passes; found a patrol that moved the camera after being stopped, a tour that outlived its deleted camera, and a control that landed outside its tile in Arabic) |
+| W3-5b | ONVIF events (PullPoint), digital inputs & relay outputs | F-14 | — | ☐ not started |
 | W3-6 | Privacy masking + export redaction | F-19 | — | ☐ not started |
 | W3-7 | N+1 node failover | F-23 | — | ☐ not started |
 | W3-8 | Tenant isolation | F-24 | — | ✅ CLOSED 2026-08-21 — single-org per install, will not build |
@@ -1283,12 +1284,91 @@ crowd.
 "Daytime only") was hard-coded English and appeared untranslated beside every rule in every
 non-English installation. Now localised.
 
-**W3-5 · PTZ presets + ONVIF events** (F-13, F-14). `infra/onvif/client.go` stops at
-`PTZMove`/`PTZStop` — add presets, absolute/relative move, tours, home, recall-on-detection.
-Separately, no event subscription exists at all: adding PullPoint unlocks camera-side
-analytics and tamper alarms, digital **inputs** (door contacts, PIRs, panic buttons), and
-relay **outputs** (sirens, strobes, gates). Relay output is the difference between
-recording an intrusion and responding to one — and the natural mypintusan seam.
+**W3-5 WAS SPLIT.** The row carried two unrelated features — PTZ (F-13) and ONVIF events
+with relay I/O (F-14) — on one register line, the same shape as W3-3. The PTZ half is
+shipped; the events half is untouched and is now its own row.
+
+**W3-5a · PTZ presets, home, guard tours and alarm recall** (F-13) — SHIPPED and benched on
+`feat/ptz-presets`. `infra/onvif/ptz.go` adds presets, home, absolute/relative move and
+status; `services/ptz.go` adds guard tours and a recall a detection rule can ask for.
+
+**THE PLACES LIVE ON THE CAMERA.** ONVIF presets are stored by the device and recalled by a
+token it issues. Mirroring them into a table would create a second answer to "where can this
+camera point", and the two part company the first time somebody uses the camera's own web
+page — which is how a large share of PTZ cameras in the field get set up. So presets are read
+live, and a tour stores tokens it does not own. **An unreachable camera is a THIRD state,
+distinct from "it has no presets":** reading one as the other would stop every patrol in the
+building the moment the network hiccupped, and announce each one as broken.
+
+**THE CROSS-FEATURE DEFECT THIS ITEM EXPOSED, found by reading the path rather than by a
+bench: the tamper monitor and PTZ are the same physical event.** W1-5's `MOVED` verdict is
+"this camera is no longer showing what it used to show", which is the literal, intended,
+successful outcome of every preset recall, tour step and jog of the ring. Nothing connected
+them. Turning on a guard tour would have made the appliance report tampering on the camera it
+was patrolling, every few minutes, forever — and the operator's fix is to switch tamper
+detection off, after which it protects nothing. `PTZJournal` is the one place that knows a
+view changed because WE changed it: a commanded move makes the monitor **forget** that
+camera's baselines (suppression only defers the alert — the old reference outlives the quiet
+period), and a camera on patrol is judged on **neither** scene verdict, because a camera that
+is supposed to keep changing what it looks at has no normal view to be measured against.
+**That cost is stated in the code, in the docs and on the tour screen** rather than left to
+be discovered from an alert that never comes. `FROZEN` still works throughout — it asks about
+the STREAM, not the scene.
+
+**THREE CLAIMS ON ONE CAMERA, IN A FIXED ORDER: a person, then an alarm, then the patrol.**
+Somebody at the ring is tracking something the appliance cannot see, so an alarm arriving
+while they hold the camera does not move it — it is reported, and they decide. An alarm beats
+the patrol because a patrol looks at nothing in particular. Getting this wrong is not
+cosmetic: a patrol that steps during an alarm rotates the camera away three seconds after
+pointing it there, and the recording shows the corridor next door.
+
+**THE BENCH FOUND THREE, and needed a device to find any of them.** The harness films
+mediamtx RTSP sources with no ONVIF service at all, so `tools/fleetbench/onvifsim.py` is a
+small ONVIF PTZ device that keeps the state a real dome keeps and **records what it was asked
+to do** — which is what lets the bench assert the appliance SENT `GotoPreset` for the right
+stops, in order, at the right times, rather than that an API returned 200.
+
+1. **A patrol that had been TOLD TO STOP moved the camera once more.** A tick reads the tour
+   rows, asks the camera what presets it has — an ONVIF round trip — and only then commands
+   the move; a stop landing inside that gap is written to a row the tick has already read.
+   A camera that swings away one beat after the screen said the patrol stopped is worse than
+   one that never stopped, because the screen and the dome disagree about who has it — and
+   that is exactly when somebody is reaching for the ring. Closed with a generation counter
+   re-checked immediately before the command, which also covers an operator taking the ring
+   mid-tick. **ASK OF ANY LOOP THAT COMMANDS HARDWARE: what can change between the decision
+   and the command?**
+2. **A deleted camera left its patrols behind**, commanding a device that was no longer
+   configured, every dwell, forever, under an id nothing can render. The same shape W3-2
+   shipped with its appearance descriptors — and found the same way, by a bench finally using
+   the verb. **A BENCH ONLY COVERS THE VERBS IT USES:** the first run passed 44/44 without
+   ever deleting a preset, a tour, or a camera, or stopping a patrol.
+3. **THE ARABIC SCREEN PASS: the button that opens the panel rendered perfectly and could not
+   be pressed.** It sat at `inset-inline-start: -34px` inside `.ptz-ring-overlay`, which is
+   anchored with a PHYSICAL `right`. In RTL the logical inset flipped sides and pushed 25 of
+   its 26 pixels off the tile onto the page background, where a click hits the workspace and
+   nothing happens. **MIXING A PHYSICAL ANCHOR WITH A LOGICAL OFFSET is the bug**; the fix is
+   flow layout, which has no offset to flip. The English pass could not have found it.
+   The check that turned it from a mystery into a diagnosis is `document.elementFromPoint` at
+   the control's own centre — **when a click does nothing, ask what is actually there.**
+
+**Also from reading the path:** an alert raised through `POST /api/vision/alerts` — which the
+rule editor's own Test button uses, and which already goes out of its way to give a
+hand-raised alert parity with the monitor — would have notified and not moved the camera.
+"What happens when this rule fires" would have had two answers depending on which code raised
+it. One `ApplyRulePTZRecall`, called from both. Diagnostics are deliberately not a caller: a
+dome that swings to the gate because the detector failed to capture a frame is driven by the
+health of the software rather than by what it saw.
+
+**Not claimed:** the tamper interlock is unit-tested and mutation-checked, not live-benched —
+the simulator serves ONVIF and no video, so there is no siphon frame for the monitor to read.
+No ONVIF preset TOURS (`tptz:PresetTour`): device support is thin and inconsistent, and a
+tour driven from the appliance works on any camera that has presets at all.
+
+**W3-5b · ONVIF events & relay I/O** (F-14). No event subscription exists at all: adding
+PullPoint unlocks camera-side analytics and tamper alarms, digital **inputs** (door contacts,
+PIRs, panic buttons), and relay **outputs** (sirens, strobes, gates). Relay output is the
+difference between recording an intrusion and responding to one — and the natural mypintusan
+seam.
 
 **W3-6 · Privacy masking + redaction** (F-19). Static pre-record masks, face blur on
 export, redaction workflow. **Promote into Phase 2 if any EU deployment comes into view**

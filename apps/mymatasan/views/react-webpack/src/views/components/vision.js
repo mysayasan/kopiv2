@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Ico } from './icons';
 import { useT } from '@shared/i18n';
+import { PTZRecallField } from './ptz';
 import { DataTable } from '@shared/DataTable';
 import { HelpButton } from '@shared/Manual';
 import { FormBusyOverlay } from './ui';
 import { useSnapshotBlob } from '../hooks';
 import { scheduleDayOptions } from '../lib/constants';
-import {apiBase,fieldValue,formatTimestamp,parseMetadata,formatPercent,parseBoundingBox,formatSourceLabel,cameraTitle,parseZonePolygons,defaultZonePolygon,normalizeLineConfig,parseLineRuleConfig,lineRuleConfigText,lineCountFromRule,parseCrowdRuleConfig,parseLPRRuleConfig,lprRuleConfigText,parseDwellRuleConfig,dwellRuleConfigText,dwellModes,headingOptions,detectionModes,modeFromDetectionType,detectionTypeForMode,targetClassesFromRule,buildRuleConfigForMode,ruleDestinationsFromConfig,applyRuleDestinations,groupedClassOptions,classDisplayName,defaultVisionRuleDraft,weeklySchedulePolicy,rangeSchedulePolicy,schedulePresetPolicy,scheduleDraftFromPolicy,scheduleSummary } from '../lib/helpers';
+import {apiBase,fieldValue,formatTimestamp,parseMetadata,formatPercent,parseBoundingBox,formatSourceLabel,cameraTitle,parseZonePolygons,defaultZonePolygon,normalizeLineConfig,parseLineRuleConfig,lineRuleConfigText,lineCountFromRule,parseCrowdRuleConfig,parseLPRRuleConfig,lprRuleConfigText,parseDwellRuleConfig,dwellRuleConfigText,dwellModes,headingOptions,detectionModes,modeFromDetectionType,detectionTypeForMode,targetClassesFromRule,buildRuleConfigForMode,ruleDestinationsFromConfig,applyRuleDestinations,ptzRecallFromConfig,applyPTZRecall,groupedClassOptions,classDisplayName,defaultVisionRuleDraft,weeklySchedulePolicy,rangeSchedulePolicy,schedulePresetPolicy,scheduleDraftFromPolicy,scheduleSummary } from '../lib/helpers';
 import { ZoneDrawingPreview, LineDrawingPreview } from './previews';
 
 // classIsLive reports whether a registry class can actually be detected right
@@ -70,6 +71,14 @@ export function CameraAiPanel({
   const targetClasses = targetClassesFromRule(ruleDraft);
   const ruleDestinations = ruleDestinationsFromConfig(ruleDraft.ruleConfig);
   const destinationOptions = (destinations || []).filter((d) => d && d.id);
+  // The rule's PTZ recall (W3-5), read the same way the destinations are.
+  const ruleRecall = ptzRecallFromConfig(ruleDraft.ruleConfig);
+  // EVERY path that rewrites ruleConfig for a mode goes through this. Several of them
+  // REBUILD the config from scratch (buildRuleConfigForMode) and then put the destinations
+  // back — so anything else stored alongside them is destroyed by an unrelated edit.
+  // Adding a second key without one place to re-apply both is how a rule silently loses
+  // its recall the moment somebody changes its target classes.
+  const withRouting = (config) => applyPTZRecall(withRouting(config), ruleRecall);
   const classGroups = groupedClassOptions(classes);
   // A zone rule is valid when it has at least one zone and every zone is a real
   // polygon (>=3 points); multi-zone rules must not carry a half-drawn zone.
@@ -230,19 +239,19 @@ export function CameraAiPanel({
   // classes and seeding mode-specific config (line geometry, crowd minCount).
   function changeMode(nextMode) {
     const detectionType = detectionTypeForMode(nextMode);
-    const ruleConfig = applyRuleDestinations(buildRuleConfigForMode(nextMode, targetClasses, ruleDraft.ruleConfig), ruleDestinations);
+    const ruleConfig = withRouting(buildRuleConfigForMode(nextMode, targetClasses, ruleDraft.ruleConfig));
     onRuleDraft({ ...ruleDraft, detectionType, ruleConfig, zonePolygon: ruleDraft.zonePolygon || defaultZonePolygon });
   }
 
   // changeTargets rewrites the rule's target class list within the current mode.
   function changeTargets(nextTargets) {
-    onRuleDraft({ ...ruleDraft, ruleConfig: applyRuleDestinations(buildRuleConfigForMode(mode, nextTargets, ruleDraft.ruleConfig), ruleDestinations) });
+    onRuleDraft({ ...ruleDraft, ruleConfig: withRouting(buildRuleConfigForMode(mode, nextTargets, ruleDraft.ruleConfig)) });
   }
 
   // changeDestinations sets the per-rule routing (which destinations this rule's
   // alerts go to). Empty selection = route to all destinations.
   function changeDestinations(nextIds) {
-    onRuleDraft({ ...ruleDraft, ruleConfig: applyRuleDestinations(ruleDraft.ruleConfig, nextIds) });
+    onRuleDraft({ ...ruleDraft, ruleConfig: applyPTZRecall(applyRuleDestinations(ruleDraft.ruleConfig, nextIds), ruleRecall) });
   }
   function toggleDestination(id, checked) {
     const next = new Set(ruleDestinations);
@@ -263,25 +272,25 @@ export function CameraAiPanel({
   function changeLineConfig(patch) {
     const type = mode === 'multi_line_crossing' ? 'multi_line_crossing' : 'line_crossing';
     const next = normalizeLineConfig({ ...lineRuleConfig, ...patch }, type);
-    onRuleDraft({ ...ruleDraft, ruleConfig: applyRuleDestinations(lineRuleConfigText(next, type), ruleDestinations) });
+    onRuleDraft({ ...ruleDraft, ruleConfig: withRouting(lineRuleConfigText(next, type)) });
   }
 
   function changeCrowdConfig(patch) {
     const minCount = patch.minCount != null ? patch.minCount : crowdRuleConfig.minCount;
-    onRuleDraft({ ...ruleDraft, ruleConfig: applyRuleDestinations(buildRuleConfigForMode('crowd', targetClasses, JSON.stringify({ minCount })), ruleDestinations) });
+    onRuleDraft({ ...ruleDraft, ruleConfig: withRouting(buildRuleConfigForMode('crowd', targetClasses, JSON.stringify({ minCount }))) });
   }
 
   function changeDwellConfig(patch) {
     const next = { ...dwellRuleConfig, ...patch };
     onRuleDraft({
       ...ruleDraft,
-      ruleConfig: applyRuleDestinations(dwellRuleConfigText(next, targetClasses, mode), ruleDestinations),
+      ruleConfig: withRouting(dwellRuleConfigText(next, targetClasses, mode)),
     });
   }
 
   function changeLprConfig(patch) {
     const next = { ...lprRuleConfig, ...patch };
-    onRuleDraft({ ...ruleDraft, ruleConfig: applyRuleDestinations(lprRuleConfigText(next), ruleDestinations) });
+    onRuleDraft({ ...ruleDraft, ruleConfig: withRouting(lprRuleConfigText(next)) });
   }
   // The watchlist is edited as free text (one plate per line / comma-separated);
   // parse + normalize on change so stored plates compare cleanly with OCR reads.
@@ -702,6 +711,17 @@ export function CameraAiPanel({
                       </>
                     )}
                   </section>
+                  {/* Point a camera at what this rule detects (W3-5). Beside the
+                      notification routing because it is the same kind of decision: what
+                      happens BECAUSE the rule fired, rather than what makes it fire. */}
+                  {selectedCamera?.ptzSupported ? (
+                    <PTZRecallField
+                      authHeader={authHeader}
+                      cameraId={selectedCameraId}
+                      recall={ruleRecall}
+                      onChange={(next) => onRuleDraft({ ...ruleDraft, ruleConfig: applyPTZRecall(ruleDraft.ruleConfig, next) })}
+                    />
+                  ) : null}
                   <section className="schedule-panel">
                     <header>
                       <h3>{t('vi.schedule')}</h3>
