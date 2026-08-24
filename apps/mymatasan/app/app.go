@@ -665,6 +665,14 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	)
 	auditApi := apis.NewAuditor(auditService, deps.Config.RateLimit.TrustedProxies)
 
+	// Relay outputs (W3-5b): the one thing this appliance does that acts on the world.
+	// Constructed HERE, after the trail, and given the audit recorder rather than the
+	// request-scoped Auditor the handlers use — because most actuations have no HTTP
+	// request behind them. A rule sounding a siren at 4am has no actor and no client IP,
+	// and it still has to be in the trail.
+	relayService := services.NewRelayService(cameraService, notificationService,
+		services.RelayAuditRecorder(auditService))
+
 	w := &wiring{
 		deps:           deps,
 		appCfg:         appCfg,
@@ -720,6 +728,9 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 		ptz:        ptzService,
 		ptzJournal: ptzJournal,
+		relays:     relayService,
+
+		eventSettings: services.NewOnvifEventSettingsService(repo.RuntimeSetting),
 
 		continuitySettings: services.NewContinuitySettingsService(repo.RuntimeSetting),
 		tamperSettings:     services.NewTamperSettingsService(repo.RuntimeSetting),
@@ -899,6 +910,11 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 	return func(ctx context.Context) error {
 		stopMonitor()
+		// BEFORE anything else that can block: a relay this process energised must not be
+		// left energised because the process is stopping. The outputs the CAMERA releases
+		// on its own timer need nothing here, which is exactly why a pulse prefers them —
+		// see services/relay.go.
+		relayService.ReleaseAll(ctx)
 		recorderManager.Close()
 		_ = notificationService.Close(ctx)
 		if closer, ok := monitorSettings.Detector.(io.Closer); ok {
@@ -1430,6 +1446,27 @@ func (m *module) APIDocs() apidocs.SpecConfig {
 			},
 			// Saved positions and guard tours (W3-5). Under the same /ptz path the role
 			// model already grants as "may move a camera".
+			// Relay outputs and the camera event listener (W3-5b).
+			"GET /api/cameras/{id}/relays": {
+				Summary:     "List a camera's relay outputs",
+				Description: "The dry contacts on the camera's terminal block. bistable=true means the output stays where it is put until something puts it back; heldByUs=true means THIS appliance is responsible for switching it off.",
+				Tags:        []string{"relay"},
+			},
+			"POST /api/cameras/{id}/relays/{token}/fire": {
+				Summary:     "Switch a relay output",
+				Description: "action is pulse (switch on briefly and release), on, or off. OFF is never rate-limited and never refused: a limiter that can block an off is a siren nobody can silence. Every actuation is audited.",
+				Tags:        []string{"relay"},
+			},
+			"GET /api/settings/camera-events": {
+				Summary:     "Read the camera event listener's settings",
+				Description: "Whether the appliance listens to what cameras report for themselves, and the bounds it listens within.",
+				Tags:        []string{"settings"},
+			},
+			"PUT /api/settings/camera-events": {
+				Summary:     "Change the camera event listener's settings",
+				Description: "Switching this off stops every door contact, beam and panic button wired into a camera from reporting anything, and the symptom is silence — so the change is audited.",
+				Tags:        []string{"settings"},
+			},
 			"GET /api/cameras/{id}/ptz/presets": {
 				Summary:     "List saved PTZ positions",
 				Description: "Reads the presets stored ON THE CAMERA. They are never mirrored into a table, so this is always what the device actually holds.",

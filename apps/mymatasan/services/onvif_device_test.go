@@ -335,6 +335,25 @@ func (f *fakeResolveStreamClient) GotoPreset(context.Context, onvif.PTZPresetReq
 	return nil
 }
 func (f *fakeResolveStreamClient) GotoHome(context.Context, onvif.PTZPresetRequest) error { return nil }
+func (f *fakeResolveStreamClient) GetRelayOutputs(context.Context, onvif.RelayRequest) ([]onvif.RelayOutput, error) {
+	return nil, nil
+}
+func (f *fakeResolveStreamClient) SetRelayOutputState(context.Context, onvif.RelayRequest) error {
+	return nil
+}
+func (f *fakeResolveStreamClient) SetRelayOutputSettings(context.Context, onvif.RelayRequest) error {
+	return nil
+}
+func (f *fakeResolveStreamClient) CreatePullPointSubscription(context.Context, onvif.EventRequest) (*onvif.EventSubscription, error) {
+	return nil, nil
+}
+func (f *fakeResolveStreamClient) PullMessages(context.Context, onvif.PullRequest) ([]onvif.Event, *onvif.EventSubscription, error) {
+	return nil, nil, nil
+}
+func (f *fakeResolveStreamClient) RenewSubscription(context.Context, onvif.PullRequest, int) (*onvif.EventSubscription, error) {
+	return nil, nil
+}
+func (f *fakeResolveStreamClient) Unsubscribe(context.Context, onvif.PullRequest) error { return nil }
 func (f *fakeResolveStreamClient) SetHome(context.Context, onvif.PTZPresetRequest) error  { return nil }
 func (f *fakeResolveStreamClient) PTZGetStatus(context.Context, onvif.PTZPresetRequest) (*onvif.PTZStatus, error) {
 	return nil, nil

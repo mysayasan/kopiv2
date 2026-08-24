@@ -116,6 +116,13 @@ type ICameraService interface {
 	PTZHome(ctx context.Context, id uint64) error
 	PTZSetHome(ctx context.Context, id uint64) error
 	PTZStatus(ctx context.Context, id uint64) (*onvif.PTZStatus, error)
+	// Relay outputs and the event service (W3-5b). Actuation NEVER goes through here
+	// directly — IRelayService is the chokepoint that audits and rate-limits it. These are
+	// the raw legs it drives.
+	RelayOutputs(ctx context.Context, id uint64) ([]onvif.RelayOutput, error)
+	SetRelayState(ctx context.Context, id uint64, token string, active bool) error
+	SetRelayPulseMode(ctx context.Context, id uint64, token string, seconds int) error
+	EventEndpoint(ctx context.Context, id uint64) (string, onvif.Credentials, error)
 	GetCameraEncoder(ctx context.Context, id uint64) (*onvif.VideoEncoderConfig, error)
 	ApplyCameraEncoder(ctx context.Context, id uint64, req ApplyCameraEncoderRequest) (*onvif.VideoEncoderConfig, error)
 	SnapshotSource(ctx context.Context, id uint64) (SnapshotSource, error)

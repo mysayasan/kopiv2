@@ -107,6 +107,18 @@ func (f *fakeCameraService) PTZGotoPreset(_ context.Context, _ uint64, _ string,
 	return nil
 }
 func (f *fakeCameraService) PTZHome(_ context.Context, _ uint64) error    { return nil }
+func (f *fakeCameraService) RelayOutputs(_ context.Context, _ uint64) ([]onvif.RelayOutput, error) {
+	return nil, nil
+}
+func (f *fakeCameraService) SetRelayState(_ context.Context, _ uint64, _ string, _ bool) error {
+	return nil
+}
+func (f *fakeCameraService) SetRelayPulseMode(_ context.Context, _ uint64, _ string, _ int) error {
+	return nil
+}
+func (f *fakeCameraService) EventEndpoint(_ context.Context, _ uint64) (string, onvif.Credentials, error) {
+	return "", onvif.Credentials{}, nil
+}
 func (f *fakeCameraService) PTZSetHome(_ context.Context, _ uint64) error { return nil }
 func (f *fakeCameraService) PTZStatus(_ context.Context, _ uint64) (*onvif.PTZStatus, error) {
 	return nil, nil

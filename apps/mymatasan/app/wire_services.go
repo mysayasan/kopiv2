@@ -110,6 +110,13 @@ type wiring struct {
 	// ptzJournal is the one place that knows a camera's view changed because WE changed
 	// it. Held here because the tamper monitor reads it and the camera service writes it.
 	ptzJournal *services.PTZJournal
+	// relays is the CHOKEPOINT for everything that switches a camera's output — an
+	// operator's button, a detection rule, anything added later. It is the only thing in
+	// this appliance that acts on the world, so it audits and rate-limits in one place.
+	relays services.IRelayService
+	// eventSettings backs the camera event listener (W3-5b): what the CAMERA noticed,
+	// including whatever is wired into its terminal block.
+	eventSettings services.IOnvifEventSettingsService
 
 	// tamperSettings backs the camera tamper monitor — the third health question, after
 	// "does it answer" and "is it recording": is it still showing its scene?
@@ -181,6 +188,8 @@ func (w *wiring) validate() error {
 	check("walls", w.walls != nil)
 	check("ptz", w.ptz != nil)
 	check("ptzJournal", w.ptzJournal != nil)
+	check("relays", w.relays != nil)
+	check("eventSettings", w.eventSettings != nil)
 	check("tamperSettings", w.tamperSettings != nil)
 	check("accessPerms", w.accessPerms != nil)
 	check("ffmpegInstaller", w.ffmpegInstaller != nil)

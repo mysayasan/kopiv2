@@ -1,13 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Ico } from './icons';
 import { useT } from '@shared/i18n';
-import { PTZRecallField } from './ptz';
+import { PTZRecallField, RelayRuleField } from './ptz';
 import { DataTable } from '@shared/DataTable';
 import { HelpButton } from '@shared/Manual';
 import { FormBusyOverlay } from './ui';
 import { useSnapshotBlob } from '../hooks';
 import { scheduleDayOptions } from '../lib/constants';
-import {apiBase,fieldValue,formatTimestamp,parseMetadata,formatPercent,parseBoundingBox,formatSourceLabel,cameraTitle,parseZonePolygons,defaultZonePolygon,normalizeLineConfig,parseLineRuleConfig,lineRuleConfigText,lineCountFromRule,parseCrowdRuleConfig,parseLPRRuleConfig,lprRuleConfigText,parseDwellRuleConfig,dwellRuleConfigText,dwellModes,headingOptions,detectionModes,modeFromDetectionType,detectionTypeForMode,targetClassesFromRule,buildRuleConfigForMode,ruleDestinationsFromConfig,applyRuleDestinations,ptzRecallFromConfig,applyPTZRecall,groupedClassOptions,classDisplayName,defaultVisionRuleDraft,weeklySchedulePolicy,rangeSchedulePolicy,schedulePresetPolicy,scheduleDraftFromPolicy,scheduleSummary } from '../lib/helpers';
+import {apiBase,fieldValue,formatTimestamp,parseMetadata,formatPercent,parseBoundingBox,formatSourceLabel,cameraTitle,parseZonePolygons,defaultZonePolygon,normalizeLineConfig,parseLineRuleConfig,lineRuleConfigText,lineCountFromRule,parseCrowdRuleConfig,parseLPRRuleConfig,lprRuleConfigText,parseDwellRuleConfig,dwellRuleConfigText,dwellModes,headingOptions,detectionModes,modeFromDetectionType,detectionTypeForMode,targetClassesFromRule,buildRuleConfigForMode,ruleDestinationsFromConfig,applyRuleDestinations,ptzRecallFromConfig,applyPTZRecall,relayFromConfig,applyRuleRelay,groupedClassOptions,classDisplayName,defaultVisionRuleDraft,weeklySchedulePolicy,rangeSchedulePolicy,schedulePresetPolicy,scheduleDraftFromPolicy,scheduleSummary } from '../lib/helpers';
 import { ZoneDrawingPreview, LineDrawingPreview } from './previews';
 
 // classIsLive reports whether a registry class can actually be detected right
@@ -73,6 +73,8 @@ export function CameraAiPanel({
   const destinationOptions = (destinations || []).filter((d) => d && d.id);
   // The rule's PTZ recall (W3-5), read the same way the destinations are.
   const ruleRecall = ptzRecallFromConfig(ruleDraft.ruleConfig);
+  // The rule's relay action (W3-5b), read the same way.
+  const ruleRelay = relayFromConfig(ruleDraft.ruleConfig);
   // EVERY path that rewrites ruleConfig for a mode goes through this. Several of them
   // REBUILD the config from scratch (buildRuleConfigForMode) and then put the destinations
   // back — so anything else stored alongside them is destroyed by an unrelated edit.
@@ -251,7 +253,7 @@ export function CameraAiPanel({
   // changeDestinations sets the per-rule routing (which destinations this rule's
   // alerts go to). Empty selection = route to all destinations.
   function changeDestinations(nextIds) {
-    onRuleDraft({ ...ruleDraft, ruleConfig: applyPTZRecall(applyRuleDestinations(ruleDraft.ruleConfig, nextIds), ruleRecall) });
+    onRuleDraft({ ...ruleDraft, ruleConfig: applyRuleRelay(applyPTZRecall(applyRuleDestinations(ruleDraft.ruleConfig, nextIds), ruleRecall), ruleRelay) });
   }
   function toggleDestination(id, checked) {
     const next = new Set(ruleDestinations);
@@ -720,6 +722,16 @@ export function CameraAiPanel({
                       cameraId={selectedCameraId}
                       recall={ruleRecall}
                       onChange={(next) => onRuleDraft({ ...ruleDraft, ruleConfig: applyPTZRecall(ruleDraft.ruleConfig, next) })}
+                    />
+                  ) : null}
+                  {/* Switch an output when this rule fires (W3-5b): the "respond to it"
+                      half, beside the "point a camera at it" one. */}
+                  {selectedCamera?.xAddr ? (
+                    <RelayRuleField
+                      authHeader={authHeader}
+                      cameraId={selectedCameraId}
+                      relay={ruleRelay}
+                      onChange={(next) => onRuleDraft({ ...ruleDraft, ruleConfig: applyRuleRelay(ruleDraft.ruleConfig, next) })}
                     />
                   ) : null}
                   <section className="schedule-panel">

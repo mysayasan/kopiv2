@@ -35,6 +35,16 @@ var knownCategories = map[string]bool{
 	notification.CategoryVisionAlert: true, // AI detection alerts
 	notification.CategoryHealthCheck: true, // camera offline + machine health
 	notification.CategorySystem:      true, // general system events + Test
+	// Sensor readings from a camera's own terminal block (W3-5b): door contacts, PIRs,
+	// panic buttons, and the relay outputs that answer them.
+	//
+	// It is a DIFFERENT KIND of event from a detection, which is exactly what this
+	// category exists for in the core — and registering it here is not cosmetic.
+	// normalizeCategories DROPS a category this map does not know, and a destination whose
+	// whole subscription is dropped falls back to "all categories": a destination set up to
+	// receive door contacts and nothing else would have silently become one that receives
+	// every AI detection in the building.
+	notification.CategoryDeviceAlert: true,
 }
 
 // NotificationDestination is one configured delivery target. Unlike the legacy

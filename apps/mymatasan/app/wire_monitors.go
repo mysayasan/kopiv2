@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
+	"github.com/mysayasan/kopiv2/infra/onvif"
 	"github.com/mysayasan/kopiv2/infra/pairing"
 	"github.com/mysayasan/kopiv2/infra/safego"
 )
@@ -45,7 +46,7 @@ func startBackgroundWorkers(ctx context.Context, w *wiring) {
 		// design: an appliance with no PTZ camera passes nothing and every rule behaves
 		// as it did before.
 		services.NewVisionMonitor(w.camera, w.vision, w.settings, w.visionMonitorSettings).
-			WithPTZ(w.ptz).Start(ctx)
+			WithPTZ(w.ptz).WithRelays(w.relays).Start(ctx)
 	}
 
 	// The health monitors read their settings live on every sweep, so enabling or retuning
@@ -75,6 +76,13 @@ func startBackgroundWorkers(ctx context.Context, w *wiring) {
 	services.NewCameraTamperMonitor(
 		w.recorder, w.camera, w.recording, w.tamperSettings, w.notification, deps.Metrics,
 	).WithPTZ(w.ptzJournal).Start(ctx)
+
+	// The camera event listener (W3-5b): what the CAMERA noticed, including whatever is
+	// wired into its terminal block. Opt-in — it opens a long-lived connection per camera —
+	// and it reads that setting live, so turning it on takes effect without a restart.
+	services.NewCameraEventMonitor(
+		w.camera, onvif.NewClient(), w.eventSettings, w.notification, deps.Metrics,
+	).Start(ctx)
 
 	// PTZ guard tours: the patrol loop. It resumes tours that were running before a
 	// restart, which is why IsRunning is a persisted column — an appliance that reboots at

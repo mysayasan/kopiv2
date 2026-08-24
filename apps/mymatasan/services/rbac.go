@@ -130,6 +130,14 @@ func Policy() []PolicyRule {
 		// half-granted capability the evidence export shipped with, above.
 		{Path: "/api/cameras/*/ptz", Description: "Pan, tilt and zoom a camera; recall and manage its saved positions and guard tours", Viewer: none, Operator: readWrite},
 		{Path: "/api/cameras/*/talk/offer", Description: "Talk through a camera's speaker", Viewer: none, Operator: write},
+		// Relay outputs (W3-5b). READABLE by an operator — a screen that cannot list the
+		// outputs cannot offer a button for one — but NOT actuable by the default operator
+		// preset. Switching a siren, a strobe, a gate or a door strike is the only thing
+		// this appliance does that acts on the world, and it is a decision about the
+		// BUILDING rather than about the cameras. An administrator grants it deliberately,
+		// per role, by adding the Use rung of the relay page; nothing hands it out as a
+		// side effect of being allowed to move a camera.
+		{Path: "/api/cameras/*/relays", Description: "See and switch a camera's relay outputs (sirens, strobes, gates)", Viewer: none, Operator: read},
 
 		// --- Admin only -------------------------------------------------------------------
 		// Listed with no grants so the catalog is a COMPLETE description of the API surface.

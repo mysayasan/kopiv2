@@ -68,6 +68,13 @@ type onvifClient interface {
 	PTZGetStatus(ctx context.Context, req onvif.PTZPresetRequest) (*onvif.PTZStatus, error)
 	GetVideoEncoderConfig(ctx context.Context, req onvif.StreamURIRequest) (*onvif.VideoEncoderConfig, error)
 	ConfigureRecording(ctx context.Context, req onvif.ConfigureRecordingRequest) (*onvif.VideoEncoderConfig, error)
+	GetRelayOutputs(ctx context.Context, req onvif.RelayRequest) ([]onvif.RelayOutput, error)
+	SetRelayOutputState(ctx context.Context, req onvif.RelayRequest) error
+	SetRelayOutputSettings(ctx context.Context, req onvif.RelayRequest) error
+	CreatePullPointSubscription(ctx context.Context, req onvif.EventRequest) (*onvif.EventSubscription, error)
+	PullMessages(ctx context.Context, req onvif.PullRequest) ([]onvif.Event, *onvif.EventSubscription, error)
+	RenewSubscription(ctx context.Context, req onvif.PullRequest, leaseSeconds int) (*onvif.EventSubscription, error)
+	Unsubscribe(ctx context.Context, req onvif.PullRequest) error
 }
 
 // CameraCleanupFunc releases one subsystem's resources for a camera that is being

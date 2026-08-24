@@ -49,6 +49,9 @@ node   tools/fleetbench/uicheck_dwell.js .artifacts/fleetbench ar
 python tools/fleetbench/bench_w35_ptz.py          # W3-5a: PTZ, against a real ONVIF device
 node   tools/fleetbench/uicheck_ptz.js .artifacts/fleetbench en
 node   tools/fleetbench/uicheck_ptz.js .artifacts/fleetbench ar
+python tools/fleetbench/bench_w35b_events.py      # W3-5b: events, inputs and relay outputs
+node   tools/fleetbench/uicheck_relay.js .artifacts/fleetbench en
+node   tools/fleetbench/uicheck_relay.js .artifacts/fleetbench ar
 ```
 
 ## `onvifsim.py` — a real ONVIF device, on demand
@@ -65,9 +68,22 @@ running while sending nothing would pass a status-code check and fail this one. 
 exposes `POST /presets/wipe` (somebody clearing the presets from the camera's own web page)
 and `POST /journal/reset`.
 
-Both `bench_w35_ptz.py` and `uicheck_ptz.js` start and remove it themselves, so neither
-depends on the other having been run. **Extend it rather than starting again** for anything
-else ONVIF — W3-5b's PullPoint events and relay I/O belong in the same file.
+Every bench and screen check that needs it starts and removes it itself, so none of them
+depends on another having been run. **Extend it rather than starting again** for anything
+else ONVIF — W3-5b's PullPoint events and relay outputs went into the same file, which took
+about twenty minutes.
+
+It now also speaks the W3-5b surface, with two controls a real camera will not give you:
+
+* `POST /inputs/<token>` — flip a digital input. This is how a bench opens a door.
+* `POST /subscriptions/expire` — drop every subscription **without telling anybody**, which
+  is exactly what a camera does when a lease is not renewed, and the whole reason the event
+  listener treats silence as a fault.
+
+`LOCK` is an **RLock**, not a Lock: `note()` takes it to append to the journal and several
+handlers record something while already holding it. With a plain Lock that is a deadlock, and
+the symptom is the entire simulator going silent mid-bench — which reads exactly like a
+product failure. It was found precisely that way.
 
 `bench_w34_dwell.py` (W3-4) states at the top of the file what it does NOT claim: no
 evaluator is driven end to end, because the harness films test patterns and the detector

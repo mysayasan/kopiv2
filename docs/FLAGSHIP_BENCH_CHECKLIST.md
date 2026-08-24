@@ -1336,3 +1336,80 @@ absolutely-positioned control for a logical inset inside a physically-anchored p
   wanting the real thing needs a source that is both ONVIF-controllable and streaming.
 * No real PTZ hardware. The simulator implements the calls the product makes and the faults a
   device returns; it does not reproduce any specific vendor's quirks.
+
+## W3-5b · ONVIF events, digital inputs and relay outputs  ⟨ DONE (2026-08-24), 34/34 + 16/16 en and 16/16 ar
+
+    python tools/fleetbench/fleet_harness.py
+    python tools/fleetbench/bench_w35b_events.py          # 34/34, ~4 min
+    node   tools/fleetbench/uicheck_relay.js .artifacts/fleetbench en
+    node   tools/fleetbench/uicheck_relay.js .artifacts/fleetbench ar
+
+**`onvifsim.py` GREW THE EVENT AND RELAY SURFACE** rather than being rewritten — which is the
+point of having it. It now holds a REAL long poll open, issues real leases, refuses to be
+reconfigured on one of its two relays, and exposes two controls a bench needs and a real
+camera will not give you:
+
+* `POST /inputs/<token>` — flip a digital input, which is how this bench opens a door.
+* `POST /subscriptions/expire` — drop every subscription **without telling anybody**, which
+  is exactly what a camera does when a lease is not renewed. It is the whole reason the
+  event listener treats silence as a fault, so it had to be reproducible on demand.
+
+### What the bench found
+
+1. **An alert-log write that silently never happened.** The listener wrote a notification AND
+   a row into the AI alert log. `alert_event` requires a RULE ID; a digital input has none;
+   `ValidateAlertEvent` refused every write. The notification arrived, the log stayed empty,
+   and the only symptom was a line in a log nobody reads. The check that caught it was the
+   dull one — *is the thing actually in the list it says it is in* — and it is the reason to
+   keep writing dull checks. **A VALIDATION GUARD YOU DID NOT READ IS A FEATURE YOU DID NOT
+   SHIP.**
+2. **THE SCREEN PASS: the outputs button could not be clicked at all.** Absolutely positioned
+   at the tile's top corner, it landed underneath the maximize and remove buttons already
+   there. `elementFromPoint` at its own centre returned their `svg` — the same diagnosis that
+   solved W3-5a's Arabic defect in one run, now in the FIRST language tried. **The corners of
+   a tile are occupied: put a tile control in the tile header.**
+3. **A deadlock in the simulator**, not the product: `note()` takes `LOCK` to append to the
+   journal, and two handlers called it while already holding `LOCK`. `threading.Lock` is not
+   reentrant, so the whole device went silent mid-bench — which reads exactly like a product
+   failure and cost a cycle to attribute. `LOCK` is now an `RLock`. **When a bench harness
+   hangs, suspect the harness before the product; a fake that deadlocks is indistinguishable
+   from a subject that hangs.**
+
+### The assertions worth copying
+
+* **The bench asserts what the appliance SENT**, from the device's own journal: that a pulse
+  was released, that a bistable output the camera refuses to reconfigure was held and then
+  let go, that OFF reached the device. A relay feature that persuaded its own database it had
+  fired would pass a status-code check and fail these.
+* **OFF under load.** The bench hammers the automatic rate limiter and then switches off,
+  because a limiter that can block an OFF is a siren nobody can silence — and it would refuse
+  exactly when the siren is sounding.
+* **The screen check clicks "on" and then, WITHOUT WAITING, inspects the off control** —
+  `disabled`, computed `opacity`, and `elementFromPoint`. That is the moment the appliance is
+  busiest and the moment a siren is sounding, and a control that is greyed out by the app's
+  own busy state fails there and nowhere else.
+* **Connecting must raise nothing.** The bench enables the listener and asserts no input
+  notification appeared, because a camera announces the current state of every input the
+  moment you subscribe.
+* **Lapse the subscription, then assert BOTH halves**: that the appliance noticed (a
+  notification, not a log line) and that it re-subscribed on its own, and that a door opened
+  after the recovery still arrives. Noticing without recovering is a monitor that cries once
+  and stops working.
+
+### Harness traps this bench added
+
+* **A Windows port-forward into the bench network stalls for a second or two now and then.**
+  A bench that dies on one slow read is measuring Docker, not the product — and it looks like
+  a product failure. `device()` retries.
+* **`bistable` is the SAFE default in the fixtures too.** The simulator reports its relays as
+  bistable with no delay until reconfigured, which is what a real device that has never been
+  set up does — and it is the case that exercises the hold-and-release path.
+
+### Not claimed
+
+* No real relay hardware and no real camera. The simulator implements the calls the product
+  makes and the faults a device returns; it does not reproduce any vendor's quirks.
+* No input→output automation: a door contact cannot fire a siren by itself. That is
+  myiotsan's flow engine, and the seam is its Issue chokepoint.
+* An input cannot be bookmarked into a case file — case evidence points at alert events, and
+  camera events deliberately do not create those. A change to W3-3a, not to this.

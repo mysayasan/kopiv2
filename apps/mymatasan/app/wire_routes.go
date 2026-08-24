@@ -50,12 +50,16 @@ func registerRoutes(api *mux.Router, w *wiring) *mux.Router {
 	// PTZ presets, home and guard tours (W3-5) hang off the SAME subrouter, under the same
 	// /ptz path the role model already grants as "may move a camera".
 	apis.NewPTZApi(cameraGroup, w.camera, w.ptz, w.audit)
-	apis.NewVisionApi(protected, w.vision, w.detectionClass, w.recorder, w.notification, w.camera, w.settings, w.notificationSettings, w.atrestCipher, w.sightingSearch, w.ptz)
+	// Relay outputs (W3-5b) get their OWN path rather than hanging off /ptz: a control
+	// room operator who may point a camera is not automatically somebody who may open a
+	// gate, and separate paths are what makes the two grantable apart.
+	apis.NewRelayApi(cameraGroup, w.relays)
+	apis.NewVisionApi(protected, w.vision, w.detectionClass, w.recorder, w.notification, w.camera, w.settings, w.notificationSettings, w.atrestCipher, w.sightingSearch, w.ptz, w.relays)
 	apis.NewTrainingApi(protected, w.training)
 	apis.NewTeachApi(protected, w.teach)
 	apis.NewFacesApi(protected, w.faceGallery)
 	apis.NewSettingsApi(protected, w.settings, w.camera, w.localUser, w.notificationSettings, w.healthSettings, w.machineHealthSettings, w.machineHealth,
-		visionToolSettingsFromAppConfig(w.appCfg, w.detectorPaths.DetectorArgs), w.ffmpegInstaller, w.pythonInstaller, w.appCfg.Decoder.BrowseRoots, w.accessRoles, w.audit, w.continuitySettings, w.tamperSettings)
+		visionToolSettingsFromAppConfig(w.appCfg, w.detectorPaths.DetectorArgs), w.ffmpegInstaller, w.pythonInstaller, w.appCfg.Decoder.BrowseRoots, w.accessRoles, w.audit, w.continuitySettings, w.tamperSettings, w.eventSettings)
 	apis.NewRecordingApi(protected, w.recording, w.recorder, w.camera, w.settings, w.atrestCipher, w.vision, w.recorderConfig, w.audit, w.observation)
 	apis.NewObservationApi(protected, w.observation, w.sightingSearch, w.appearance)
 	apis.NewNotificationApi(protected, w.notification)

@@ -34,6 +34,8 @@ type settingsApi struct {
 	continuity services.IContinuitySettingsService
 	// tamper configures the camera tamper monitor.
 	tamper services.ITamperSettingsService
+	// cameraEvents configures the ONVIF event listener (W3-5b).
+	cameraEvents services.IOnvifEventSettingsService
 }
 
 // getTamper / saveTamper expose the camera tamper monitor's configuration. Retuning it is
@@ -68,6 +70,45 @@ func (a *settingsApi) saveTamper(w http.ResponseWriter, r *http.Request) {
 	a.audit.Success(r, services.ActionSettingsChange, services.TargetSettings, "tamper",
 		fmt.Sprintf("camera tamper monitoring %s", map[bool]string{true: "on", false: "off"}[cfg.Enabled]),
 		map[string]any{"enabled": cfg.Enabled, "coveredRatio": cfg.CoveredRatio, "frozenSeconds": cfg.FrozenSeconds})
+	controllers.SendResult(w, cfg, "succeed")
+}
+
+// getCameraEvents / saveCameraEvents expose the ONVIF event listener's configuration.
+//
+// Audited like the other monitors, and for a sharper reason than most: switching this OFF
+// stops every door contact, beam and panic button wired into a camera from reporting
+// anything, and the symptom is silence. "When did the inputs stop being watched, and who
+// stopped them" has to be answerable.
+func (a *settingsApi) getCameraEvents(w http.ResponseWriter, r *http.Request) {
+	cfg, err := a.cameraEvents.Get(r.Context())
+	if err != nil {
+		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		return
+	}
+	controllers.SendResult(w, cfg, "succeed")
+}
+
+func (a *settingsApi) saveCameraEvents(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+	var body services.OnvifEventSettings
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
+		return
+	}
+	cfg, err := a.cameraEvents.Save(r.Context(), body)
+	if err != nil {
+		a.audit.Failure(r, services.ActionSettingsChange, services.TargetSettings, "cameraEvents", err.Error(), nil)
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	a.audit.Success(r, services.ActionSettingsChange, services.TargetSettings, "cameraEvents",
+		fmt.Sprintf("camera event listening %s", map[bool]string{true: "on", false: "off"}[cfg.Enabled]),
+		map[string]any{"enabled": cfg.Enabled, "maxCameras": cfg.MaxCameras, "includeMotion": cfg.IncludeMotion})
 	controllers.SendResult(w, cfg, "succeed")
 }
 
@@ -110,8 +151,8 @@ func (a *settingsApi) saveContinuity(w http.ResponseWriter, r *http.Request) {
 
 // NewSettingsApi registers runtime settings routes. browseRoots are extra
 // site-specific directories the file picker may browse (config decoder.browseRoots).
-func NewSettingsApi(router *mux.Router, serv services.IRuntimeSettingsService, camera services.ICameraService, userServ services.ILocalUserService, notifServ services.INotificationSettingsService, healthServ services.IHealthSettingsService, machineHealth services.IMachineHealthSettingsService, machineMetrics services.IMachineMetricsProvider, visionTool services.VisionToolSettings, ffmpeg *services.FFmpegInstaller, pyRuntime *services.PythonInstaller, browseRoots []string, roles sharedservices.IAccessRoleService, audit *Auditor, continuity services.IContinuitySettingsService, tamper services.ITamperSettingsService) {
-	handler := &settingsApi{serv: serv, camera: camera, userServ: userServ, notifServ: notifServ, healthServ: healthServ, machineHealth: machineHealth, machineMetrics: machineMetrics, visionTool: visionTool, ffmpeg: ffmpeg, pyRuntime: pyRuntime, browseRoots: browseRoots, roles: roles, audit: audit, continuity: continuity, tamper: tamper}
+func NewSettingsApi(router *mux.Router, serv services.IRuntimeSettingsService, camera services.ICameraService, userServ services.ILocalUserService, notifServ services.INotificationSettingsService, healthServ services.IHealthSettingsService, machineHealth services.IMachineHealthSettingsService, machineMetrics services.IMachineMetricsProvider, visionTool services.VisionToolSettings, ffmpeg *services.FFmpegInstaller, pyRuntime *services.PythonInstaller, browseRoots []string, roles sharedservices.IAccessRoleService, audit *Auditor, continuity services.IContinuitySettingsService, tamper services.ITamperSettingsService, cameraEvents services.IOnvifEventSettingsService) {
+	handler := &settingsApi{serv: serv, camera: camera, userServ: userServ, notifServ: notifServ, healthServ: healthServ, machineHealth: machineHealth, machineMetrics: machineMetrics, visionTool: visionTool, ffmpeg: ffmpeg, pyRuntime: pyRuntime, browseRoots: browseRoots, roles: roles, audit: audit, continuity: continuity, tamper: tamper, cameraEvents: cameraEvents}
 	group := router.PathPrefix("/settings").Subrouter()
 
 	group.HandleFunc("/runtime", handler.getRuntime).Methods("GET")
@@ -137,6 +178,8 @@ func NewSettingsApi(router *mux.Router, serv services.IRuntimeSettingsService, c
 	group.HandleFunc("/continuity", handler.saveContinuity).Methods("PUT")
 	group.HandleFunc("/tamper", handler.getTamper).Methods("GET")
 	group.HandleFunc("/tamper", handler.saveTamper).Methods("PUT")
+	group.HandleFunc("/camera-events", handler.getCameraEvents).Methods("GET")
+	group.HandleFunc("/camera-events", handler.saveCameraEvents).Methods("PUT")
 	group.HandleFunc("/machine-health", handler.getMachineHealth).Methods("GET")
 	group.HandleFunc("/machine-health", handler.saveMachineHealth).Methods("PUT")
 	group.HandleFunc("/machine-health/metrics", handler.getMachineMetrics).Methods("GET")
