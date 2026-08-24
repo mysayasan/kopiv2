@@ -7,7 +7,7 @@ import { AppFooter } from '@shared/AppFooter';
 import { ManualProvider, ManualLibrary } from '@shared/Manual';
 import { enBundle, loadLocaleDict } from './i18n';
 import { THEMES, emptyLogin, defaultStreamConfig, defaultRuntimeSettings, defaultNotificationSettings, defaultHealthSettings, defaultMachineHealthSettings, defaultVisionThreshold, defaultVisionMinFrames } from './lib/constants';
-import {readLiveViewsCookie,saveLiveViewsCookie,bestLiveViewLayout,unwrap,errorMessage,apiBase,parseMetadata,cameraTitle,normalizeScanDevice,orderedSavedCameras,isActionableVisionAlert,latestAlertsByCamera,sameCamera,liveSource,normalizeRuntimeSettings,normalizeMachineHealthSettings,defaultZonePolygon,isLineDetectionType,defaultLineRuleConfig,lineRuleConfigText,defaultVisionRuleDraft,playAlertSound,hasH264VideoTrack,isVisionAlertNotification } from './lib/helpers';
+import {readLiveViewsCookie,saveLiveViewsCookie,bestLiveViewLayout,unwrap,errorMessage,apiBase,parseMetadata,cameraTitle,normalizeScanDevice,orderedSavedCameras,isActionableVisionAlert,latestAlertsByCamera,sameCamera,liveSource,normalizeRuntimeSettings,normalizeMachineHealthSettings,defaultZonePolygon,isLineDetectionType,defaultLineRuleConfig,lineRuleConfigText,defaultVisionRuleDraft,playAlertSound,hasH264VideoTrack,isVisionAlertNotification,apiJson } from './lib/helpers';
 import { LoginPage, ChangePasswordPage, RecoveryGatePage, MagicWordEasterEgg, SideNav, WorkspaceHeader } from './components/layout';
 import { DashboardTab } from './components/dashboard';
 import { SetupWizard } from './components/setup';
@@ -17,6 +17,7 @@ import { FacesTab } from './components/faces';
 import { ObjectsPage } from './components/objects';
 import { TimelinePlayback } from './components/timeline';
 import { CasesTab } from './components/cases';
+import { wallFromLocation } from './components/wall';
 import { SettingsTab } from './components/settings';
 import { NotificationsTab } from './components/notifications';
 import { SecureWipeCountdown, ResetProgressOverlay } from './components/securewipe';
@@ -130,6 +131,14 @@ function AppInner({ lang, onLangChange }) {
   const [streamOptionsById, setStreamOptionsById] = useState({});
   const [viewLayout, setViewLayout] = useState(initialLiveViews.layout);
   const [viewTiles, setViewTiles] = useState([]);
+  // Video wall behaviour (W3-3b). Held here rather than in the wall row because it applies
+  // to whatever is on the grid, saved wall or not — an operator can try a cycle before
+  // deciding to keep it.
+  const [wallBehaviour, setWallBehaviour] = useState({ cycleSeconds: 0, autoPopSeconds: 0 });
+  const [wallName, setWallName] = useState('');
+  // wallOnlyId is the second-monitor window: /?wall=<id> renders that wall and nothing
+  // else. Read once at mount — the address bar does not change under a running SPA.
+  const [wallOnlyId] = useState(() => wallFromLocation());
   const [draggedTileId, setDraggedTileId] = useState(null);
   const [preview, setPreview] = useState(null);
   const [streamConfig, setStreamConfig] = useState(defaultStreamConfig);
@@ -1981,6 +1990,38 @@ function AppInner({ lang, onLangChange }) {
     });
   }
 
+  // applyWall points the grid at a saved wall: its grid, its cameras in its order, and its
+  // cycle/pop behaviour. It goes through the same tile resolution the cookie path uses, so a
+  // wall renders exactly what a hand-built grid of the same cameras would.
+  const applyWall = useCallback(async (wall) => {
+    if (!wall) return;
+    const ids = (wall.cameraIds || []).map(Number).filter(Boolean);
+    const grid = wall.grid || viewLayout;
+    setViewLayout(grid);
+    setWallName(wall.name || '');
+    setWallBehaviour({
+      cycleSeconds: Number(wall.cycleSeconds) || 0,
+      autoPopSeconds: Number(wall.autoPopSeconds) || 0,
+    });
+    const tiles = await resolvedTilesFromDevices(saved, { hasPreference: true, ids, layout: grid });
+    setViewTilesWithCookie(tiles, grid);
+  }, [saved, viewLayout]);
+
+  // The second-monitor window loads its wall itself and shows nothing else.
+  useEffect(() => {
+    if (!wallOnlyId || !authHeader || saved.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const wall = await apiJson(`/api/walls/${wallOnlyId}`, { authHeader });
+        if (!cancelled) await applyWall(wall);
+      } catch (err) {
+        if (!cancelled) setMessage(err.message, 'error');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [wallOnlyId, authHeader, saved.length, applyWall]);
+
   function setViewTilesWithCookie(updater, layout = viewLayout) {
     setViewTiles((current) => {
       const next = typeof updater === 'function' ? updater(current) : updater;
@@ -2578,6 +2619,38 @@ function AppInner({ lang, onLangChange }) {
     );
   }
 
+  // The second-monitor window: the wall, and nothing that would take a screen up. It sits
+  // after the login / must-change-password / setup branches above, so that window signs in
+  // exactly like any other.
+  if (wallOnlyId) {
+    return (
+      <div className="app-shell wall-window">
+        <ToastStack toasts={toasts} onDismiss={(id) => setToasts((list) => list.filter((t) => t.id !== id))} />
+        <ViewsTab
+          devices={saved}
+          layout={viewLayout}
+          viewTiles={viewTiles}
+          alertsByCamera={tileAlertsByCamera}
+          busy={busy}
+          authHeader={authHeader}
+          streamConfig={streamConfig}
+          onLayout={setViewLayout}
+          onAdd={() => {}}
+          onRemove={() => {}}
+          onMove={() => {}}
+          onDragTile={() => {}}
+          onPTZMove={movePTZ}
+          onPTZStop={stopPTZ}
+          onOpenAlerts={openCameraAlerts}
+          wallOnly
+          wallName={wallName}
+          cycleSeconds={wallBehaviour.cycleSeconds}
+          autoPopSeconds={wallBehaviour.autoPopSeconds}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className={`app-shell${navPinned ? '' : ' nav-autohide'}`}>
       {wipeCountdown ? (
@@ -2668,6 +2741,12 @@ function AppInner({ lang, onLangChange }) {
           onPTZMove={movePTZ}
           onPTZStop={stopPTZ}
           onOpenAlerts={openCameraAlerts}
+          wallName={wallName}
+          cycleSeconds={wallBehaviour.cycleSeconds}
+          autoPopSeconds={wallBehaviour.autoPopSeconds}
+          onBehaviour={setWallBehaviour}
+          onApplyWall={applyWall}
+          onMessage={setMessage}
         />
       ) : null}
 

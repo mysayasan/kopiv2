@@ -97,6 +97,10 @@ func Pages() sharedservices.PageCatalog {
 							canWrite("/api/cameras/health/refresh"),
 							canWrite("/api/cameras/*/live-view"),
 							canWrite("/api/cameras/*/webrtc/offer"),
+							// The named walls this page renders. Reading them is part of
+							// watching: a viewer who cannot load the wall gets a blank grid
+							// and no way to tell that from "no cameras".
+							canRead("/api/walls"),
 							// Runtime settings drive live view; the SPA loads them before it can
 							// render the wall at all.
 							canRead("/api/settings"),
@@ -108,6 +112,9 @@ func Pages() sharedservices.PageCatalog {
 						Id: LevelUse,
 						Grants: []sharedservices.PathGrant{
 							canWrite("/api/cameras/*/ptz"), canWrite("/api/cameras/*/talk/offer"),
+							// Arranging the walls, which is the same rung as moving a camera:
+							// it changes what a room sees rather than merely watching it.
+							canUse("/api/walls"),
 						},
 					},
 				},

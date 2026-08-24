@@ -7666,3 +7666,79 @@ input.input-error:focus,
   font-size: 11px;
   color: var(--text-muted);
 }
+
+
+/* --- Video wall (W3-3b) ---------------------------------------------------------------
+   Logical properties throughout so the bar mirrors in Arabic without a second sheet. */
+.wall-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px 0 10px;
+  border-block-end: 1px solid var(--border-soft);
+  margin-block-end: 10px;
+}
+
+.wall-bar .form-alert { flex: 1 1 100%; }
+
+.wall-pick,
+.wall-num {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.wall-num input { inline-size: 74px; }
+
+.wall-naming {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.wall-title {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.wall-missing {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  align-self: center;
+  font-size: 11px;
+  color: var(--danger-text, var(--text-secondary));
+}
+
+/* The camera the wall was pulled to. Without a mark, a wall that jumped a page looks like a
+   wall that mis-cycled — the operator has to be able to see WHICH tile is why. */
+.view-tile.popped {
+  outline: 2px solid var(--danger-text, #c0392b);
+  outline-offset: -2px;
+}
+
+/* The second-monitor window: the grid, and nothing that would take a screen up. */
+.app-shell.wall-window {
+  display: block;
+  padding: 0;
+}
+
+.app-shell.wall-window .workspace {
+  padding: 6px;
+}
+
+.app-shell.wall-window .toolbar {
+  padding-block: 4px;
+}
+
+.wall-default {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  align-self: center;
+  font-size: 11px;
+  color: var(--text-muted);
+}

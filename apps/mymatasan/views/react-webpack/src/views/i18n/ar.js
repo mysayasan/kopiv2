@@ -1900,4 +1900,21 @@ export default {
   "cases.exportDownload": "تنزيل الحزمة",
   "cases.exportDownloading": "جارٍ تنزيل حزمة القضية...",
   "cases.footageFrom": "يبدأ التسجيل {time}",
+
+  // Video wall (W3-3b)
+  "wall.wall": "الجدار",
+  "wall.unsaved": "غير محفوظ",
+  "wall.defaultSuffix": "(الافتراضي)",
+  "wall.name": "اسم الجدار",
+  "wall.namePlaceholder": "المحيط، أرصفة التحميل، الليل...",
+  "wall.save": "احفظ الجدار",
+  "wall.saveAs": "احفظ كجدار جديد",
+  "wall.delete": "احذف الجدار",
+  "wall.saved": "تم حفظ جدار {name}.",
+  "wall.cycle": "التدوير (ث)",
+  "wall.autoPop": "إظهار التنبيه (ث)",
+  "wall.secondMonitor": "شاشة ثانية",
+  "wall.missing": "{n} كاميرا مفقودة",
+  "wall.missingHint": "يسمّي هذا الجدار كاميرات لم تعد موجودة. احفظه مرة أخرى لتجاهلها.",
+  "wall.makeDefault": "افتحه افتراضيًا",
 };

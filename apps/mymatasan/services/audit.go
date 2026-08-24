@@ -75,6 +75,12 @@ const (
 	ActionCaseItemUpdate = "case.item_update"
 	ActionCaseItemRemove = "case.item_remove"
 
+	// Video walls. What a control room is looking at is a fact worth being able to
+	// reconstruct: "who took that camera off the wall, and when" is asked after an
+	// incident, not before one.
+	ActionWallChange = "wall.change"
+	ActionWallDelete = "wall.delete"
+
 	// Cameras. A credential change is recorded; the credential itself never is.
 	ActionCameraCreate           = "camera.create"
 	ActionCameraUpdate           = "camera.update"
@@ -111,6 +117,7 @@ const (
 	TargetSystem    = "system"
 	TargetVision    = "vision"
 	TargetCase      = "case"
+	TargetWall      = "wall"
 )
 
 // NewAuditService builds the trail over mymatasan's database. logf receives write-failure

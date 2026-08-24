@@ -1900,4 +1900,21 @@ export default {
   'cases.exportDownload': 'Muat turun bungkusan',
   'cases.exportDownloading': 'Sedang memuat turun bungkusan kes...',
   'cases.footageFrom': 'Rakaman bermula {time}',
+
+  // Video wall (W3-3b)
+  'wall.wall': 'Dinding',
+  'wall.unsaved': 'Tidak disimpan',
+  'wall.defaultSuffix': '(lalai)',
+  'wall.name': 'Nama dinding',
+  'wall.namePlaceholder': 'Perimeter, Ruang muat, Malam...',
+  'wall.save': 'Simpan dinding',
+  'wall.saveAs': 'Simpan sebagai baharu',
+  'wall.delete': 'Padam dinding',
+  'wall.saved': 'Dinding {name} disimpan.',
+  'wall.cycle': 'Kitaran (s)',
+  'wall.autoPop': 'Papar amaran (s)',
+  'wall.secondMonitor': 'Monitor kedua',
+  'wall.missing': '{n} kamera tiada',
+  'wall.missingHint': 'Dinding ini menamakan kamera yang tidak wujud lagi. Simpan semula untuk melupakannya.',
+  'wall.makeDefault': 'Buka secara lalai',
 };

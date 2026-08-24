@@ -74,3 +74,44 @@ move a camera permanently, revisit its rules.
 Add a camera to the wall from its own page or from the grid's own control; remove a tile with the
 control on the tile. Removing a tile only changes your view — it does not stop recording, detection
 or alerting, all of which run on the appliance regardless of whether anyone is watching.
+
+## Saved walls {#walls}
+
+An arrangement worth keeping is a **wall**: a name, a grid, and the cameras in the order you put
+them in. Save one and it is available to everybody, on every machine — including the operator on
+the next shift, which the old per-browser arrangement never was.
+
+Use **Save wall** to update the wall you are looking at, or **Save as new** to keep the current
+grid under a new name. One wall can be marked the default; that is the one a screen opens with.
+
+> [!NOTE]
+> A wall is shared, not personal. Changing one changes it for everyone who opens it. That is
+> deliberate — a control room's walls are furniture, and an administrator has to be able to fix the
+> wall everybody is looking at.
+
+If a camera on a wall is deleted, the wall says so rather than quietly showing one tile fewer.
+Save the wall again to forget the missing camera.
+
+## Cycling and alert pop {#cycle}
+
+Two numbers on the wall bar decide what the wall does while nobody is touching it:
+
+- **Cycle (s)** advances through the pages every few seconds, so a station can watch more cameras
+  than fit the grid. 0 leaves the wall still.
+- **Pop alert (s)** brings a camera onto the visible page when it raises an alert, and holds it
+  there for that many seconds. 0 never does.
+
+While a popped camera is showing, cycling **pauses**. The point of a pop is that somebody looks at
+it, and a wall that rotates away two seconds later has done the opposite of raising an alarm. The
+popped tile is outlined so it is obvious which camera the wall jumped for.
+
+Paging by hand restarts the dwell, so a page you turned to is not whipped away a moment later.
+
+## A second monitor {#second-monitor}
+
+**Second monitor** opens the selected wall in its own window with no navigation and nothing else
+on screen. Drag it to the other display and put it fullscreen.
+
+It is a real browser window on purpose: a panel inside the app cannot be dragged onto another
+screen. It signs in the same way as any other window, and it shows the same wall — so changing the
+wall changes both.

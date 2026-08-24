@@ -73,6 +73,8 @@ func registerRoutes(api *mux.Router, w *wiring) *mux.Router {
 	// as one bundle. It reads the audit trail as well as writing to it — the case's own
 	// entries are the chain of custody the bundle ships.
 	apis.NewCaseApi(protected, w.cases, w.evidence, w.auditService, w.localUser, w.audit)
+	// Named video walls: what the control room is arranged to look at.
+	apis.NewWallApi(protected, w.walls, w.audit)
 
 	return protected
 }

@@ -40,7 +40,18 @@ node   tools/fleetbench/uicheck_appearance.js .artifacts/fleetbench ar
 KOPIV2_NODE_IMAGE=debian-ffmpeg:bench python tools/fleetbench/bench_w33_cases.py  # W3-3a: cases
 node   tools/fleetbench/uicheck_cases.js .artifacts/fleetbench en
 node   tools/fleetbench/uicheck_cases.js .artifacts/fleetbench ar
+python tools/fleetbench/bench_w33b_walls.py       # W3-3b: video walls (no footage needed)
+node   tools/fleetbench/uicheck_wall.js .artifacts/fleetbench en
+node   tools/fleetbench/uicheck_wall.js .artifacts/fleetbench ar
 ```
+
+`bench_w33b_walls.py` (W3-3b) runs on the plain node image in about a minute: a wall is an
+arrangement of camera ids, so it needs no footage. It restarts node-a to prove walls survive
+it, and deletes a camera to prove a wall reports the loss — which is how it found that
+deleting a camera failed on most cameras. `uicheck_wall.js` runs TWO Chrome profiles and the
+second one is the point: what this feature replaces was a cookie, so reading a wall back in
+the profile that saved it proves nothing. Run the API bench first — the screen check looks
+for the wall whose camera it deleted.
 
 `bench_w33_cases.py` (W3-3a, case files) needs the **ffmpeg node image** and runs for about
 nine minutes: it records real footage on two cameras, opens a case over some of it, then

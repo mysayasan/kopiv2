@@ -1918,4 +1918,21 @@ export default {
   'cases.exportDownload': 'Download bundle',
   'cases.exportDownloading': 'Downloading the case bundle...',
   'cases.footageFrom': 'Recording starts {time}',
+
+  // Video wall (W3-3b)
+  'wall.wall': 'Wall',
+  'wall.unsaved': 'Not saved',
+  'wall.defaultSuffix': '(default)',
+  'wall.name': 'Wall name',
+  'wall.namePlaceholder': 'Perimeter, Loading bays, Night...',
+  'wall.save': 'Save wall',
+  'wall.saveAs': 'Save as new',
+  'wall.delete': 'Delete wall',
+  'wall.saved': 'Saved the {name} wall.',
+  'wall.cycle': 'Cycle (s)',
+  'wall.autoPop': 'Pop alert (s)',
+  'wall.secondMonitor': 'Second monitor',
+  'wall.missing': '{n} camera(s) gone',
+  'wall.missingHint': 'This wall names cameras that no longer exist. Save it again to forget them.',
+  'wall.makeDefault': 'Open by default',
 };

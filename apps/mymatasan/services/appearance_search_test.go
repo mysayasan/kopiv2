@@ -601,3 +601,28 @@ func TestCosineNormalisesRatherThanAssumingUnitLength(t *testing.T) {
 		t.Fatalf("cosine of parallel unnormalised vectors = %v, want 1", got)
 	}
 }
+
+// zeroAffectedRepo is the repository behaviour that broke camera deletion: a DELETE that
+// matched no rows comes back as an ERROR rather than as zero.
+type zeroAffectedRepo struct {
+	dbsql.IGenericRepo[entities.ObjectAppearance]
+}
+
+func (zeroAffectedRepo) Delete(_ context.Context, _ string, _ []sqldataenums.Filter) (uint64, error) {
+	return 0, errors.New("delete failed: weird  behaviour. total affected: 0")
+}
+
+// PURGING NOTHING IS NOT A FAILURE. A camera that never produced an appearance descriptor
+// has nothing to clear, and reporting that as an error aborted the camera-delete cascade —
+// so the camera could not be deleted AT ALL, and the 500 it returned discarded the reason.
+// Appearance search is off by default, so this was most cameras on most installs. Found by
+// the W3-3b bench, the first one that ever deleted a camera.
+func TestPurgingDescriptorsThatDoNotExistIsNotAFailure(t *testing.T) {
+	svc := &AppearanceService{repo: zeroAffectedRepo{}}
+	if n, err := svc.DeleteForCamera(context.Background(), 7); err != nil || n != 0 {
+		t.Fatalf("clearing a camera with no descriptors must succeed with 0: n=%d err=%v", n, err)
+	}
+	if n, err := svc.DeleteForObservations(context.Background(), []int64{1, 2}); err != nil || n != 0 {
+		t.Fatalf("clearing observations with no descriptors must succeed with 0: n=%d err=%v", n, err)
+	}
+}

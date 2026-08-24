@@ -3,7 +3,7 @@ import { Ico } from './icons';
 import { FormAlert } from './ui';
 import { useT } from '@shared/i18n';
 import { HelpButton } from '@shared/Manual';
-import { apiBase, formatTimestamp } from '../lib/helpers';
+import { apiBase, formatTimestamp, apiJson } from '../lib/helpers';
 
 // Case files: the investigation, on screen.
 //
@@ -19,26 +19,8 @@ import { apiBase, formatTimestamp } from '../lib/helpers';
 // than storing an instant is what makes "bookmark this" produce something playable.
 const BOOKMARK_PAD_SECONDS = 30;
 
-async function callApi(path, { method = 'GET', body, authHeader } = {}) {
-  const headers = { ...(authHeader ? { Authorization: authHeader } : {}) };
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
-  const r = await fetch(`${apiBase()}${path}`, {
-    method,
-    credentials: 'include',
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const payload = await r.json().catch(() => null);
-  const data = payload?.data?.result ?? payload?.result ?? payload?.data ?? payload;
-  if (!r.ok) {
-    // The server's own words, always. "This case is closed — reopen it before adding
-    // evidence" is a different fact from "something went wrong", and only one of them
-    // tells the operator what to do next.
-    const message = payload?.message || payload?.data?.message || `HTTP ${r.status}`;
-    throw new Error(message);
-  }
-  return data;
-}
+// The JSON fetch lives in lib/helpers as apiJson, shared with the wall screen.
+const callApi = apiJson;
 
 function bytesLabel(bytes) {
   const n = Number(bytes) || 0;

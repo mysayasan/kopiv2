@@ -32,7 +32,7 @@ lands the work.
 | W3-1 | Timeline playback | F-12 | `feat/timeline-playback` | ✅ shipped, benched 2026-08-23 (29/29 on real recorded footage + 25/25 en and 26/26 ar screen passes; the screen pass found 4 defects the API bench could not) |
 | W3-2 | Appearance search across cameras/nodes | F-16 | `feat/appearance-search` | ✅ shipped, benched 2026-08-23 (11/11 on the real model, 34/34 on a real two-node fleet, 17/17 en and 18/18 ar screen passes) |
 | W3-3a | Case files (bookmarks, annotation, assignment, closure, bundle export, footage hold) | F-17 | `feat/case-files` | ✅ shipped, benched 2026-08-24 (48/48 on real recorded footage + 31/31 en and 32/32 ar screen passes; the bench found 4 defects, one of them in W1-4's shipped export) |
-| W3-3b | Video wall (named layouts, sequence cycling, alarm auto-pop) | F-18 | — | ☐ not started |
+| W3-3b | Video wall (named layouts, sequence cycling, alarm auto-pop, second monitor) | F-18 | `feat/video-wall` | ✅ shipped, benched 2026-08-24 (25/25 API + 21/21 en and 21/21 ar screen passes; found a shipped defect that made MOST cameras undeletable) |
 | W3-4 | Loitering / left-behind / directional rules | F-15 | — | ☐ not started |
 | W3-5 | PTZ presets + ONVIF events & relay I/O | F-13, F-14 | — | ☐ not started |
 | W3-6 | Privacy masking + export redaction | F-19 | — | ☐ not started |
@@ -1199,10 +1199,44 @@ caught it because it ran as an administrator.
    "Recording…" label: a fact computed at one resolution and rendered as the answer to a
    different question.**
 
-**W3-3b · Video wall** (F-18) — not started. Named layouts, sequence cycling, multi-monitor,
-alarm-driven auto-pop. `Live Views` already exists with cookie-persisted tiles, so this is an
-extension of a real screen rather than new ground. The fleet-level wall spanning nodes is
-something no appliance vendor can match.
+**W3-3b · Video wall** (F-18) — SHIPPED and benched on `feat/video-wall`. Named walls, cycling,
+alarm-driven auto-pop, and a second-monitor window.
+
+**THE WHOLE FEATURE IS ONE WORD: the arrangement was in a COOKIE.** Live Views already had a
+grid, tiles, paging, fullscreen and drag-reorder — and none of it left the browser that built
+it. It could not be handed to the next shift, could not be opened on another monitor without
+being rebuilt by hand, and vanished when somebody cleared their browser. Moving it into the
+database is most of the work; the three behaviours on top (cycle, pop, second monitor) are
+properties of the WALL rather than of the browser showing it, which is why they are columns
+rather than component state. **When a feature already exists but "does not count", check where
+its state lives — that is often the entire gap.**
+
+Cycling and popping interact, and the interaction is the design: **a pop SUSPENDS cycling**,
+because a wall that rotates away two seconds after raising an alarm has done the opposite of
+raising one. Paging by hand restarts the dwell for the same reason.
+
+**WHAT THE BENCH FOUND — four, and the first is the worst thing found in this programme so
+far.**
+
+1. **DELETING A CAMERA FAILED WITH A 500 ON MOST CAMERAS.** The camera-delete cascade clears
+   the camera's appearance descriptors; the appearance purge treated "there were none to
+   clear" as an error (the generic repo reports a zero-row DELETE as a failure, and the
+   guard for it matched the read sentinel but not the write one); the failure aborted the
+   cascade by design. Appearance search is off by default, so ANY camera that never produced
+   a descriptor — nearly all of them — could not be deleted at all. Shipped in W3-2, missed
+   because no bench had ever deleted a camera. **A bench only covers the verbs it uses.**
+2. **And the delete told nobody why.** 5xx bodies deliberately hide their detail from the
+   caller, which is right, but this path did not log either — so the reason existed nowhere.
+   The operator saw "internal server Error" and the support engineer saw nothing.
+3. **"Save as new" stole the default wall.** Saving the wall you are looking at under a new
+   name inherited its default flag, so a personal variant silently changed what every other
+   operator's screen opens with.
+4. **The landing route dropped the query string.** `/` redirected to `/app` and discarded
+   `?wall=<id>`, so the second-monitor window arrived with no wall and rendered the ordinary
+   workspace. It broke every deep link into the app, not just this one.
+
+**The fleet-level wall spanning nodes is still unbuilt** and remains the differentiator no
+appliance vendor can match; this is the single-appliance half.
 
 **W3-4 · Loitering / left-behind / directional** (F-15). New rule evaluators over the
 existing tracker, not new pipelines. Loitering and direction are track-duration

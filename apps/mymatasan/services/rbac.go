@@ -114,6 +114,10 @@ func Policy() []PolicyRule {
 		// administrator: a case is the record that an investigation happened, and the
 		// person who was present at the incident must not be able to erase it.
 		{Path: "/api/cases", Description: "Open, annotate and export case files", Viewer: none, Operator: readWrite},
+		// Video walls. A viewer READS them — the wall is what they are here to watch, and a
+		// viewer who cannot load it sees a blank grid. Arranging them is an operator's job.
+		// No level grants DELETE; removing a wall is a POST, see apis/walls.go.
+		{Path: "/api/walls", Description: "Named video walls: which cameras, in what grid", Viewer: read, Operator: readWrite},
 
 		// --- Operating (operator only) ----------------------------------------------------
 		{Path: "/api/vision/alerts/*/ack", Description: "Acknowledge an alert", Viewer: none, Operator: write},

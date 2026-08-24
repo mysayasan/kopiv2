@@ -3,6 +3,7 @@ import { Ico } from './icons';
 import { Tabs } from '@shared/Tabs';
 import { CameraHero, statusTone } from '@shared/CameraHero';
 import { useT } from '@shared/i18n';
+import { WallBar, useWallCycling } from './wall';
 import { HelpButton } from '@shared/Manual';
 import { FormAlert, FormBusyOverlay, InfoButton, Tracks, LayoutDropdown } from './ui';
 import { CameraAiPanel } from './vision';
@@ -150,6 +151,16 @@ export function ViewsTab({
   onPTZMove,
   onPTZStop,
   onOpenAlerts,
+  // --- video wall (W3-3b) ---
+  // wallOnly is the second-monitor window: the same grid with no navigation, no picker and
+  // no add strip, because that window exists to be dragged onto another screen and left.
+  wallOnly = false,
+  wallName = '',
+  cycleSeconds = 0,
+  autoPopSeconds = 0,
+  onBehaviour,
+  onApplyWall,
+  onMessage,
 }) {
   const t = useT();
   const tileCount = layoutCapacity(layout);
@@ -183,6 +194,19 @@ export function ViewsTab({
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [pageCount]);
+  // Cycling through the pages, and popping an alerting camera onto the visible one. Both
+  // are properties of the WALL rather than of this component — see components/wall.js.
+  const { popCamera } = useWallCycling({
+    cycleSeconds,
+    autoPopSeconds,
+    pageCount,
+    page: Math.min(page, pageCount - 1),
+    setPage,
+    alertsByCamera,
+    tiles: viewTiles,
+    tilesPerPage: tileCount,
+  });
+
   const safePage = Math.min(page, pageCount - 1);
   const pageStart = safePage * tileCount;
   const tiles = [...viewTiles.slice(pageStart, pageStart + tileCount)];
@@ -244,7 +268,11 @@ export function ViewsTab({
     <section className={`workspace${isFullscreen ? ' views-fullscreen' : ''}`} ref={workspaceRef}>
       <div className="toolbar">
         <div className="segmented">
-          <LayoutDropdown layout={layout} onLayout={onLayout} />
+          {wallOnly ? (
+            <span className="wall-title">{wallName}</span>
+          ) : (
+            <LayoutDropdown layout={layout} onLayout={onLayout} />
+          )}
           {pageCount > 1 ? (
             <div className="view-pager" role="group" aria-label={t('cam.liveViewPages')}>
               <button type="button" className="quiet" onClick={() => setPage(safePage - 1)} disabled={safePage <= 0} aria-label={t('cam.prevPage')}>
@@ -260,15 +288,30 @@ export function ViewsTab({
             <span className="btn-icon"><Ico n="maximize" /> {t('cam.fullscreen')}</span>
           </button>
         </div>
-        <div className="add-strip">
-          {available.length === 0 ? <span>{t('cam.noCamerasAvailable')}</span> : null}
-          {available.map((device) => (
-            <button type="button" className="quiet" key={device.id} disabled={busy} onClick={() => onAdd(device)}>
-              <span className="btn-icon"><Ico n="plus" /> {cameraTitle(device)}</span>
-            </button>
-          ))}
-        </div>
+        {wallOnly ? null : (
+          <div className="add-strip">
+            {available.length === 0 ? <span>{t('cam.noCamerasAvailable')}</span> : null}
+            {available.map((device) => (
+              <button type="button" className="quiet" key={device.id} disabled={busy} onClick={() => onAdd(device)}>
+                <span className="btn-icon"><Ico n="plus" /> {cameraTitle(device)}</span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
+
+      {wallOnly ? null : (
+        <WallBar
+          authHeader={authHeader}
+          layout={layout}
+          viewTiles={viewTiles}
+          cycleSeconds={cycleSeconds}
+          autoPopSeconds={autoPopSeconds}
+          onApplyWall={onApplyWall}
+          onBehaviour={onBehaviour}
+          onMessage={onMessage}
+        />
+      )}
 
       <div className={`view-grid${maximizedId ? ' has-maximized' : ''}`} style={{ '--view-cols': columns, '--view-rows': rows }}>
         {tiles.map((tile, idx) => {
@@ -284,8 +327,16 @@ export function ViewsTab({
               tile && draggedTileId === tile.id ? 'dragging' : '',
               tileAlerts.length > 0 ? 'has-ai-alert' : '',
               tile && maximizedId === tile.id ? 'maximized' : '',
+              // The camera the wall was pulled to. Without a mark, a wall that jumped a
+              // page looks like a wall that mis-cycled.
+              tile && popCamera && Number(tile.id) === Number(popCamera) ? 'popped' : '',
             ].filter(Boolean).join(' ')}
             key={tile ? tile.id : `empty-${idx}`}
+            // Which camera this tile is showing, in the DOM. The wall's own behaviour —
+            // cycling and alert pop — is only checkable from outside if a tile says which
+            // camera it is; without it a screen check can see that the wall moved and not
+            // that it moved to the right place.
+            data-camera-id={tile ? tile.id : ''}
             onDoubleClick={(event) => tile && maximizeFromDoubleClick(event, tile.id)}
             draggable={Boolean(tile)}
             onDragStart={(event) => {
