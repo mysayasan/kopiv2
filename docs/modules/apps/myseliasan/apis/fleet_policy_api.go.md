@@ -45,6 +45,14 @@ itself trigger an enforcing policy's write.
 reaches out and changes fifty machines. Enforcement itself is audited separately, at the
 point it happens, by the reconciler (`ActionPolicyEnforce`, `services/fleet_policy_reconciler.go.md`).
 
+## Compliance is served CHECKED, not raw
+
+`GET /compliance` calls the reconciler's `LastFor`, not `Last`. The stored pass is validated
+against the policies in force at read time, so a report whose policies have been edited comes
+back flagged `stale` (with `staleSince`), and one whose policies have been **deleted** stops
+claiming the fleet is compliant with rules that no longer exist — it shipped doing exactly
+that. See `services/fleet_policy_reconciler.go.md`.
+
 ## Notes
 
 - `list` and `catalog` and `compliance` are available to any authenticated session (not

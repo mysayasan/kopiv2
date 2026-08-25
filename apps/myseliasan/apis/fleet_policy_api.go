@@ -74,8 +74,13 @@ func (a *fleetPolicyApi) catalog(w http.ResponseWriter, r *http.Request) {
 // would make the screen as slow as the slowest appliance in the estate, and a fleet with
 // one wedged node would appear broken. The refresh endpoint exists for when the operator
 // genuinely wants to wait.
+//
+// LastFor, not Last: the stored pass is checked against the policies in force NOW, so a
+// report whose policies have since been edited is flagged, and one whose policies have been
+// DELETED stops claiming a fleet is compliant with rules that no longer exist. See
+// services/fleet_policy_reconciler.go.
 func (a *fleetPolicyApi) compliance(w http.ResponseWriter, r *http.Request) {
-	controllers.SendResult(w, a.reconciler.Last(), "succeed")
+	controllers.SendResult(w, a.reconciler.LastFor(r.Context()), "succeed")
 }
 
 func (a *fleetPolicyApi) refresh(w http.ResponseWriter, r *http.Request) {

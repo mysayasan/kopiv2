@@ -108,6 +108,19 @@ type FleetCompliance struct {
 	CheckedAt int64            `json:"checkedAt"`
 	// Counts is a status→count summary for the header tiles.
 	Counts map[string]int `json:"counts"`
+	// Stale reports that the POLICIES CHANGED after this pass was taken, so every verdict
+	// in it was reached against a different set of rules than the one in force now.
+	//
+	// A compliance report is a snapshot and the policies it was computed from are not. A
+	// sweep is a tunneled round trip per section per node, so it is deliberately something
+	// an operator asks for rather than something a page load does — which means an edited
+	// or deleted policy leaves last pass's verdicts on screen, still coloured, still
+	// labelled with a "last checked" time that is perfectly true and completely misleading.
+	// Saying so is the whole fix; re-sweeping behind the operator's back is not.
+	Stale bool `json:"stale"`
+	// StaleSince is when the policy set last changed, so the screen can say what the
+	// verdicts predate rather than only that they are old.
+	StaleSince int64 `json:"staleSince,omitempty"`
 }
 
 // FleetPolicyReconciler compares every node's live settings against the policies that
@@ -127,6 +140,9 @@ type FleetPolicyReconciler struct {
 
 	mu   sync.RWMutex
 	last FleetCompliance
+	// lastFingerprint identifies the policy set this report was computed against. See
+	// LastFor: without it the report outlives its own premise.
+	lastFingerprint string
 	// sweeping serialises passes. The 15-minute ticker and the operator's "check now"
 	// button both call ReconcileAll, and on a large estate a sweep can still be running
 	// when the next one is asked for. Two concurrent sweeps would double the settings
@@ -154,12 +170,113 @@ func NewFleetPolicyReconciler(policies IFleetPolicyService, nodes PolicyNodeList
 	return &FleetPolicyReconciler{policies: policies, nodes: nodes, sender: sender, audit: audit, logf: logf}
 }
 
-// Last returns the most recent completed pass, for the API to serve without making the
-// browser wait on fifty tunneled requests.
+// Last returns the most recent completed pass verbatim, without asking whether the policies
+// it was computed from still exist. Callers serving it to a person want LastFor.
 func (r *FleetPolicyReconciler) Last() FleetCompliance {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.last
+}
+
+// LastFor returns the stored pass CHECKED AGAINST THE POLICIES IN FORCE NOW.
+//
+// THE DEFECT THIS EXISTS TO CLOSE: delete the last policy and the fleet went on reporting
+// every node "compliant" — on the screen and from the API — because the stored report knew
+// nothing about the policies being gone. A green fleet governed by nothing is the exact
+// misreading this screen's own hint sentence warns against ("unknown is not the same as
+// compliant"), and it survived until somebody pressed Check now. Found by the first screen
+// pass this feature ever had, by LOOKING at the screenshot after the run had gone green.
+//
+// Two different situations, and they get different answers because they are known with
+// different certainty:
+//
+//   - NO POLICY IS IN FORCE. Then no node can be compliant with anything, and that is
+//     provable here without asking a single appliance. The verdicts are replaced with
+//     unmanaged — not marked doubtful, replaced, because we know what they are.
+//   - THE POLICY SET CHANGED. The verdicts might still be right, and re-deriving them means
+//     a tunneled round trip per section per node. So they are kept and flagged Stale, and
+//     the screen says what they predate.
+func (r *FleetPolicyReconciler) LastFor(ctx context.Context) FleetCompliance {
+	r.mu.RLock()
+	out := r.last
+	stored := r.lastFingerprint
+	r.mu.RUnlock()
+
+	details, err := r.policies.List(ctx)
+	if err != nil {
+		// A report we cannot validate is not a report we should dress up as current.
+		out.Stale = true
+		return out
+	}
+	if !anyPolicyInForce(details) {
+		return unmanagedReport(out)
+	}
+	if fp := policyFingerprint(details); fp != stored {
+		out.Stale = true
+		out.StaleSince = latestPolicyChange(details)
+	}
+	return out
+}
+
+// anyPolicyInForce reports whether ANY enabled policy exists. A disabled policy governs
+// nothing, so a fleet whose only policy is parked is as unmanaged as one with none.
+func anyPolicyInForce(details []*FleetPolicyDetail) bool {
+	for _, d := range details {
+		if d != nil && d.Policy != nil && d.Policy.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
+// unmanagedReport rewrites a stored pass into the only verdict that can be true when nothing
+// is in force. The CheckedAt stamp is kept: the sweep did happen, and when it happened is
+// still a fact worth showing.
+func unmanagedReport(in FleetCompliance) FleetCompliance {
+	out := FleetCompliance{CheckedAt: in.CheckedAt, Counts: map[string]int{}}
+	for _, n := range in.Nodes {
+		n.Status = ComplianceUnmanaged
+		n.Sections = nil
+		n.DriftCount = 0
+		n.AppliedCount = 0
+		n.Reason = ""
+		out.Nodes = append(out.Nodes, n)
+		out.Counts[ComplianceUnmanaged]++
+	}
+	return out
+}
+
+// policyFingerprint identifies a policy SET exactly, so "did anything change" is answered
+// rather than guessed. Id and UpdatedAt together cover every write: Save replaces a policy's
+// items wholesale and bumps its stamp, and a delete removes an id. A count-and-max-timestamp
+// shortcut would alias a create paired with a delete in the same second — rare, and wrong in
+// the one direction that matters, so it is not used.
+func policyFingerprint(details []*FleetPolicyDetail) string {
+	stamps := make([]string, 0, len(details))
+	for _, d := range details {
+		if d == nil || d.Policy == nil {
+			continue
+		}
+		stamps = append(stamps, fmt.Sprintf("%d:%d:%t", d.Policy.Id, d.Policy.UpdatedAt, d.Policy.Enabled))
+	}
+	sort.Strings(stamps)
+	return strings.Join(stamps, ",")
+}
+
+func latestPolicyChange(details []*FleetPolicyDetail) int64 {
+	var latest int64
+	for _, d := range details {
+		if d == nil || d.Policy == nil {
+			continue
+		}
+		if d.Policy.UpdatedAt > latest {
+			latest = d.Policy.UpdatedAt
+		}
+		if d.Policy.CreatedAt > latest {
+			latest = d.Policy.CreatedAt
+		}
+	}
+	return latest
 }
 
 // ReconcileAll sweeps the fleet once and stores the result.
@@ -213,6 +330,9 @@ func (r *FleetPolicyReconciler) ReconcileAll(ctx context.Context) (FleetComplian
 
 	r.mu.Lock()
 	r.last = out
+	// Stamped with the policy set this pass was actually computed against, which is what
+	// lets LastFor tell a current report from one that outlived its own premise.
+	r.lastFingerprint = policyFingerprint(details)
 	r.mu.Unlock()
 	return out, nil
 }

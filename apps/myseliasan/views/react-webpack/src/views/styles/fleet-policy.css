@@ -25,6 +25,26 @@
 
 /* Summary tiles ---------------------------------------------------------- */
 
+/* The verdicts predate the rules. Amber and stated, not silently greyed: an operator who
+ * does not read this line still has to be stopped from trusting the numbers, which is what
+ * the fade on the tiles is for — but the fade alone would just look like a loading state,
+ * so the sentence carries the meaning and the fade carries the warning. */
+.fp-stale {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border: 1px solid rgba(217, 119, 6, 0.28);
+  border-radius: 9px;
+  background: rgba(217, 119, 6, 0.1);
+  color: #b45309;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.fp-tiles--stale { opacity: 0.55; }
+
 .fp-tiles {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
@@ -269,3 +289,9 @@
 [data-theme='dark'] .fp-scope-tag--report { color: #6ee7b7; }
 [data-theme='dark'] .fp-scope-tag--enforce,
 [data-theme='dark'] .fp-enforce-note--armed { color: #c4b5fd; }
+
+[data-theme='dark'] .fp-stale {
+  background: rgba(245, 158, 11, 0.16);
+  border-color: rgba(245, 158, 11, 0.32);
+  color: #fbbf24;
+}

@@ -75,9 +75,17 @@ func (f *fakeNode) SendRequest(ctx context.Context, nodeID string, req control.R
 type fakePolicyStore struct {
 	details   []*FleetPolicyDetail
 	evaluated []int64
+	// listErr makes the policy list unreadable, which is a state LastFor has to have an
+	// answer for: a report it cannot check against anything is not a current report.
+	listErr error
 }
 
-func (f *fakePolicyStore) List(context.Context) ([]*FleetPolicyDetail, error) { return f.details, nil }
+func (f *fakePolicyStore) List(context.Context) ([]*FleetPolicyDetail, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return f.details, nil
+}
 func (f *fakePolicyStore) Save(context.Context, SaveFleetPolicyRequest, int64) (*FleetPolicyDetail, error) {
 	return nil, nil
 }
