@@ -40,7 +40,7 @@ lands the work.
 | W3-6b | Face redaction on export | F-19 | `feat/face-redaction` | ✅ shipped, benched 2026-08-25 (29/29 against a REAL detector on real recorded footage — the face region measured at YAVG 16.0 against 141.7 unredacted — plus 18/18 en and 20/20 ar screen passes; found OpenCV's warnings colliding with the worker's report, and a dialog that had been rendering with no panel since W1-4) |
 | W3-7 | N+1 node failover | F-23 | `feat/node-failover` | ✅ shipped, benched 2026-08-25 (55/55 on a real two-node fleet with real footage + 27/27 en and 30/30 ar screen passes; found four defects — a per-camera takeover result the control plane silently dropped, a takeover that called a retrying ffmpeg process "recording", a sweep that drilled every new plan on its first tick and turned the badge green by itself, and a clean fail-back rendered as an alarm that only LOOKING at the screenshot caught) |
 | W3-8 | Tenant isolation | F-24 | — | ✅ CLOSED 2026-08-21 — single-org per install, will not build |
-| W3-9 | Mobile PWA + web push | F-20b | — | ☐ not started |
+| W3-9 | Mobile PWA + web push | F-20b | `feat/mobile-pwa` | ✅ shipped, benched 2026-08-25 (38/38 against a REAL push service and a REAL node outage — the encrypted body read off the wire, the VAPID assertion checked, and the per-device severity floor proved against the control plane's own notification log — plus 24/24 en and 27/27 ar screen passes; found an install with no internet route being told the push service had REFUSED it, and, in shipped code, a fleet that raised an alarm when a site went dark and never once sounded the all-clear) |
 
 Status vocabulary: `☐ not started` → `◐ in progress` → `● built, not benched` →
 `◑ half-benched` → `✅ shipped`.
@@ -1697,7 +1697,65 @@ the hold is uncovered for the gap); no speed guarantee, so a face export is capp
 of footage; and the feature needs opencv plus the YuNet model the face-recognition setup
 downloads — without them it refuses rather than degrading.
 
-**W3-9 · Mobile PWA + web push** (F-20b). The higher-effort half of the notification gap.
+**W3-9 · Mobile PWA + web push** (F-20b) — **SHIPPED and BENCHED, `feat/mobile-pwa`.**
+
+The other half of what F-20 named. W2-7 gave the control plane an outbound leg at all; email
+still does not WAKE anybody, and the fleet's worst moments happen when nobody is at a screen.
+myseliasan is now an installable app whose service worker shows a notification pushed from the
+appliance, end-to-end encrypted to the device (RFC 8291), signed with the install's own VAPID
+identity (RFC 8292), delivered by whichever push service the operator's browser uses.
+
+**The problem this feature had to solve before writing a line of it.** A Web Push message is
+delivered by POSTing to a URL a BROWSER VENDOR owns. There is no standard way to wake a closed
+phone without one. **This control plane is normally deployed on an intranet with no internet
+egress**, where every one of those POSTs fails at the TCP connect and no amount of
+configuration changes it. Shipping a feature that quietly does nothing on most installs was
+never an option, and neither was refusing to build it: the sites that DO have egress are
+exactly the ones running fifty buildings off one operator's phone.
+
+So the feature never claims to work — **it measures whether it works, per device, by actually
+delivering**, and it separates four answers that a single "failed" would have merged:
+delivered, the subscription is gone, the service refused, or the service was never reached.
+Registering a device performs a real delivery immediately (W3-7's drill applied to a different
+promise), so somebody turning this on learns in the same second rather than during an incident.
+The screen states the no-egress case as what it is — the deployment working as designed, not a
+fault to chase — and lists the hosts a firewall would have to allow.
+
+**What leaves the building is stated on the screen, not buried in the manual.** Enabling push
+means the appliance makes outbound HTTPS requests to a browser vendor, and that vendor learns a
+message reached a device and when. The contents are encrypted end to end and it cannot read
+them. Whether the appliance talks to Google or Apple at all is an ADMINISTRATOR's decision, so
+the whole surface sits behind an accessrbac grant; within that grant a device is personal, and
+only its owner (or a superadmin cleaning up after somebody who has left) may touch it.
+
+**Two defects, one of them older than this work.**
+
+- **An install with no route out was told the push service had REFUSED it.** The transport
+  classifier treated any context error as "not the network's fault", which swallowed the single
+  most important real-world case: a connect that times out because there is nowhere to connect
+  to. The unit test that drove the design used an already-cancelled context and stayed green
+  throughout. Now `Canceled` (the caller gave up, nothing was learned) and `DeadlineExceeded`
+  (our own allowance ran out with no answer) are separated, with a test for each.
+- **The fleet raised an alarm when a site went dark and never sounded the all-clear.** The
+  liveness sweep emits `node-recovered` on the lost → online edge. It never saw that edge on a
+  real fleet: a node comes back by DIALLING IN, `AcceptControlConn` marks it online between
+  sweeps, and by the time the sweep looks the previous status is already online — so the
+  recovery notification was, in practice, unreachable code. The registry's own unit test drives
+  the sweep directly, so it had been green since the feature shipped. Found only because the
+  push bench took a node down for real, brought it back, and counted what reached a device.
+
+**Not claimed.** No offline cache, deliberately: a control plane serving yesterday's node list
+would show a green estate that went dark an hour ago, and "the page will not load" is the
+honest failure. No delivery guarantee — a push service may drop, delay or coalesce, and the
+feed remains the record. A browser may rotate its subscription on its own, and the service
+worker cannot re-register it (the API needs the CSRF token, which lives in a cookie a worker
+cannot read); rotation heals from both ends instead — the SPA re-posts on every load and the
+dead endpoint is deleted when the service answers 410 — so between a rotation and the next time
+somebody opens the app, that device is not reachable. iOS delivers Web Push only to a page the
+user has added to the Home Screen. And the bench does not decrypt the payload: a second
+implementation of RFC 8291 written in the same sitting would only prove that two readings of
+the spec agree with each other, so the encryption is checked against the RFC's own published
+test vector, byte for byte, and the bench checks the wiring.
 
 ---
 

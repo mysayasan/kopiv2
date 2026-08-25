@@ -325,6 +325,55 @@ func TestRegistryHeartbeatEmitsLostOnceThenRecovered(t *testing.T) {
 	}
 }
 
+// THE ALL-CLEAR ON THE PATH A NODE ACTUALLY TAKES.
+//
+// The test above proves the sweep raises node-recovered on the lost -> online edge. On a real
+// fleet the sweep never sees that edge: a node comes back by DIALLING IN, AcceptControlConn
+// marks it online between sweeps, and the sweep then finds a node that is already online with
+// nothing to report. So the recovery notification existed, was unit-tested, and could not fire
+// — the fleet raised an alarm when a site went dark and never said it was over.
+//
+// Found by the W3-9 push bench, which took a node down for real, brought it back, and counted
+// what reached a device.
+func TestRegistryRecoveryIsAnnouncedWhenTheNodeDialsBackIn(t *testing.T) {
+	reg, nodes := newTestRegistry()
+	ctx := context.Background()
+	now := time.Now().Unix()
+	nodes.rows = append(nodes.rows, &entities.ManagedNode{
+		Id: 1, NodeId: "node-x", Status: "lost", LastSeenAt: now - 1000})
+
+	var events []FleetEvent
+	reg.SetFleetEventSink(func(e FleetEvent) { events = append(events, e) })
+
+	if _, err := reg.AcceptControlConn(ctx, "node-x"); err != nil {
+		t.Fatalf("AcceptControlConn: %v", err)
+	}
+	if len(events) != 1 || events[0].Kind != FleetEventNodeRecovered {
+		t.Fatalf("a node that came back by dialling in produced %+v, want exactly one "+
+			"node-recovered — without it the fleet alarms and never sounds the all-clear", events)
+	}
+	if nodes.rows[0].Status != "online" {
+		t.Fatalf("node should be online after dialling in, got %q", nodes.rows[0].Status)
+	}
+
+	// Edge-triggered, like the lost event: a node that dials in again while already online
+	// has not recovered from anything, and an all-clear per reconnect is noise on a phone.
+	events = nil
+	if _, err := reg.AcceptControlConn(ctx, "node-x"); err != nil {
+		t.Fatalf("AcceptControlConn: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("reconnecting an already-online node announced %+v", events)
+	}
+
+	// And the sweep that follows must not announce it a second time.
+	reg.SetControlPresence(func(id string) bool { return id == "node-x" })
+	reg.Heartbeat(ctx)
+	if len(events) != 0 {
+		t.Fatalf("the sweep re-announced a recovery that was already reported: %+v", events)
+	}
+}
+
 func TestRegistryHeartbeatWarnsOnExpiringCertOncePerExpiry(t *testing.T) {
 	reg, nodes := newTestRegistry()
 	reg.cfg.CertWarnBefore = 7 * 24 * time.Hour

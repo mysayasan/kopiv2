@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Ico, useT } from '@shared';
 import { api, apiBase, formatTimestamp } from '../lib/helpers';
+import { PushDevicesPanel } from './push_devices';
 
 const PAGE_SIZE = 30;
 
@@ -20,7 +21,7 @@ const clipKey = (nodeId, alertId) => `${nodeId}:${alertId}`;
 // already tags node-sourced rows `source: node:<id>` (see app.go ingestNodeEvent), so this
 // page just lists /api/notifications, lets the operator scope to a single node or unread,
 // and live-updates from the SSE stream (driven by `refreshSignal` bumped in App).
-export function NotificationsPage({ nodes = [], refreshSignal = 0, onChanged }) {
+export function NotificationsPage({ nodes = [], refreshSignal = 0, onChanged, session = null, onToast = null }) {
   const t = useT();
   const [view, setView] = useState('unread'); // 'unread' | 'all'
   const [nodeFilter, setNodeFilter] = useState('all'); // 'all' | nodeId
@@ -166,6 +167,12 @@ export function NotificationsPage({ nodes = [], refreshSignal = 0, onChanged }) 
           <p className="section-subtitle">{t('notif.desc')}</p>
         </div>
       </div>
+
+      {/* Mobile push (W3-9). It lives at the TOP of the feed rather than in Settings on
+          purpose: Settings is superadmin-only, and the person who needs to be woken at 3am is
+          usually not the person who administers the estate. Enrolling your own phone must not
+          require an administrator to do it for you. */}
+      <PushDevicesPanel session={session} onToast={onToast} />
 
       <div className="notifications-toolbar">
         <div className="seg-toggle" role="group" aria-label={t('notif.readFilter')}>
