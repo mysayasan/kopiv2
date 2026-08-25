@@ -111,6 +111,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-25 — mymatasan 1.141.0 (9fd9546)
+
+### Added
+
+- **mymatasan**: An evidence export can now be asked to destroy the faces in it. Every frame is scanned, and each face found is filled with a solid black box — widened beyond the face and held for the frames either side of it, so a detector that drops a face for a moment does not leave a full-resolution one visible in the middle of a clip nobody will scrub through. It works alongside the existing privacy-zone redaction: a copy can hide the neighbour's window, the faces, or both, and the manifest names each of them separately. The thing the product will not do is overstate it. A privacy zone is a guarantee — a person drew it, it does not move, and the export covers it. Hiding faces is a best effort against an automatic detector that misses faces which are turned away, distant, partly hidden or blurred by motion, and the product says so beside the checkbox before you make the copy, again beside the finished file, and in the bundle's own manifest. It also reports what actually happened: how many frames were scanned, how many detections were destroyed, and how far beyond each face it painted — and it says in plain words that a count of detections is not a count of people. An appliance that cannot do it refuses the export rather than handing back a copy that hid nothing.
 ## 2026-08-25 — mymatasan 1.140.0, myseliasan 1.74.0, core 1.104.0 (89e440b)
 
 ### Added
