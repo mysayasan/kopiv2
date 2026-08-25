@@ -110,6 +110,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-25 — mymatasan 1.140.0, myseliasan 1.74.0, core 1.104.0 (89e440b)
+
+### Added
+
+- **core,mymatasan,myseliasan**: A recorder is the only thing recording its own cameras, and when it stops — a dead power supply, a failed disk, a switch port, somebody carrying it out of the building — nothing anywhere starts recording them again. Now you can name a spare appliance for a recorder, and while that recorder is healthy the spare is quietly given a copy of its camera list so it can pick those cameras up. The part that matters is the part you can press on a quiet afternoon: Test asks the spare to actually open every one of those cameras and reports, per camera, whether it could. Until you have done that, the plan says NEVER TESTED and nothing on the screen says otherwise — copying only proves the two appliances can talk to each other, and whether the spare can reach the cameras themselves is a different question with a different answer. When a recorder does go quiet for longer than a wait you choose, the control plane tells you it is ready to fail over, or — if you have deliberately armed it after your own test passed — takes the cameras over by itself. Either way you are told per camera what actually happened, read back from the recorder rather than assumed: a camera that is recording says so, and one whose stream could not be opened says that instead of being counted as a success. Handing the cameras back afterwards is one button, and the footage the spare recorded during the outage stays on the spare, playable, including after the plan itself is deleted. Camera logins are moved between the two appliances in a sealed envelope the control plane cannot open and that cannot be opened by any appliance except the spare it was addressed to.
 ## 2026-08-24 — mymatasan 1.139.0, core 1.103.0 (70ca00d)
 
 ### Added
