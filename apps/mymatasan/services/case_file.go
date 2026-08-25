@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mysayasan/kopiv2/apps/mymatasan/entities"
+	shared "github.com/mysayasan/kopiv2/domain/entities"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
@@ -152,6 +153,9 @@ type ICaseService interface {
 	Delete(ctx context.Context, id int64) error
 
 	AddItem(ctx context.Context, caseId int64, in CaseItemInput) (*entities.CaseItem, error)
+	// AddNotification puts one entry from the unified feed into a case, resolved to what it
+	// actually refers to. See case_notification.go.
+	AddNotification(ctx context.Context, caseId, notificationId int64, note string, actor CaseActor) (*entities.CaseItem, error)
 	UpdateItem(ctx context.Context, caseId, itemId int64, in CaseItemUpdate) (*entities.CaseItem, error)
 	RemoveItem(ctx context.Context, caseId, itemId int64) (*entities.CaseItem, error)
 
@@ -181,7 +185,10 @@ type caseService struct {
 	recording IRecordingService
 	footage   caseFootageResolver
 	cameras   caseCameraNamer
-	now       func() int64
+	// feed resolves a notification (and the alert it may point at) when one is put into a
+	// case. nil on an appliance that does not wire it, which only disables that one action.
+	feed caseNotificationSource
+	now  func() int64
 }
 
 // NewCaseService builds the case file service. footage and cameras may be nil (the case
@@ -192,6 +199,8 @@ func NewCaseService(
 	recording IRecordingService,
 	footage caseFootageResolver,
 	cameras caseCameraNamer,
+	notifications dbsql.IGenericRepo[shared.Notification],
+	alerts dbsql.IGenericRepo[entities.AlertEvent],
 ) ICaseService {
 	return &caseService{
 		cases:     cases,
@@ -199,6 +208,7 @@ func NewCaseService(
 		recording: recording,
 		footage:   footage,
 		cameras:   cameras,
+		feed:      repoNotificationSource{notifications: notifications, alerts: alerts},
 		now:       func() int64 { return time.Now().UTC().Unix() },
 	}
 }
@@ -556,7 +566,8 @@ func (s *caseService) RemoveItem(ctx context.Context, caseId, itemId int64) (*en
 func (s *caseService) buildItem(caseId int64, in CaseItemInput) (*entities.CaseItem, error) {
 	kind := strings.TrimSpace(in.Kind)
 	switch kind {
-	case entities.CaseItemFootage, entities.CaseItemSighting, entities.CaseItemAlert, entities.CaseItemNote:
+	case entities.CaseItemFootage, entities.CaseItemSighting, entities.CaseItemAlert,
+		entities.CaseItemNote, entities.CaseItemNotification:
 	case "":
 		kind = entities.CaseItemFootage
 	default:
@@ -590,6 +601,18 @@ func (s *caseService) buildItem(caseId int64, in CaseItemInput) (*entities.CaseI
 		if item.StartedAt <= 0 {
 			item.StartedAt = now
 		}
+		return item, nil
+	}
+	if kind == entities.CaseItemNotification && item.CameraId <= 0 {
+		// A feed entry with no camera — "the recorder rebooted at 03:12" — is still the
+		// fact that explains the gap in the footage either side of it. It holds nothing and
+		// exports as text, which HoldsFootage already handles. The span is zeroed for the
+		// same reason a note's is: a hold query must never be pinned by an item that names
+		// no camera.
+		if item.StartedAt <= 0 {
+			return nil, errors.New("evidence needs a time")
+		}
+		item.EndedAt = 0
 		return item, nil
 	}
 	if item.CameraId <= 0 {

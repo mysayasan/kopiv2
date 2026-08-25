@@ -383,7 +383,11 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// Case files (W3-3): the investigation container. It resolves each item's footage
 	// through the observation service, so a clip opened from a case is the same clip the
 	// Objects grid would open, and it is what the footage guard above asks.
-	caseService := services.NewCaseService(repo.CaseFile, repo.CaseItem, recordingService, observationService, cameraService)
+	// The feed and alert repos are here so an operator can put what they noticed on the
+	// Notifications screen straight into a case — resolved to the alert it refers to, so the
+	// same evidence never lands twice under two kinds. See services/case_notification.go.
+	caseService := services.NewCaseService(repo.CaseFile, repo.CaseItem, recordingService,
+		observationService, cameraService, repo.Notification, repo.AlertEvent)
 	footageGuard.SetCases(caseService)
 	// Video walls (W3-3b): named, shared camera arrangements, replacing the per-browser
 	// cookie Live View used to remember a grid in.

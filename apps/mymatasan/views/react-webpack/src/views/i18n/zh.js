@@ -481,6 +481,7 @@ export default {
   'notif.fType': '类型',
   'notif.acknowledge': '确认',
   'notif.dismiss': '忽略',
+  'notif.addToCase': '加入案卷',
   'notif.viewClip': '查看片段',
   'notif.noClip': '未录制片段',
   'notif.cameraHealthSettings': '摄像头健康设置',

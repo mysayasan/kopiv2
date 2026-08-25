@@ -481,6 +481,7 @@ export default {
   "notif.fType": "النوع",
   "notif.acknowledge": "إقرار",
   "notif.dismiss": "تجاهل",
+  "notif.addToCase": "أضف إلى ملف قضية",
   "notif.viewClip": "عرض المقطع",
   "notif.noClip": "لم يُسجّل مقطع",
   "notif.cameraHealthSettings": "إعدادات سلامة الكاميرا",
