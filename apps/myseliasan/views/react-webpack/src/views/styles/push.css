@@ -1,0 +1,206 @@
+/* Mobile push — "Alerts on this device" (W3-9).
+ *
+ * Logical properties throughout (margin-inline, padding-inline, border-inline) so the Arabic
+ * screen is the same screen mirrored rather than a second layout to maintain.
+ *
+ * The verdict colours are stated literally rather than through --ui-* tokens, for the same
+ * reason the failover screen states its own: they are STATUS colours. Amber has to mean
+ * "this has not been proved" in every theme, so each one carries an explicit dark
+ * counterpart at the bottom of this file — a light-only status colour is invisible to half
+ * the operators. */
+
+.push-panel {
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--ui-border, #e2e8f0);
+  border-radius: 12px;
+  background: var(--ui-surface, #ffffff);
+}
+
+.push-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.push-head-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: 9px;
+  background: rgba(77, 117, 157, 0.14);
+  color: #3f6486;
+}
+
+.push-head-text { flex: 1 1 auto; min-width: 0; }
+.push-head-text h3 { margin: 0 0 2px; font-size: 15px; font-weight: 620; }
+.push-head-text p { margin: 0; font-size: 13px; line-height: 1.55; color: var(--ui-text-muted, #64748b); }
+
+.push-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid var(--ui-border, #cbd5e1);
+  border-radius: 8px;
+  background: var(--ui-surface, #ffffff);
+  color: var(--ui-text, #1f2937);
+  font-size: 13px;
+  font-weight: 560;
+  cursor: pointer;
+}
+
+.push-btn:disabled { opacity: 0.55; cursor: default; }
+.push-btn:not(:disabled):hover { border-color: #94a3b8; }
+
+.push-btn-primary {
+  border-color: #3f6486;
+  background: #3f6486;
+  color: #f8fafc;
+}
+.push-btn-primary:not(:disabled):hover { background: #35536f; border-color: #35536f; }
+
+.push-btn-danger { color: #b91c1c; border-color: rgba(185, 28, 28, 0.32); }
+.push-btn-danger:not(:disabled):hover { border-color: #b91c1c; }
+
+/* The three lines that carry the honesty. */
+
+.push-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 10px 0 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ui-text-muted, #64748b);
+}
+
+.push-note--stop { color: #b45309; }
+.push-note--insecure { color: #b91c1c; }
+
+.push-note--privacy {
+  margin-top: 12px;
+  padding-inline-start: 10px;
+  border-inline-start: 3px solid rgba(148, 163, 184, 0.55);
+  font-size: 12px;
+}
+
+.push-verdict {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 12px 0 0;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+/* Proved. The only green on this panel, and it is only ever reached by a real delivery. */
+.push-verdict--confirmed {
+  background: rgba(22, 163, 74, 0.1);
+  border-color: rgba(22, 163, 74, 0.24);
+  color: #15803d;
+}
+
+/* Not proved. Deliberately NOT grey: "we have never checked" is a state somebody has to act
+ * on, and grey reads as "nothing to see here" — which is exactly the misreading this whole
+ * feature exists to prevent. */
+.push-verdict--untested,
+.push-verdict--no-devices {
+  background: rgba(217, 119, 6, 0.1);
+  border-color: rgba(217, 119, 6, 0.26);
+  color: #b45309;
+}
+
+/* No egress. Its own colour, distinct from a refusal, because it is not a fault to fix — it
+ * is the deployment working as designed, and it needs a different sentence and a different
+ * next step. */
+.push-verdict--unreachable {
+  background: rgba(100, 116, 139, 0.12);
+  border-color: rgba(100, 116, 139, 0.3);
+  color: #475569;
+}
+
+.push-verdict--rejected {
+  background: rgba(220, 38, 38, 0.09);
+  border-color: rgba(220, 38, 38, 0.24);
+  color: #b91c1c;
+}
+
+.push-devices {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.push-device {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--ui-border, #e2e8f0);
+  border-radius: 10px;
+  background: var(--ui-surface-alt, #f8fafc);
+}
+
+.push-device-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.push-device-label { font-size: 14px; font-weight: 580; }
+
+.push-device-mine {
+  margin-inline-start: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(77, 117, 157, 0.16);
+  color: #3f6486;
+  font-size: 11px;
+  font-weight: 620;
+}
+
+/* Somebody else's badge, in a quieter tone: "yours" is a fact about ownership, "this
+ * browser" is a fact about what you are about to press Remove on. Same shape, different
+ * weight, so the eye can tell them apart without reading. */
+.push-device-mine--other { background: rgba(148, 163, 184, 0.2); color: var(--ui-text-muted, #64748b); }
+
+.push-device-meta { font-size: 12px; color: var(--ui-text-muted, #64748b); }
+.push-device-outcome { font-size: 12px; font-weight: 560; }
+.push-device-outcome--delivered { color: #15803d; }
+.push-device-outcome--untested { color: #b45309; }
+.push-device-outcome--unreachable { color: #475569; }
+.push-device-outcome--rejected { color: #b91c1c; }
+
+.push-device-actions { display: flex; gap: 8px; flex: 0 0 auto; }
+
+@media (max-width: 640px) {
+  .push-head { flex-wrap: wrap; }
+  .push-device { flex-wrap: wrap; }
+  .push-device-actions { width: 100%; }
+}
+
+/* Dark theme. Every status colour above is restated — see the note at the top. */
+[data-theme='dark'] .push-panel { background: var(--ui-surface, #111827); }
+[data-theme='dark'] .push-head-ico { background: rgba(77, 117, 157, 0.24); color: #9dc0dd; }
+[data-theme='dark'] .push-btn { background: transparent; color: var(--ui-text, #e5e7eb); }
+[data-theme='dark'] .push-btn-primary { background: #3f6486; color: #f8fafc; }
+[data-theme='dark'] .push-btn-danger { color: #fca5a5; border-color: rgba(252, 165, 165, 0.34); }
+[data-theme='dark'] .push-note--stop { color: #fbbf24; }
+[data-theme='dark'] .push-note--insecure { color: #fca5a5; }
+[data-theme='dark'] .push-verdict--confirmed { background: rgba(34, 197, 94, 0.16); border-color: rgba(34, 197, 94, 0.32); color: #86efac; }
+[data-theme='dark'] .push-verdict--untested,
+[data-theme='dark'] .push-verdict--no-devices { background: rgba(245, 158, 11, 0.16); border-color: rgba(245, 158, 11, 0.32); color: #fbbf24; }
+[data-theme='dark'] .push-verdict--unreachable { background: rgba(148, 163, 184, 0.16); border-color: rgba(148, 163, 184, 0.32); color: #cbd5e1; }
+[data-theme='dark'] .push-verdict--rejected { background: rgba(248, 113, 113, 0.16); border-color: rgba(248, 113, 113, 0.32); color: #fca5a5; }
+[data-theme='dark'] .push-device { background: rgba(148, 163, 184, 0.08); }
+[data-theme='dark'] .push-device-mine { background: rgba(77, 117, 157, 0.28); color: #9dc0dd; }
+[data-theme='dark'] .push-device-mine--other { background: rgba(148, 163, 184, 0.22); color: #cbd5e1; }
+[data-theme='dark'] .push-device-outcome--delivered { color: #86efac; }
+[data-theme='dark'] .push-device-outcome--untested { color: #fbbf24; }
+[data-theme='dark'] .push-device-outcome--unreachable { color: #cbd5e1; }
+[data-theme='dark'] .push-device-outcome--rejected { color: #fca5a5; }

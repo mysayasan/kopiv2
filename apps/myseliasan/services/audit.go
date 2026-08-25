@@ -69,6 +69,14 @@ const (
 	ActionFailoverDrill      = "failover.drill"
 	ActionFailoverActivate   = "failover.activate"
 	ActionFailoverRelease    = "failover.release"
+	// Mobile push (W3-9). Registering a device means this appliance starts making outbound
+	// requests to a browser vendor on somebody's behalf, and removing one silences an alert
+	// path somebody was relying on — both are worth a line. The ENDPOINT is never recorded:
+	// it is a third-party identifier for a personal device, and a trail is read later by
+	// people who never needed to know which phone anybody carries.
+	ActionPushSubscribe   = "push.subscribe"
+	ActionPushUnsubscribe = "push.unsubscribe"
+	ActionPushTest        = "push.test"
 )
 
 // NewAuditService builds the trail over the control plane's database. logf receives

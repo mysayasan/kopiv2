@@ -64,6 +64,58 @@ patut ditala. Apabila anda melihatnya, betulkan peraturan pada nod dan bukan men
 anda — atau nyatakan peraturan itu dengan betul sebagai [peraturan armada](fleet-rules) berserta
 ketiadaan, yang mengubah penderia bising menjadi isyarat yang boleh dipercayai.
 
+## Dikejutkan apabila tiada sesiapa memerhati {#push}
+
+Suapan ini ialah satu skrin, dan saat paling buruk bagi armada berlaku ketika tiada sesiapa
+berada di hadapannya.
+
+**Makluman pada peranti ini**, di bahagian atas halaman ini, mendaftarkan pelayar yang sedang
+anda gunakan — telefon, tablet atau komputer — supaya satah kawalan boleh membangkitkan
+pemberitahuan padanya walaupun halaman ini ditutup. Tambah halaman ini ke skrin utama anda dan
+ia berkelakuan seperti aplikasi yang dipasang.
+
+Tiga perkara berasingan mesti benar, dan panel itu melaporkannya secara berasingan kerana
+ketiga-tiganya gagal secara berasingan:
+
+- **Pelayar ini** mesti boleh menerima pemberitahuan: sambungan HTTPS yang dipercayai, dan
+  kebenaran anda apabila pelayar memintanya. Pelayar yang menyekatnya akan menyatakannya di sini.
+- **Satah kawalan ini** mesti boleh menghubungi perkhidmatan tolak. Lihat di bawah.
+- **Setiap peranti** mesti pernah dihubungi. Setiap baris menunjukkan apa yang berlaku pada
+  percubaan sebenar yang terakhir, dan bila.
+
+Setiap peranti mempunyai paras keterukan tersendiri. Itu disengajakan: telefon di dalam poket
+anda pada pukul tiga pagi dan komputer riba di atas meja anda memerlukan ambang yang berbeza,
+dan satu tetapan untuk seluruh tapak memaksa yang lebih ketat kepada semua orang — atau yang
+lebih longgar kepada orang yang kemudiannya membisukan aplikasi itu, yang sama sahaja dengan
+tiada makluman.
+
+Menghidupkannya ialah keputusan pentadbir dan bukan keputusan setiap orang, kerana ia membuatkan
+mesin ini membuka sambungan kepada sebuah syarikat di luar bangunan. Setelah peranan anda
+diberikan kebenaran itu, peranti itu milik anda: hanya anda, atau seorang pentadbir, boleh
+membuangnya.
+
+### Ia diukur, bukan diandaikan {#push-airgap}
+
+Mendaftarkan peranti menghantar pemberitahuan sebenar dengan serta-merta, dan panel itu
+melaporkan apa yang benar-benar berlaku, bukan bahawa satu tetapan telah dihidupkan. **"Belum
+pernah diuji" ditunjukkan sebagai keadaannya sendiri, dan ia bukan sama dengan berfungsi.**
+
+Jika tiada apa-apa dapat dihubungi, panel itu menyatakannya dengan jelas dan menamakan hos yang
+mesin ini perlu hubungi. **Di tapak tanpa akses internet, itulah jawapan yang dijangka.** Tolak
+web dihantar oleh perkhidmatan tolak yang digunakan pelayar anda — milik Google, Mozilla atau
+Apple — dan pada rangkaian terpencil tiada satu pun daripadanya boleh dihubungi. Ia bukan
+kerosakan, tiada tetapan yang akan mengubahnya, dan suapan, saluran e-mel serta halaman ini
+semuanya terus berfungsi seperti biasa.
+
+Apa yang syarikat itu ketahui ialah bahawa satu mesej sampai ke sesebuah peranti, dan bila. Mereka
+tidak dapat membacanya: kandungannya disulitkan hujung ke hujung antara satah kawalan ini dengan
+pelayar anda.
+
+Pemberitahuan ialah satu colekan supaya anda datang melihat, bukan rekod. Tolak boleh dilewatkan,
+digugurkan atau dikumpulkan oleh perkhidmatan di luar kawalan anda, dan peranti yang telah dipasang
+semula akan dibuang secara senyap pada kali berikutnya mesej kepadanya gagal. Suapan pada halaman
+ini ialah apa yang benar-benar berlaku.
+
 ## Pengekalan {#retention}
 
 Suapan tidak membesar selama-lamanya melainkan anda membiarkannya.

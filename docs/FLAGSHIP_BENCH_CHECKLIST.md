@@ -1713,3 +1713,71 @@ reading meaningless.
   motion model.
 * The 20-minute cap is enforced in code but NOT exercised by the bench: it is measured against
   the footage actually found, and the bench never records twenty minutes.
+
+---
+
+## W3-9 — mobile push (`bench_w39_push.py`, `uicheck_push.js`)
+
+38/38 against a real push service and a real node outage; 24/24 en and 27/27 ar on the screen.
+
+### The problem this bench had to solve first
+
+There is no push service on an intranet, and the whole feature is about talking to one. So the
+bench **stands one up**: a TLS server on the host, and the control-plane container restarted
+with `SSL_CERT_FILE` pointing at its certificate — the way Go trusts a CA on Linux. The
+product has no trust override and must not grow one, so the trust goes in from outside.
+`start_container` gained an `env` argument for exactly this.
+
+### What is measured
+
+* the request read **off the wire**: `Content-Encoding: aes128gcm`, a TTL, and the RFC 8188
+  header byte by byte — salt(16), record size 4096, key length 65, an uncompressed EC point;
+* the VAPID assertion: signed with the key the browser was told to subscribe with, not expired,
+  and addressed to the endpoint's **ORIGIN** rather than its full URL (getting that wrong fails
+  at exactly one vendor rather than all of them);
+* that the notification text appears **nowhere** in the body;
+* four answers, four outcomes: 201 → delivered, 400 → rejected and the device KEPT, 410 → the
+  row DELETED, an address nothing answers on → **unreachable, not refused**;
+* the install verdict, with counts, and the vendor hosts a firewall would have to allow;
+* the audit trail names the vendor and never the endpoint;
+* and the one that matters: **a node actually going dark reaches a device**, with the per-device
+  severity floor checked against the control plane's own notification log.
+
+### What it found
+
+1. **An install with no route out was told the push service had REFUSED it.** The transport
+   classifier folded `context.DeadlineExceeded` in with `context.Canceled` as "not the network's
+   fault" — swallowing the single most important real case, a connect that times out because
+   there is nowhere to connect to. The unit test that drove the design used an already-cancelled
+   context, so it never exercised a timeout and stayed green. Found by sending a real message to
+   a black hole.
+2. **The fleet raised an alarm when a site went dark and never sounded the all-clear.** Shipped
+   code, not this work. `FleetEventNodeRecovered` fires on the sweep's lost → online edge; a node
+   comes back by DIALLING IN, which marks it online between sweeps, so the sweep never saw the
+   edge and the "Node back online" notification was unreachable in practice. The registry's own
+   test drives the sweep directly and had been green since the feature shipped. Found only
+   because this bench took a node down for real, brought it back, and counted.
+
+### And two the bench found in ITSELF
+
+* **"Something arrived" proves nothing on a fleet.** The first version stopped node-a and waited
+  for a new request to the phone. One arrived in sixteen seconds — from the OTHER node, reporting
+  low disk on boot — so the bench declared the wiring proved and restarted node-a before the
+  node-offline event had fired at all. **It passed for the wrong reason.** It now settles the
+  fleet, waits for the specific notification by title, settles again, and requires the counts to
+  agree exactly with the control plane's own log.
+* **Go canonicalises the headers it sends**, so `TTL` goes out as `Ttl` and a case-sensitive dict
+  lookup reported a missing header on a request that carried it. A check that fails on correct
+  output wastes a run exactly like one that passes on broken output. (Also: a regex written as
+  `/127\\.0\\.0\\.1/` in Node SOURCE matches a literal backslash — double-escaping belongs only
+  inside a string that will be `eval`'d, and this is the same trap that cost W3-6b a check.)
+
+### Not claimed
+
+* **The payload is never decrypted.** A second implementation of RFC 8291 written in the same
+  sitting would prove only that two readings of the spec agree — which is also true of two
+  matching misreadings. The encryption is verified against the RFC's published §5 vector, byte
+  for byte; this bench verifies the wiring.
+* **No real browser vendor is contacted**, so nothing here says how FCM, Mozilla or Apple behave.
+* **Headless Chrome cannot complete a real subscription**, so the screen check asserts that
+  pressing the button produces a visible, translated answer rather than that enrolment succeeds.

@@ -42,7 +42,22 @@ module.exports = {
   plugins: [
     htmlPlugin,
     new CopyPlugin({
-      patterns: [{ from: 'src/assets', to: 'assets' }]
+      patterns: [
+        { from: 'src/assets', to: 'assets' },
+        // The PWA pair goes to the site ROOT, with its filename untouched.
+        //
+        // Both are load-bearing. A service worker only controls the paths under its own
+        // URL, so a hashed /sw.8f3a21.js under /assets would control /assets and nothing
+        // else — the app would register a worker that could never show a notification for
+        // the page the operator is on. The manifest is referenced by a fixed <link> in
+        // index.html for the same reason.
+        //
+        // The cost of a stable name is that these two are the only files here without
+        // cache-busting; browsers revalidate a service worker on every navigation anyway,
+        // which is exactly the behaviour that makes the fixed name safe.
+        { from: 'src/pwa/sw.js', to: 'sw.js' },
+        { from: 'src/pwa/manifest.json', to: 'manifest.json' }
+      ]
     })
   ],
   module: {

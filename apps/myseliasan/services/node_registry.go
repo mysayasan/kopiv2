@@ -551,6 +551,9 @@ func (s *nodeRegistry) Enroll(ctx context.Context, nodeID, token string, csrPEM 
 		return nil, nil, err
 	}
 	node.CertExpiresAt = time.Now().Add(s.certTTL()).Unix()
+	// Same edge as AcceptControlConn: enrolling is a between-sweeps proof of life, so a node
+	// that comes back this way would otherwise be marked online with nobody told.
+	wasLost := node.Status == "lost"
 	node.Status = "online"
 	node.LastSeenAt = time.Now().Unix()
 	node.UpdatedAt = time.Now().Unix()
@@ -559,6 +562,9 @@ func (s *nodeRegistry) Enroll(ctx context.Context, nodeID, token string, csrPEM 
 	// Left unrecorded, a node that recovers via renewal shows its outage running until
 	// the next heartbeat.
 	s.observeState(ctx, node.NodeId, node.Status, entities.NodeStateReasonEnroll, node.LastSeenAt)
+	if wasLost {
+		s.emitFleetEvent(FleetEvent{Kind: FleetEventNodeRecovered, Node: node})
+	}
 	return certPEM, caRootPEM, nil
 }
 
@@ -1095,6 +1101,19 @@ func (s *nodeRegistry) AcceptControlConn(ctx context.Context, nodeID string) (*e
 		return nil, ErrNodeUnknown
 	}
 	now := time.Now().Unix()
+	// THE ALL-CLEAR, and it has to be raised HERE.
+	//
+	// The liveness sweep emits node-recovered when it sees a node move from "lost" back to
+	// "online". It never saw that transition on a real fleet: dialling in is how a node
+	// normally comes back, this line marks it online between sweeps, and by the time the
+	// sweep looks the previous status is already "online" — so the sweep's branch could not
+	// fire and the recovery notification was, in practice, unreachable code. The fleet
+	// raised an alarm when a site went dark and then never said it was over.
+	//
+	// Found by the W3-9 push bench, which watched a node actually go down and come back and
+	// counted what reached a device. The registry's own unit test drives the sweep directly,
+	// so it was green throughout.
+	wasLost := node.Status == "lost"
 	node.Status = "online"
 	node.LastSeenAt = now
 	node.UpdatedAt = now
@@ -1103,6 +1122,9 @@ func (s *nodeRegistry) AcceptControlConn(ctx context.Context, nodeID string) (*e
 	// any point between sweeps. Recording it here is what makes a recovery timestamp
 	// the moment the node came back rather than the moment we next looked.
 	s.observeState(ctx, node.NodeId, node.Status, entities.NodeStateReasonControlChannel, now)
+	if wasLost {
+		s.emitFleetEvent(FleetEvent{Kind: FleetEventNodeRecovered, Node: node})
+	}
 	return node, nil
 }
 

@@ -11,6 +11,7 @@ import './styles/node-settings.css';
 import './styles/fleet-rules.css';
 import './styles/fleet-policy.css';
 import './styles/failover.css';
+import './styles/push.css';
 import { SideNav, WorkspaceHeader } from './components/layout';
 import { ToastStack, LangProvider, normalizeLang, useT, AppFooter } from '@shared';
 import { ManualProvider, ManualLibrary } from '@shared/Manual';
@@ -298,7 +299,7 @@ function AppInner({ lang, onLangChange }) {
         {activeTab === 'fleetrules' && canFleetRules ? <FleetRulesPage nodes={nodes} session={session} onToast={pushToast} prefill={rulePrefill} onPrefillConsumed={() => setRulePrefill(null)} /> : null}
         {activeTab === 'fleetpolicy' && canFleetPolicy ? <FleetPolicyPage nodes={nodes} session={session} onToast={pushToast} /> : null}
         {activeTab === 'failover' && canFailover ? <FailoverPage nodes={nodes} session={session} onToast={pushToast} /> : null}
-        {activeTab === 'notifications' ? <NotificationsPage nodes={nodes} refreshSignal={notifVersion} onChanged={loadNotifUnread} /> : null}
+        {activeTab === 'notifications' ? <NotificationsPage nodes={nodes} refreshSignal={notifVersion} onChanged={loadNotifUnread} session={session} onToast={pushToast} /> : null}
         {activeTab === 'nodes' && canNodes ? (
           <NodesTab
             onToast={pushToast}

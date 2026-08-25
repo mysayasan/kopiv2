@@ -747,6 +747,9 @@ func (m *module) Entities() []any {
 		// N+1 failover: which spare appliance covers which recorder, and whether that has
 		// ever been proved. New table; the auto-migrator creates it.
 		appentities.FailoverPlan{},
+		// Mobile push: one row per browser that has agreed to be woken by this control
+		// plane. New table; the auto-migrator creates it.
+		appentities.PushSubscription{},
 		// Fleet map: sites + uploaded floor plans (indoor view); node/camera placements.
 		appentities.Site{},
 		appentities.FloorPlan{},
@@ -1757,6 +1760,24 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	leaderTicker(bgCtx, deps.Leader, 30*time.Second, func(ctx context.Context) {
 		failoverService.Sweep(ctx)
 	})
+
+	// Mobile push (W3-9). The second half of what F-20 named: W2-7 gave this control plane an
+	// outbound leg, but email does not WAKE anybody, and the fleet's worst moments happen when
+	// nobody is at a screen.
+	//
+	// Registered as an ordinary notification channel with NO filter, because the floor is a
+	// property of the DEVICE, not of the install: the phone in somebody's pocket at 3am and
+	// the laptop on their desk want different thresholds, and one install-wide filter here
+	// would force the stricter one on everybody. The service applies each device's own floor.
+	//
+	// This is the one channel on this appliance that talks to a THIRD PARTY — the browser
+	// vendor's push service — which on the intranet deployments this product is usually sold
+	// into cannot be reached at all. The service therefore reports its capability from real
+	// delivery attempts rather than from configuration; see services/push.go.
+	pushService := services.NewPushService(deps.Db, secretCipher, auditService,
+		func(f string, a ...any) { deps.Logger.Warnf("myseliasan.push", f, a...) })
+	notificationService.Register(pushService.Channel())
+	apis.NewPushApi(api, *deps.Auth, controlSession, pushService)
 
 	// One pass shortly after boot, so the screen has an answer before the first tick. It is
 	// deliberately not immediate: nodes dial the control channel after this function

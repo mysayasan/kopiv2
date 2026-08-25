@@ -181,7 +181,15 @@ def node_binary(name, app):
     return private
 
 
-def start_container(name, app, tls_port, host_port):
+def start_container(name, app, tls_port, host_port, env=None):
+    """Start one appliance.
+
+    `env` adds environment to this container only. It exists because the push bench has to
+    point the control plane at a push service it can actually reach, and make it TRUST that
+    service — which on Linux is SSL_CERT_FILE. The alternative would be a trust override in
+    the product, and a shipped appliance must not carry a switch that makes it accept a
+    certificate it should not.
+    """
     data = os.path.join(ROOT, name)
     home, mode = node_home(name, app)
     binary = node_binary(name, app)
@@ -191,9 +199,11 @@ def start_container(name, app, tls_port, host_port):
             "-v", home + ":/home/app:" + mode,
             "-v", data + ":/data",
             "-e", "%s_HOME=/home/app" % app.upper(),
-            "-e", "%s_DATA=/data" % app.upper(),
-            "-w", "/data", NODE_IMAGE if app == "mymatasan" else "debian:bookworm-slim",
-            "/bin/app/" + binary]
+            "-e", "%s_DATA=/data" % app.upper()]
+    for key, value in (env or {}).items():
+        args += ["-e", "%s=%s" % (key, value)]
+    args += ["-w", "/data", NODE_IMAGE if app == "mymatasan" else "debian:bookworm-slim",
+             "/bin/app/" + binary]
     sh(*args)
 
 

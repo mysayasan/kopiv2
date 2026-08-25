@@ -61,6 +61,9 @@ node   tools/fleetbench/uicheck_failover.js .artifacts/fleetbench ar
 KOPIV2_NODE_IMAGE=debian-ffmpeg-face:bench python tools/fleetbench/bench_w36b_faceredact.py
 node   tools/fleetbench/uicheck_faceredact.js .artifacts/fleetbench en
 node   tools/fleetbench/uicheck_faceredact.js .artifacts/fleetbench ar
+python tools/fleetbench/bench_w39_push.py         # W3-9: mobile push, against a REAL push service
+node   tools/fleetbench/uicheck_push.js .artifacts/fleetbench en
+node   tools/fleetbench/uicheck_push.js .artifacts/fleetbench ar
 ```
 
 `bench_w37_failover.py` (W3-7, N+1 failover) needs the **ffmpeg node image on BOTH nodes** —
@@ -271,3 +274,30 @@ then be a bug that can write into your working tree.
   container first.
 - The node's rate limiter shares one bucket per path for tunneled calls (they carry no JWT), so
   an exhaustive sweep trips it even though real traffic never would. The harness disables it.
+
+`bench_w39_push.py` (W3-9, mobile push) needs no node image and no footage, but it does need
+`openssl` on PATH and Docker Desktop's `host.docker.internal`. It stands up a **real push
+service** on the host over TLS, then **restarts the control-plane container with
+`SSL_CERT_FILE` pointing at that service's certificate** — the way Go trusts a CA on Linux.
+That is why `start_container` takes an `env` argument: a shipped appliance must not carry a
+switch that makes it accept a certificate it should not, so the trust goes in from outside.
+
+It reads the appliance's request **off the wire**: the aes128gcm header layout byte by byte,
+the VAPID assertion's audience (the endpoint's ORIGIN, never the full URL), and that the
+notification text does not appear anywhere in the body. It does **not** decrypt the payload —
+a second implementation of RFC 8291 written in the same sitting would only prove that two
+readings of the spec agree with each other. The encryption is checked against the RFC's own
+published test vector, byte for byte, in `infra/webpush/webpush_test.go`.
+
+It runs for about seven minutes because it `docker stop`s node-a, **waits out the real liveness
+grace window**, and starts it again — and it decides what should have arrived by reading the
+control plane's OWN notification log rather than by assuming. That correlation is load-bearing:
+the first version waited for "a new request to the phone", got one in sixteen seconds from the
+other node reporting low disk on boot, and declared the fleet wiring proved before the event it
+was testing had even fired.
+
+`uicheck_push.js` deletes every device and seeds two of its own pointing at `127.0.0.1:9`
+(connection refused instantly, so no twenty-second timeout), which puts the panel in the
+AIR-GAPPED state — the screen that matters most on this feature. It reads the toast **2.2
+seconds** after a click: a toast lives 3.5 seconds, and a four-second wait finds an empty stack
+and reports a silent screen on one that spoke.
