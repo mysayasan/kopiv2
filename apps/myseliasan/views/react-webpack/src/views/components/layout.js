@@ -348,6 +348,12 @@ export function SideNav({ activeTab, busy, onTab, onLogout, session, nodes, mana
         ...(sessionCanGet(session, '/api/fleet-policies')
           ? [navItem('fleetpolicy', t('nav.fleetPolicy'), 'shield', 'blue')]
           : []),
+        // Failover belongs in the same group and reads as its sharpest member: policy says
+        // what every appliance should look like, failover says what happens when one of
+        // them stops being anything at all.
+        ...(sessionCanGet(session, '/api/failover-plans')
+          ? [navItem('failover', t('nav.failover'), 'shield-check', 'green')]
+          : []),
       ],
     },
     {

@@ -25,6 +25,7 @@ type repos struct {
 	WallLayout        dbsql.IGenericRepo[appentities.WallLayout]
 	PtzTour           dbsql.IGenericRepo[appentities.PtzTour]
 	PrivacyZone       dbsql.IGenericRepo[appentities.PrivacyZone]
+	StandbyCamera     dbsql.IGenericRepo[appentities.StandbyCamera]
 	RecordingConfig   dbsql.IGenericRepo[appentities.RecordingConfig]
 	RecordingSegment  dbsql.IGenericRepo[appentities.RecordingSegment]
 	TrainingDataset   dbsql.IGenericRepo[appentities.TrainingDataset]
@@ -56,6 +57,7 @@ func newRepos(db dbsql.IDbCrud) repos {
 		WallLayout:        dbsql.NewGenericRepo[appentities.WallLayout](db),
 		PtzTour:           dbsql.NewGenericRepo[appentities.PtzTour](db),
 		PrivacyZone:       dbsql.NewGenericRepo[appentities.PrivacyZone](db),
+		StandbyCamera:     dbsql.NewGenericRepo[appentities.StandbyCamera](db),
 		RecordingConfig:   dbsql.NewGenericRepo[appentities.RecordingConfig](db),
 		RecordingSegment:  dbsql.NewGenericRepo[appentities.RecordingSegment](db),
 		TrainingDataset:   dbsql.NewGenericRepo[appentities.TrainingDataset](db),

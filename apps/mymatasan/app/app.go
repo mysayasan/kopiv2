@@ -168,6 +168,10 @@ func (m *module) Entities() []any {
 		// Privacy zones (W3-6). New table; the auto-migrator creates it. It stores the
 		// region and the CAMERA's mask token — a handle we do not own.
 		appentities.PrivacyZone{},
+		// The camera sets this appliance holds on behalf of others (W3-7). New table; the
+		// auto-migrator creates it. It is NOT a camera table — see entities/standby_camera.go
+		// for why a staged camera deliberately does not exist as a camera until a takeover.
+		appentities.StandbyCamera{},
 		sharedentities.Notification{},
 		sharedentities.NotificationRollup{},
 		// The append-only audit trail, shared with myidsan and myseliasan. New table on
@@ -747,6 +751,17 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		relays:     relayService,
 
 		eventSettings: services.NewOnvifEventSettingsService(repo.RuntimeSetting),
+
+		// N+1 failover (W3-7). It is handed the RECORDER as well as the recording service
+		// on purpose: writing a recording config row starts nothing, and a takeover that
+		// only wrote rows would report success and record nothing until the next restart.
+		// The recorder is also the read-back — it is the only thing that knows whether
+		// ffmpeg is actually running for a camera.
+		standby: services.NewStandbyService(
+			repo.StandbyCamera, cameraService, recordingService,
+			recorderManager, recorderConfigBuilder, pairingService, atrestCipher,
+			func(f string, a ...any) { deps.Logger.Warnf("mymatasan.standby", f, a...) },
+		),
 
 		continuitySettings: services.NewContinuitySettingsService(repo.RuntimeSetting),
 		tamperSettings:     services.NewTamperSettingsService(repo.RuntimeSetting),
@@ -1479,6 +1494,50 @@ func (m *module) APIDocs() apidocs.SpecConfig {
 				Summary:     "Re-push the zones to the camera and re-check them",
 				Description: "For a camera that was offline, rebooted or factory-reset since the zones were drawn and has lost its masks.",
 				Tags:        []string{"privacy"},
+			},
+			// N+1 failover (W3-7). Normally driven by the control plane over the fleet
+			// tunnel rather than called by hand, but documented because an appliance that
+			// can hand its cameras to another appliance is something an administrator has
+			// to be able to find out about.
+			"GET /api/standby": {
+				Summary:     "The camera sets this appliance is standing by for",
+				Description: "Per source appliance: what is staged, when it was staged, the last drill result per camera, and whether this appliance has taken the set over. Readiness is 'untested' until a drill has actually been run — a spare nobody has tested is not evidence of anything.",
+				Tags:        []string{"standby"},
+			},
+			"GET /api/standby/handoff-key": {
+				Summary:     "A one-exchange key another appliance can seal its camera set to",
+				Description: "An ephemeral X25519 public key, valid for fifteen minutes and held only in memory. It lets somebody seal a bundle TO this appliance and never lets them open one.",
+				Tags:        []string{"standby"},
+			},
+			"POST /api/standby/handoff": {
+				Summary:     "Seal this appliance's cameras for a named spare",
+				Description: "Returns the camera set — credentials included — encrypted to the recipient's key and bound to the recipient's node id, so the control plane relays an envelope it cannot open and a captured bundle cannot be staged onto a different appliance.",
+				Tags:        []string{"standby"},
+			},
+			"POST /api/standby/stage": {
+				Summary:     "Accept a sealed camera set",
+				Description: "Opens a bundle sealed to this appliance and stores it. Staged cameras are NOT cameras: they do not appear in the camera list, are not probed and are not recorded until a takeover.",
+				Tags:        []string{"standby"},
+			},
+			"POST /api/standby/{nodeId}/drill": {
+				Summary:     "Test whether this appliance can actually open a staged set",
+				Description: "Resolves and opens each staged camera with the credentials it was given — the same check the add-a-camera flow runs. This is the only evidence that failover would work; without it readiness stays 'untested'.",
+				Tags:        []string{"standby"},
+			},
+			"POST /api/standby/{nodeId}/activate": {
+				Summary:     "Take a staged set over and start recording it",
+				Description: "Creates the cameras here, starts the recorder and READS BACK whether ffmpeg is running per camera. It does not recover the footage that was on the failed appliance and does not stop that appliance if it is still running — failover here is additive, because the one unforgivable outcome is nothing recording.",
+				Tags:        []string{"standby"},
+			},
+			"POST /api/standby/{nodeId}/release": {
+				Summary:     "Hand a set back to the appliance it belongs to",
+				Description: "Stops recording. The cameras created here and every segment recorded during the outage are KEPT — deleting the camera would take the footage of the outage with it.",
+				Tags:        []string{"standby"},
+			},
+			"POST /api/standby/{nodeId}/forget": {
+				Summary:     "Stop standing by for an appliance",
+				Description: "Drops the staged copy. Never deletes a camera or any footage; a set that was activated keeps its cameras and must be failed back first.",
+				Tags:        []string{"standby"},
 			},
 			// Relay outputs and the camera event listener (W3-5b).
 			"GET /api/cameras/{id}/relays": {

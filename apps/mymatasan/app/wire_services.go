@@ -120,6 +120,10 @@ type wiring struct {
 	// eventSettings backs the camera event listener (W3-5b): what the CAMERA noticed,
 	// including whatever is wired into its terminal block.
 	eventSettings services.IOnvifEventSettingsService
+	// standby is the N+1 failover surface (W3-7): the camera sets this appliance holds on
+	// behalf of others, and the one path by which it takes them over. It is the only thing
+	// here that can create cameras nobody on this appliance ever added.
+	standby services.IStandbyService
 
 	// tamperSettings backs the camera tamper monitor — the third health question, after
 	// "does it answer" and "is it recording": is it still showing its scene?
@@ -194,6 +198,7 @@ func (w *wiring) validate() error {
 	check("relays", w.relays != nil)
 	check("privacy", w.privacy != nil)
 	check("eventSettings", w.eventSettings != nil)
+	check("standby", w.standby != nil)
 	check("tamperSettings", w.tamperSettings != nil)
 	check("accessPerms", w.accessPerms != nil)
 	check("ffmpegInstaller", w.ffmpegInstaller != nil)

@@ -58,6 +58,17 @@ const (
 	// enforcement says a node changed, this says who decided it should.
 	ActionPolicySave   = "policy.save"
 	ActionPolicyDelete = "policy.delete"
+	// N+1 failover (W3-7). WHICH APPLIANCE IS RESPONSIBLE for a building's cameras is the
+	// question a gap in the footage turns into, months later, in front of somebody who
+	// was not there. Every step is recorded, including the automatic takeover — which is
+	// the one with no operator behind it and therefore the one that would otherwise leave
+	// no trace anywhere but a log line.
+	ActionFailoverPlanSave   = "failover.plan_save"
+	ActionFailoverPlanDelete = "failover.plan_delete"
+	ActionFailoverStage      = "failover.stage"
+	ActionFailoverDrill      = "failover.drill"
+	ActionFailoverActivate   = "failover.activate"
+	ActionFailoverRelease    = "failover.release"
 )
 
 // NewAuditService builds the trail over the control plane's database. logf receives
