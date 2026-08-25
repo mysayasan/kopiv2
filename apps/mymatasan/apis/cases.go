@@ -84,6 +84,11 @@ func NewCaseApi(
 	g.HandleFunc("/{id}/close", h.close).Methods("POST")
 	g.HandleFunc("/{id}/reopen", h.reopen).Methods("POST")
 	g.HandleFunc("/{id}/items", h.addItem).Methods("POST")
+	// Putting a feed entry into a case. Its own endpoint rather than a Kind on addItem,
+	// because the SERVER decides what the entry actually refers to — a feed row pointing at
+	// an alert becomes an alert item, with the alert's own camera, time and snapshot. A
+	// client that made that decision would make it differently on every screen.
+	g.HandleFunc("/{id}/items/from-notification", h.addNotification).Methods("POST")
 	g.HandleFunc("/{id}/items/{itemId}", h.updateItem).Methods("POST")
 	g.HandleFunc("/{id}/items/{itemId}/remove", h.removeItem).Methods("POST")
 	g.HandleFunc("/{id}/export", h.exportCase).Methods("POST")
@@ -340,6 +345,34 @@ func (a *caseApi) addItem(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return
 	}
+	a.audit.Success(r, services.ActionCaseItemAdd, services.TargetCase, strconv.FormatInt(id, 10),
+		describeItem("added", item), itemMeta(item))
+	controllers.SendResult(w, item, "succeed")
+}
+
+func (a *caseApi) addNotification(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+	var body struct {
+		NotificationId int64  `json:"notificationId"`
+		Note           string `json:"note"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		controllers.SendError(w, controllers.ErrParseFailed, "invalid request body")
+		return
+	}
+	if body.NotificationId <= 0 {
+		controllers.SendError(w, controllers.ErrBadRequest, "which notification?")
+		return
+	}
+	id := caseIdVar(r, "id")
+	item, err := a.serv.AddNotification(r.Context(), id, body.NotificationId, body.Note, a.actor(r))
+	if err != nil {
+		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
+		return
+	}
+	// Recorded as an ordinary item addition, because that is what it is. The metadata
+	// carries the resolved kind, so the trail says whether the case got an alert or a plain
+	// feed entry without anybody having to re-derive it.
 	a.audit.Success(r, services.ActionCaseItemAdd, services.TargetCase, strconv.FormatInt(id, 10),
 		describeItem("added", item), itemMeta(item))
 	controllers.SendResult(w, item, "succeed")

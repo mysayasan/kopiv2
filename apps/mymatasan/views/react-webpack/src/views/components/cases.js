@@ -72,7 +72,7 @@ function CaseThumb({ segmentId, seek, authHeader }) {
 // It takes a LIST, not one item, because the timeline's unit is a moment across several
 // cameras: bookmarking 14:07 with four tiles up means four pieces of evidence, and making
 // the operator do that four times would be the screen fighting its own design.
-export function AddToCaseDialog({ items = [], authHeader, onClose, onAdded }) {
+export function AddToCaseDialog({ items = [], notificationId = 0, summary = '', authHeader, onClose, onAdded }) {
   const t = useT();
   const [cases, setCases] = useState([]);
   const [caseId, setCaseId] = useState(0);
@@ -115,14 +115,25 @@ export function AddToCaseDialog({ items = [], authHeader, onClose, onAdded }) {
         target = Number(created?.id) || 0;
       }
       if (!target) throw new Error(t('cases.addFailed'));
-      // Sequential, and the first failure stops the run with its own message. Adding
-      // four clips and reporting a single "failed" after silently landing two is worse
-      // than stopping: the operator has to know what is in the case.
-      for (const item of items) {
-        await callApi(`/api/cases/${target}/items`, {
+      if (notificationId) {
+        // A FEED ENTRY IS SENT BY ID, not as a built evidence body. What the entry
+        // actually refers to — an alert with its own camera, time and snapshot, or
+        // nothing at all — is the server's decision, because a client that made it would
+        // make it differently on every screen that has this button.
+        await callApi(`/api/cases/${target}/items/from-notification`, {
           method: 'POST', authHeader,
-          body: { ...item, note },
+          body: { notificationId: Number(notificationId), note },
         });
+      } else {
+        // Sequential, and the first failure stops the run with its own message. Adding
+        // four clips and reporting a single "failed" after silently landing two is worse
+        // than stopping: the operator has to know what is in the case.
+        for (const item of items) {
+          await callApi(`/api/cases/${target}/items`, {
+            method: 'POST', authHeader,
+            body: { ...item, note },
+          });
+        }
       }
       onAdded?.(target);
       onClose?.();
@@ -131,7 +142,7 @@ export function AddToCaseDialog({ items = [], authHeader, onClose, onAdded }) {
     } finally {
       setBusy(false);
     }
-  }, [caseId, newTitle, note, items, authHeader, onAdded, onClose, t]);
+  }, [caseId, newTitle, note, items, notificationId, authHeader, onAdded, onClose, t]);
 
   return (
     <div className="video-overlay" onClick={onClose}>
@@ -149,6 +160,10 @@ export function AddToCaseDialog({ items = [], authHeader, onClose, onAdded }) {
               {formatTimestamp(item.startedAt)} – {formatTimestamp(item.endedAt)}
             </li>
           ))}
+          {/* A feed entry has no span to show — the server works out what it refers to and
+              how much footage to keep. Naming it is still the point: a dialog that asks an
+              operator to confirm something it will not name is asking them to guess. */}
+          {notificationId && summary ? <li data-case-evidence="notification">{summary}</li> : null}
         </ul>
         {error ? <FormAlert message={error} /> : null}
         <label className="case-field">
@@ -176,9 +191,15 @@ export function AddToCaseDialog({ items = [], authHeader, onClose, onAdded }) {
             and the operator is deciding. */}
         <p className="case-hint"><Ico n="info" sz={14} /> <span>{t('cases.holdHint')}</span></p>
         <div className="case-dialog-actions">
-          <button type="button" className="quiet" onClick={onClose} disabled={busy}>{t('common.cancel')}</button>
-          <button type="button" onClick={submit}
-            disabled={busy || items.length === 0 || (!Number(caseId) && !newTitle.trim())}>
+          <button type="button" className="quiet" data-case-act="cancel" onClick={onClose} disabled={busy}>{t('common.cancel')}</button>
+          {/* THE GUARD HAS TO KNOW ABOUT BOTH KINDS OF THING BEING ADDED. A feed entry is
+              sent by id and carries no `items`, so a guard that only counted items left this
+              button permanently disabled on the Notifications screen — the dialog opened, the
+              button looked ordinary, and pressing it did nothing at all. Caught by the screen
+              check reading the case back off the SERVER; a check that trusted the dialog
+              closing would have called it green. */}
+          <button type="button" data-case-act="add" onClick={submit}
+            disabled={busy || (items.length === 0 && !notificationId) || (!Number(caseId) && !newTitle.trim())}>
             {busy ? t('common.saving') : t('cases.add')}
           </button>
         </div>

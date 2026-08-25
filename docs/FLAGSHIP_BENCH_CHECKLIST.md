@@ -1875,3 +1875,50 @@ verdict that can only go red is half a feature.
 * **The capacity figure is an estimate**, and the appliance says so. Nothing here measures what
   a spare can really encode under load; it reports what the spare claims, which is exactly what
   the screen says too.
+
+---
+
+## W3-3c — a feed entry into a case (`bench_w33c_case_feed.py`, `uicheck_case_feed.js`)
+
+17/17 on a real appliance, plus 19/19 en and 21/21 ar on the screen. W3-3a shipped with this as
+a named follow-up and with its case dialog claiming to be *"shared by every screen that can
+produce evidence — the timeline, the object grid, the alert log"*. Only the timeline used it.
+
+### What is measured
+
+A feed entry that names a camera goes into a case with footage around it, and the **hold ledger
+counts it** — checked from two places that answer independently (the case detail's `hold`, and
+the case list's `footageItems`), because the hold is the whole reason a case protects anything.
+A feed entry with no camera goes in too and holds nothing. The provenance survives. And the
+refusals hold: the same entry twice, an entry that does not exist, and a closed case.
+
+The screen check then drives it end to end — button on the row, dialog, a new case named, a
+note typed — and **reads the case back off the server**, not out of the DOM the click just
+re-rendered.
+
+### What it found
+
+**The Add button was permanently disabled on this path.** The dialog's guard counted only the
+timeline's `items`, and a feed entry is sent by id and carries none. The dialog opened, the
+button looked ordinary, and pressing it did nothing at all. A check that dispatched `.click()`
+and trusted the dialog closing would have called it green — this one dispatched a real mouse
+event, read `disabled` back, and then failed on the server read anyway. Fixed, and the dialog
+now also **names the entry it is about to file**: an empty list above the note was a dialog
+asking an operator to confirm something it would not name.
+
+### And one the bench found in ITSELF
+
+It checked for the new-case title field **before** choosing "a new case" — and that field only
+exists when no existing case is selected. On the second run, with a case left by the first, it
+reported "no text input" for a dialog that was working perfectly. Third time this programme has
+produced a check that fails on correct output.
+
+### Not claimed
+
+* **The alert resolution is not proved live.** A feed entry pointing at an AI alert becomes an
+  alert item with the alert's own camera, time and snapshot; that needs a real detection and the
+  harness films a test pattern. Unit-tested and mutation-checked in `case_notification_test.go`,
+  including the case where the alert has been purged and the feed row has not.
+* **The held footage is a span with nothing behind it here.** The bench's cameras never
+  recorded, so the hold correctly reports `missing` — which is the hold being truthful, not a
+  failure, and the bench prints it rather than hiding it.

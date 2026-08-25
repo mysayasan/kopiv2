@@ -68,6 +68,19 @@ const (
 	CaseItemAlert = "alert"
 	// CaseItemNote is commentary with no footage behind it.
 	CaseItemNote = "note"
+	// CaseItemNotification is an entry from the unified feed — a camera going offline, a
+	// disk filling, a rule firing on a node.
+	//
+	// IT IS THE ONE KIND WHOSE CAMERA IS OPTIONAL, and that is the point of having it. Most
+	// evidence is a span on a camera; a notification may be "the recorder rebooted at
+	// 03:12", which has no footage and is still the fact that explains the gap in the
+	// footage either side of it. An item like that holds nothing and exports as text, and
+	// HoldsFootage already says so without a special case.
+	//
+	// A notification that POINTS AT an alert never becomes one of these: it is resolved to
+	// a CaseItemAlert instead, so the same evidence can never sit in a case twice wearing
+	// two kinds. See services/case_notification.go.
+	CaseItemNotification = "notification"
 )
 
 // HoldsFootage reports whether this item points at video that must survive retention
