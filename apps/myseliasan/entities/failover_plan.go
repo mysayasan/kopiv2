@@ -68,6 +68,20 @@ type FailoverPlan struct {
 	// What the last drill proved. Readiness is a StandbyReadiness* value mirrored from the
 	// spare's own answer; it is NOT computed here, because the spare is the only thing that
 	// actually tried to open the cameras.
+	// What the spare said about its own CAPACITY the last time it was asked (W3-7's stated
+	// gap, closed): a drill proves the spare can REACH the cameras, which is a different
+	// question from whether it could encode them all at once. Stored rather than read on
+	// every page load, because asking is a tunneled round trip and a fleet screen must not
+	// be as slow as its slowest appliance.
+	//
+	// StandbyMax is the spare's own estimate of how many cameras it can carry; StandbyOwn is
+	// how many it already has of its own. Both come from the appliance, never from a guess
+	// made here.
+	StandbyMax        int    `json:"standbyMax" form:"standbyMax" query:"standbyMax"`
+	StandbyOwn        int    `json:"standbyOwn" form:"standbyOwn" query:"standbyOwn"`
+	CapacityState     string `json:"capacityState" form:"capacityState" query:"capacityState"`
+	CapacityCheckedAt int64  `json:"capacityCheckedAt" form:"capacityCheckedAt" query:"capacityCheckedAt"`
+
 	LastDrillAt    int64  `json:"lastDrillAt" form:"lastDrillAt" query:"lastDrillAt"`
 	DrillReadiness string `json:"drillReadiness" form:"drillReadiness" query:"drillReadiness"`
 	DrillReachable int    `json:"drillReachable" form:"drillReachable" query:"drillReachable"`

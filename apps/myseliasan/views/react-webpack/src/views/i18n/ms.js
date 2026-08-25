@@ -3209,6 +3209,13 @@ export default {
   'fo.fieldEnabled': 'Pelan aktif',
   'fo.fieldAuto': 'Ambil alih kamera tanpa bertanya',
   'fo.fieldAutoHint': 'Jika mati, pelan memberitahu anda dan menunggu. Jika hidup, peranti simpanan mula merakam sendiri setelah tempoh menunggu tamat — betul apabila perakam benar-benar mati, salah apabila anda sekadar tidak dapat melihatnya. Hidupkan selepas ujian anda sendiri lulus.',
+  'fo.ready.overcommitted': 'Melebihi kapasiti',
+  'fo.readyHint.overcommitted': 'Setiap kamera boleh dihubungi, tetapi peranti ganti berkata ia tidak mampu menampung kesemuanya. Ia tetap akan mengambil alih jika perakam mati — tiada apa-apa yang merakam adalah lebih buruk — dan bingkai akan tercicir. Beri ia lebih sedikit kamera, atau sediakan peranti ganti kedua.',
+  'fo.capacity.fits': 'Peranti ganti berkata ia mampu menampung ini: {used} daripada kira-kira {max} kamera.',
+  'fo.capacity.tight': 'Ini hanya cukup-cukup muat: {used} daripada kira-kira {max} kamera. Satu kamera lagi dan ia tidak muat.',
+  'fo.capacity.over': 'Melebihi apa yang peranti ganti kata ia mampu tampung: {used} berbanding kira-kira {max} kamera.',
+  'fo.capacityUnknown': 'Peranti ganti belum menyatakan apa yang mampu ditampungnya. Uji pelan ini untuk bertanya kepadanya.',
+  'fo.capacityShared': '({n} daripadanya milik pelan lain pada peranti ganti yang sama.)',
 
   // --- Mobile push, W3-9 -----------------------------------------------------------
   // Three separate verdicts, deliberately never merged into one line: what this BROWSER

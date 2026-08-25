@@ -375,6 +375,9 @@ function rpc(ws) {
       // assertion ever written.
       const rawKeys = [...new Set(text.match(/\\bfo\\.[a-zA-Z0-9_.-]+/g) || [])];
       const badges = [...document.querySelectorAll('[data-fo-ready]')].map((e) => e.textContent.trim());
+      const capacity = [...document.querySelectorAll('[data-fo-capacity]')].map((e) => ({
+        state: e.getAttribute('data-fo-capacity'), text: e.textContent.trim(),
+      }));
       const hint = document.querySelector('.fo-ready-hint');
       const limits = [...document.querySelectorAll('.fo-pitch-limit')].map((e) => e.textContent.trim());
       const acts = [...document.querySelectorAll('[data-fo-act]')].map((e) => e.textContent.trim());
@@ -382,7 +385,7 @@ function rpc(ws) {
       return JSON.stringify({
         dir: document.documentElement.getAttribute('dir') || getComputedStyle(document.body).direction,
         rawKeysOnScreen: rawKeys.slice(0, 10),
-        badges, hint: hint ? hint.textContent.trim() : null,
+        badges, capacity, hint: hint ? hint.textContent.trim() : null,
         limits, acts, overflow,
       });
     })()`));
@@ -391,6 +394,15 @@ function rpc(ws) {
     check('the badge is rendered as words, not a state token',
       summary.badges.length > 0 && !summary.badges.some((b) => /^[a-z-]+$/.test(b)),
       JSON.stringify(summary.badges));
+    // W3-7 shipped answering only half of "would this work": a drill proves the spare can
+    // REACH the cameras and says nothing about whether it could carry them. The capacity line
+    // is the other half, and it has to be on the card rather than in a manual.
+    check('the card says what the spare can carry, not only whether it can be reached',
+      summary.capacity.length > 0, JSON.stringify(summary.capacity).slice(0, 200));
+    check('and it says it in a sentence, not as a state token',
+      summary.capacity.every((c) => c.text.length > 15 && !/^[a-z-]+$/.test(c.text)),
+      JSON.stringify(summary.capacity.map((c) => c.state + ': ' + c.text.slice(0, 50))));
+
     check('the plain-language explanation under the badge is rendered', !!summary.hint,
       (summary.hint || '').slice(0, 90));
     check('the two things failover is NOT are stated on the screen', summary.limits.length === 2,

@@ -1837,3 +1837,41 @@ state in the window where the thing under test is the only thing that can produc
   covered by `fleet_policy_live_test.go` and the API bench, not by the screen.
 * **One setting, one section.** The round trip proves the mechanism, not every field in the
   catalog.
+
+---
+
+## W3-7b — failover capacity (`bench_w37b_capacity.py`)
+
+11/11 against a real appliance's own estimate, closing the gap W3-7 shipped with in writing.
+
+### What is measured
+
+The spare's `GET /api/capacity` answered **54** on the bench hardware. The bench then creates
+that many cameras plus five, stages, and requires the verdict to be `over` with `headroom = -5`
+— real numbers from a real appliance through the real tunnel, not a model kept in the control
+plane. It also requires the DRILL to refresh the answer (one button, both halves of the
+question it is asked), and requires the verdict to CLEAR when the cameras are taken away — a
+verdict that can only go red is half a feature.
+
+### The two traps it hit, both in the bench
+
+* **A black-holed camera address costs a full connect timeout PER CAMERA.** The appliance
+  probes a camera before saving it, so the first version took minutes to create *one*. The
+  node's own loopback refuses instantly and is the same "does not answer" for a count.
+* **Saving a discovered camera UPSERTS BY HOST.** Fifty cameras at one address are one camera.
+  The first run staged "1 wanted" against a fleet of five, and every capacity assertion after
+  it failed for that reason rather than the one under test. `127.0.0.2`, `127.0.0.3` … are
+  distinct devices that all refuse immediately.
+
+### Not claimed
+
+* **The readiness composition is not proved live.** A drill that passes outright on a spare
+  that is over capacity must read "over capacity" rather than "ready" — that needs 55+ cameras
+  that all actually open, on a fleet whose only subject is a test pattern. Unit-tested and
+  mutation-checked in `failover_capacity_test.go`.
+* **A spare shared by two plans is not proved live** either: the harness has two appliances and
+  a second plan onto the same spare needs a third recorder. `committedTo` is a pure function
+  with its own test.
+* **The capacity figure is an estimate**, and the appliance says so. Nothing here measures what
+  a spare can really encode under load; it reports what the spare claims, which is exactly what
+  the screen says too.

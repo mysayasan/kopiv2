@@ -66,6 +66,7 @@ node   tools/fleetbench/uicheck_push.js .artifacts/fleetbench en
 node   tools/fleetbench/uicheck_push.js .artifacts/fleetbench ar
 node   tools/fleetbench/uicheck_policy.js .artifacts/fleetbench en   # W2-1: the policy SCREEN
 node   tools/fleetbench/uicheck_policy.js .artifacts/fleetbench ar
+python tools/fleetbench/bench_w37b_capacity.py     # W3-7b: failover capacity, real estimate
 ```
 
 `bench_w37_failover.py` (W3-7, N+1 failover) needs the **ffmpeg node image on BOTH nodes** —
@@ -311,3 +312,11 @@ writes TWO screenshots — `policy-<lang>.png` at the end and `policy-drift-<lan
 moment the screen is actually saying something. The second one exists because the defect this
 check found was only visible by looking at a frame, and the last frame of a run is usually the
 least interesting one.
+
+`bench_w37b_capacity.py` needs nothing but the standing fleet — no footage, no ffmpeg image. It
+creates as many cameras as the spare says it can carry, plus five, and requires the verdict to
+say so. **Every camera gets its own host** (`127.0.0.2`, `127.0.0.3`, …): saving a discovered
+camera UPSERTS BY HOST, so fifty cameras at one address are one camera, and the first run of
+this bench staged "1 wanted" against a fleet of five. The addresses refuse instantly because
+the appliance probes a camera before saving it — a black-holed address costs a full connect
+timeout per camera, which is minutes for one.
