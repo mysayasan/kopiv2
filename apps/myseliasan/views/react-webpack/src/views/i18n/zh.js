@@ -3007,6 +3007,8 @@ export default {
   'fp.complianceTitle': '集群符合性',
   'fp.checkedAt': '上次检查于 {time}',
   'fp.neverChecked': '尚未检查',
+  'fp.stale': '这些判定是在你最近一次修改策略之前得出的。请按“立即检查”，用现行规则重新比对机群。',
+  'fp.staleSince': '这些判定早于你在 {time} 所做的策略修改。请按“立即检查”，用现行规则重新比对机群。',
   'fp.checkNow': '立即检查',
   'fp.refreshed': '已检查集群',
   'fp.refreshFailed': '无法检查集群',

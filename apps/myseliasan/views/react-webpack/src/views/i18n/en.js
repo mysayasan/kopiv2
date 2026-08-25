@@ -3016,6 +3016,8 @@ export default {
   'fp.complianceTitle': 'Fleet compliance',
   'fp.checkedAt': 'Last checked {time}',
   'fp.neverChecked': 'Not checked yet',
+  'fp.stale': 'These verdicts were reached before your last policy change. Press Check now to compare the fleet against the rules as they stand.',
+  'fp.staleSince': 'These verdicts predate your policy change of {time}. Press Check now to compare the fleet against the rules as they stand.',
   'fp.checkNow': 'Check now',
   'fp.refreshed': 'Fleet checked',
   'fp.refreshFailed': 'Could not check the fleet',

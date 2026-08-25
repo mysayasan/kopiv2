@@ -64,6 +64,8 @@ node   tools/fleetbench/uicheck_faceredact.js .artifacts/fleetbench ar
 python tools/fleetbench/bench_w39_push.py         # W3-9: mobile push, against a REAL push service
 node   tools/fleetbench/uicheck_push.js .artifacts/fleetbench en
 node   tools/fleetbench/uicheck_push.js .artifacts/fleetbench ar
+node   tools/fleetbench/uicheck_policy.js .artifacts/fleetbench en   # W2-1: the policy SCREEN
+node   tools/fleetbench/uicheck_policy.js .artifacts/fleetbench ar
 ```
 
 `bench_w37_failover.py` (W3-7, N+1 failover) needs the **ffmpeg node image on BOTH nodes** —
@@ -301,3 +303,11 @@ was testing had even fired.
 AIR-GAPPED state — the screen that matters most on this feature. It reads the toast **2.2
 seconds** after a click: a toast lives 3.5 seconds, and a four-second wait finds an empty stack
 and reports a silent screen on one that spoke.
+
+`uicheck_policy.js` needs nothing but the standing fleet. It deletes every policy first (which
+is also what proves the `no policy` verdict renders), then builds one through the FORM, drives
+a real drift and a real clearance against node-a over the tunnel, and deletes it again. It
+writes TWO screenshots — `policy-<lang>.png` at the end and `policy-drift-<lang>.png` at the
+moment the screen is actually saying something. The second one exists because the defect this
+check found was only visible by looking at a frame, and the last frame of a run is usually the
+least interesting one.

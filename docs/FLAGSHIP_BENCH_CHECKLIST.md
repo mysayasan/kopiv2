@@ -1781,3 +1781,59 @@ product has no trust override and must not grow one, so the trust goes in from o
 * **No real browser vendor is contacted**, so nothing here says how FCM, Mozilla or Apple behave.
 * **Headless Chrome cannot complete a real subscription**, so the screen check asserts that
   pressing the button produces a visible, translated answer rather than that enrolment succeeds.
+
+---
+
+## W2-1 — fleet policy, the screen (`uicheck_policy.js`)
+
+27/27 en and 29/29 ar. W2-1's API was benched when it shipped; **its screen had never been
+driven in a browser at all**, and this is the debt being paid.
+
+### What is measured
+
+A full round trip through the SCREEN, not the API: tick a real setting in the form, type a
+value node-a does not hold, save, press Check now, and read the node's badge — then edit the
+value to what the appliance actually holds and watch the same node go compliant. A screen that
+can only go red proves half a feature.
+
+Plus: `drifted` / `unknown` / `unmanaged` are three different answers and the badge STATE is
+read from the DOM while the rendered text is asserted **not** to be that state token; the
+report-only tag is distinct from enforcing; the enforce warning is on the screen rather than in
+the manual; the counters agree with the cards; and every action is hit-tested with
+`document.elementFromPoint` at its own centre in both directions.
+
+### What it found
+
+**The fleet claimed to be compliant with policies that no longer existed.** Delete the last
+policy and every node kept its green `compliant` badge — on the page and from
+`/api/fleet-policies/compliance` — because the stored compliance snapshot had no idea the
+policies were gone. It stayed that way until somebody happened to press Check now. The screen's
+own hint sentence, three lines above the badges, says a verdict nobody established is not a
+good one.
+
+**Found by opening the screenshot of a run in which all 23 assertions had passed** — the third
+item running to be caught this way, after W3-7 and W3-6b. The run's last frame happened to be
+the state right after the cleanup delete, which is the only reason it was visible at all. The
+check now captures a second screenshot at the moment the screen is actually saying something,
+so the frame worth looking at is always left behind.
+
+Fixed in two parts, by certainty: with **no policy in force** the verdicts are *replaced* with
+`unmanaged` (provable without asking any appliance), and with a **changed** policy set they are
+kept and flagged `stale` with the time they predate, because re-deriving them costs a tunneled
+round trip per section per node and they may well still be right.
+
+Also fixed while looking: a policy card read "Whole fleet: whole fleet".
+
+### And one the bench found in ITSELF
+
+The stale-banner assertion was written **after** the re-sweep, where the report is legitimately
+fresh — so it failed on correct output. Same class as W3-6b's `done`-vs-`ready`: assert the
+state in the window where the thing under test is the only thing that can produce it.
+
+### Not claimed
+
+* **The enforcing half is not exercised.** Every policy this check creates is report-only, so
+  nothing here says whether an enforcing policy writes correctly back to an appliance — that is
+  covered by `fleet_policy_live_test.go` and the API bench, not by the screen.
+* **One setting, one section.** The round trip proves the mechanism, not every field in the
+  catalog.

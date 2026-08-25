@@ -105,6 +105,7 @@ function FieldInput({ field, value, busy, onChange }) {
     <span className="fp-value-input">
       <input
         type="number"
+        data-fp-value={field.key}
         value={value}
         min={field.min || undefined}
         max={field.max || undefined}
@@ -182,7 +183,7 @@ function PolicyEditor({ initial, catalog, nodes, sites, busy, error, onCancel, o
         <div className="settings-field-grid">
           <label>
             {t('fp.name')}
-            <input value={form.name} onChange={(e) => set({ name: e.target.value })} disabled={busy} required />
+            <input data-fp-input="name" value={form.name} onChange={(e) => set({ name: e.target.value })} disabled={busy} required />
           </label>
           <label>
             {t('fp.nodeKind')}
@@ -255,9 +256,9 @@ function PolicyEditor({ initial, catalog, nodes, sites, busy, error, onCancel, o
                 const key = `${section.id}.${field.key}`;
                 const on = selected.has(key);
                 return (
-                  <div key={key} className={`fp-field-row${on ? ' fp-field-row--on' : ''}`}>
+                  <div key={key} className={`fp-field-row${on ? ' fp-field-row--on' : ''}`} data-fp-field={key}>
                     <label className="fp-field-pick">
-                      <input type="checkbox" checked={on} disabled={busy} onChange={() => toggleField(section, field)} />
+                      <input type="checkbox" data-fp-pick={key} checked={on} disabled={busy} onChange={() => toggleField(section, field)} />
                       <span>{tr(t, `fp.field.${section.id}.${field.key}`, field.label)}</span>
                     </label>
                     {on ? (
@@ -276,8 +277,8 @@ function PolicyEditor({ initial, catalog, nodes, sites, busy, error, onCancel, o
         ))}
 
         <div className="modal-actions">
-          <button type="button" className="quiet" onClick={onCancel} disabled={busy}>{t('fp.cancel')}</button>
-          <button type="submit" disabled={busy}>
+          <button type="button" className="quiet" data-fp-act="cancel" onClick={onCancel} disabled={busy}>{t('fp.cancel')}</button>
+          <button type="submit" data-fp-act="save" disabled={busy}>
             <span className="btn-icon"><Ico n="save" /> {busy ? t('fp.saving') : t('fp.save')}</span>
           </button>
         </div>
@@ -297,13 +298,16 @@ function NodeComplianceCard({ node }) {
     (s.fields || []).forEach((f) => { if (f.status !== 'match') problems.push({ ...f, sectionLabel: s.label }); });
   });
   return (
-    <article className={`fp-node fp-node--${node.status}`}>
+    <article className={`fp-node fp-node--${node.status}`} data-fp-node={node.nodeName || node.nodeId} data-fp-status={node.status}>
       <div className="fp-node-head">
-        <span className={`fp-badge fp-badge--${node.status}`}>{t(`fp.status.${node.status}`)}</span>
+        {/* The STATE goes on the attribute and the words go in the element, so a check in
+            any language can assert both that the verdict is right and that what an operator
+            reads is not the state token. */}
+        <span className={`fp-badge fp-badge--${node.status}`} data-fp-badge={node.status}>{t(`fp.status.${node.status}`)}</span>
         <h3 className="fp-node-name">{node.nodeName || node.nodeId}</h3>
         {node.driftCount > 0 ? <span className="fp-node-count">{t('fp.nDrifted', { n: node.driftCount })}</span> : null}
         {(node.sections || []).length > 0 ? (
-          <button type="button" className="quiet fp-node-toggle" onClick={() => setOpen((v) => !v)}>
+          <button type="button" className="quiet fp-node-toggle" data-fp-act="detail" onClick={() => setOpen((v) => !v)}>
             {open ? t('fp.hideDetail') : t('fp.showDetail')}
           </button>
         ) : null}
@@ -337,7 +341,7 @@ function NodeComplianceCard({ node }) {
                   </thead>
                   <tbody>
                     {s.fields.map((f) => (
-                      <tr key={f.field} className={`fp-row--${f.status}`}>
+                      <tr key={f.field} className={`fp-row--${f.status}`} data-fp-row={`${s.section}.${f.field}`} data-fp-rowstatus={f.status}>
                         <td>{tr(t, `fp.field.${s.section}.${f.field}`, f.label)}{f.unit ? ` (${f.unit})` : ''}</td>
                         <td>{f.desired}</td>
                         <td>{f.status === 'missing' ? <em>{t('fp.absent')}</em> : f.actual}</td>
@@ -501,16 +505,35 @@ export function FleetPolicyPage({ nodes = [], session, onToast }) {
               {compliance.checkedAt ? t('fp.checkedAt', { time: formatTimestamp(compliance.checkedAt) }) : t('fp.neverChecked')}
             </span>
             {canWrite ? (
-              <button type="button" className="quiet" onClick={refresh} disabled={busy}>
+              <button type="button" className="quiet" data-fp-act="check" onClick={refresh} disabled={busy}>
                 <span className="btn-icon"><Ico n="reload" /> {t('fp.checkNow')}</span>
               </button>
             ) : null}
           </div>
         </header>
 
-        <div className="fp-tiles">
+        {/* THE VERDICTS ARE OLDER THAN THE RULES. A sweep is a tunneled round trip per
+            section per node, so this screen deliberately does not run one on load — which
+            means an edited policy leaves the previous pass on display, still coloured, next
+            to a "last checked" time that is perfectly true and completely misleading. The
+            numbers are kept because they may well still be right; what changes is that the
+            screen stops presenting them as current. (The stronger case — no policy in force
+            at all — is answered by the server, which knows every node is unmanaged without
+            asking anything.) */}
+        {compliance.stale ? (
+          <p className="fp-stale" role="status" data-fp-stale="1">
+            <Ico n="warning" sz={15} />
+            <span>
+              {compliance.staleSince
+                ? t('fp.staleSince', { time: formatTimestamp(compliance.staleSince) })
+                : t('fp.stale')}
+            </span>
+          </p>
+        ) : null}
+
+        <div className={`fp-tiles${compliance.stale ? ' fp-tiles--stale' : ''}`}>
           {STATUSES.map((s) => (
-            <div key={s} className={`fp-tile fp-tile--${s}`}>
+            <div key={s} className={`fp-tile fp-tile--${s}`} data-fp-tile={s}>
               <span className="fp-tile-n">{counts[s] || 0}</span>
               <span className="fp-tile-label">{t(`fp.status.${s}`)}</span>
             </div>
@@ -537,7 +560,7 @@ export function FleetPolicyPage({ nodes = [], session, onToast }) {
               <span className="btn-icon"><Ico n="reload" /> {t('fp.refresh')}</span>
             </button>
             {canWrite ? (
-              <button type="button" onClick={() => { setError(''); setEditing(blankPolicy(catalog.nodeKinds?.[0] || 'camera')); }} disabled={busy}>
+              <button type="button" data-fp-act="new" onClick={() => { setError(''); setEditing(blankPolicy(catalog.nodeKinds?.[0] || 'camera')); }} disabled={busy}>
                 <span className="btn-icon"><Ico n="plus" /> {t('fp.newPolicy')}</span>
               </button>
             ) : null}
@@ -552,10 +575,15 @@ export function FleetPolicyPage({ nodes = [], session, onToast }) {
             {items.map((detail) => {
               const policy = detail.policy || {};
               return (
-                <article key={policy.id} className={`fp-card${policy.enabled ? '' : ' fp-card--off'}`}>
+                <article key={policy.id} className={`fp-card${policy.enabled ? '' : ' fp-card--off'}`} data-fp-policy={policy.id} data-fp-enabled={policy.enabled ? '1' : '0'}>
                   <div className="fp-card-head">
                     <h3 className="fp-card-name">{policy.name}</h3>
-                    <span className="fp-scope-tag">{t(`fp.scope.${policy.scope}`)}: {targetLabel(policy)}</span>
+                    {/* "Whole fleet" names itself. A scope and a target that are the same
+                        words read as "Whole fleet: whole fleet", which is the kind of small
+                        wrongness a person notices and a check never does. */}
+                    <span className="fp-scope-tag">
+                      {policy.scope === 'fleet' ? t('fp.wholeFleet') : `${t(`fp.scope.${policy.scope}`)}: ${targetLabel(policy)}`}
+                    </span>
                     <span className="fp-scope-tag">{kindLabel(policy.nodeKind)}</span>
                     {policy.enforce ? (
                       <span className="fp-scope-tag fp-scope-tag--enforce">{t('fp.enforcing')}</span>
@@ -593,10 +621,10 @@ export function FleetPolicyPage({ nodes = [], session, onToast }) {
                     </span>
                     {canWrite ? (
                       <span className="fp-card-actions">
-                        <button type="button" className="quiet" onClick={() => { setError(''); setEditing(toRequest(detail)); }} disabled={busy}>
+                        <button type="button" className="quiet" data-fp-act="edit" onClick={() => { setError(''); setEditing(toRequest(detail)); }} disabled={busy}>
                           <span className="btn-icon"><Ico n="edit-2" sz={13} /> {t('fp.edit')}</span>
                         </button>
-                        <button type="button" className="quiet danger-text" onClick={() => remove(detail)} disabled={busy}>
+                        <button type="button" className="quiet danger-text" data-fp-act="delete" onClick={() => remove(detail)} disabled={busy}>
                           <span className="btn-icon"><Ico n="trash" sz={13} /> {t('fp.delete')}</span>
                         </button>
                       </span>

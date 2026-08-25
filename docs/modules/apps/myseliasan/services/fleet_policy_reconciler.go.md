@@ -107,3 +107,34 @@ go straight to the policy that set it, rather than guessing among several that c
 - `apis/fleet_policy_api.go.md` is the HTTP surface over this and `services/fleet_policy.go.md`.
 - Covered by `fleet_policy_reconciler_test.go` against a fake `ControlSender`/node lister.
 - **Built, not yet live-benched** — see `docs/FLAGSHIP_HARDENING_PLAN.md` W2-1.
+
+## `LastFor` — a report is only valid for the policies it was computed against
+
+`Last()` returns the stored pass verbatim. **`LastFor(ctx)` returns it checked against the
+policies in force now**, and it is what the API serves.
+
+**The defect it closes.** Delete the last policy and the fleet went on reporting every node
+`compliant` — on the screen *and* from `/api/fleet-policies/compliance` — because the stored
+snapshot knew nothing about the policies being gone. It survived until somebody happened to
+press Check now. A green estate governed by nothing is precisely the misreading this feature's
+own hint sentence warns about, and it shipped. Found by the first screen pass W2-1 ever had,
+by **looking at the screenshot** of a run in which every assertion had passed.
+
+Two situations, answered differently because they are known with different certainty:
+
+| Situation | Answer | Why |
+|---|---|---|
+| No policy is **in force** (none exist, or every one is parked) | Verdicts **replaced** with `unmanaged` | Provable here without asking a single appliance. Not doubt — knowledge. |
+| The policy set **changed** | Verdicts kept, `Stale: true` + `StaleSince` | They may still be right, and re-deriving them is a tunneled round trip per section per node. So they are flagged, not discarded. |
+| The policy list **cannot be read** | `Stale: true` | A report we cannot validate is not one to dress up as current. |
+
+Re-sweeping on read was rejected: a sweep is deliberately something an operator asks for, with
+a spinner, rather than something a page load does behind their back.
+
+`policyFingerprint` is `id:updatedAt:enabled` per policy, sorted. All three parts earn their
+place — a count-and-max-timestamp shortcut aliases a delete paired with a create in the same
+second, dropping the id misses one policy swapped for another, and dropping `enabled` misses
+somebody parking one of two policies. Each is covered by its own test in
+`fleet_policy_staleness_test.go`, and all are mutation-checked.
+
+`CheckedAt` survives the rewrite: the sweep did happen, and when is still a fact worth showing.

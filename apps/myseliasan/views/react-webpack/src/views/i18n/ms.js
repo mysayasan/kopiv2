@@ -3007,6 +3007,8 @@ export default {
   'fp.complianceTitle': 'Pematuhan armada',
   'fp.checkedAt': 'Disemak pada {time}',
   'fp.neverChecked': 'Belum disemak',
+  'fp.stale': 'Keputusan ini dicapai sebelum perubahan dasar anda yang terakhir. Tekan Semak sekarang untuk membandingkan armada dengan peraturan sebagaimana ia sekarang.',
+  'fp.staleSince': 'Keputusan ini mendahului perubahan dasar anda pada {time}. Tekan Semak sekarang untuk membandingkan armada dengan peraturan sebagaimana ia sekarang.',
   'fp.checkNow': 'Semak sekarang',
   'fp.refreshed': 'Armada disemak',
   'fp.refreshFailed': 'Tidak dapat menyemak armada',
