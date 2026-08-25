@@ -3219,6 +3219,13 @@ export default {
   'fo.fieldEnabled': 'Plan is active',
   'fo.fieldAuto': 'Take the cameras over without asking',
   'fo.fieldAutoHint': 'Off, the plan tells you and waits. On, the spare starts recording by itself once the wait has passed — right when the recorder is really dead, wrong when you simply cannot see it. Turn it on after your own test has passed.',
+  'fo.ready.overcommitted': 'Over capacity',
+  'fo.readyHint.overcommitted': 'Every camera can be reached, but the spare says it cannot carry them all. It will still take them over if the recorder dies — nothing recording is worse — and it will drop frames. Give it fewer cameras, or a second spare.',
+  'fo.capacity.fits': 'The spare says it can carry this: {used} of about {max} cameras.',
+  'fo.capacity.tight': 'This only just fits: {used} of about {max} cameras. One more camera and it does not.',
+  'fo.capacity.over': 'More than the spare says it can carry: {used} against about {max} cameras.',
+  'fo.capacityUnknown': 'The spare has not said what it can carry. Test the plan to ask it.',
+  'fo.capacityShared': '({n} of them belong to another plan on this same spare.)',
 
   // --- Mobile push, W3-9 -----------------------------------------------------------
   // Three separate verdicts, deliberately never merged into one line: what this BROWSER

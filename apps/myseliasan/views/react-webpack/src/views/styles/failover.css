@@ -273,6 +273,29 @@
   margin-block: 12px;
 }
 
+/* The capacity line. Quiet when the answer is comfortable, loud when it is not: a line that
+ * always shouts is a line people stop reading, and the state that has to be read is "this
+ * spare cannot carry what you have pointed at it". Status colours, so each has an explicit
+ * dark counterpart below. */
+.fo-capacity {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ui-text-muted, #64748b);
+}
+
+.fo-capacity--tight { color: #b45309; }
+.fo-capacity--over { color: #b91c1c; font-weight: 560; }
+.fo-capacity--fits { color: #15803d; }
+
+/* Over capacity is a readiness state of its own, and it must not be mistaken for "partial"
+ * — that one sends somebody to a network, this one to a bigger spare. */
+.fo-badge--overcommitted { background: rgba(220, 38, 38, 0.12); color: #b91c1c; }
+.fo-tile--overcommitted .fo-tile-n { color: #b91c1c; }
+
 /* Dark theme. The status colours above are stated literally, so their dark counterparts
  * have to be stated too — the --ui-* tokens flip on their own, these do not. */
 [data-theme='dark'] .fo-tile--attention { background: rgba(220, 38, 38, 0.16); }
@@ -298,3 +321,7 @@
 [data-theme='dark'] .fo-outcome-line--all,
 [data-theme='dark'] .fo-cam-outcome--ok { color: #86efac; }
 [data-theme='dark'] .fo-cam-outcome--bad { color: #fca5a5; }
+[data-theme='dark'] .fo-capacity--tight { color: #fcd34d; }
+[data-theme='dark'] .fo-capacity--over { color: #fca5a5; }
+[data-theme='dark'] .fo-capacity--fits { color: #86efac; }
+[data-theme='dark'] .fo-badge--overcommitted { background: rgba(248, 113, 113, 0.18); color: #fca5a5; }
