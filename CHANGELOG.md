@@ -113,6 +113,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-25 — myseliasan 1.75.1 (e6697b6)
+
+### Fixed
+
+- **myseliasan**: The fleet compliance screen was reporting appliances as compliant with policies that had been deleted. Remove the last policy and every node kept its green tick — on the page and through the API — until somebody happened to press Check now, which meant an estate governed by nothing could look like an estate in perfect order. It now says what is actually true: with no policy in force, every node reads as having no policy, which is honest rather than healthy. And because a comparison takes a round trip to every appliance and is deliberately something you ask for rather than something a page load does behind your back, editing or adding a policy no longer leaves the previous verdicts looking current — the screen now says plainly that they were reached before your change and offers to compare again. Also fixed: a policy covering everything described itself as "Whole fleet: whole fleet".
 ## 2026-08-25 — myseliasan 1.75.0, core 1.105.0 (1ec2a05)
 
 ### Added
