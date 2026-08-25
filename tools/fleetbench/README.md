@@ -70,6 +70,9 @@ python tools/fleetbench/bench_w37b_capacity.py     # W3-7b: failover capacity, r
 python tools/fleetbench/bench_w33c_case_feed.py   # W3-3c: a feed entry into a case file
 node   tools/fleetbench/uicheck_case_feed.js .artifacts/fleetbench en
 node   tools/fleetbench/uicheck_case_feed.js .artifacts/fleetbench ar
+python tools/fleetbench/bench_w33d_fleet_wall.py  # W3-3d: fleet video wall across appliances
+node   tools/fleetbench/uicheck_fleet_wall.js .artifacts/fleetbench en
+node   tools/fleetbench/uicheck_fleet_wall.js .artifacts/fleetbench ar
 ```
 
 `bench_w37_failover.py` (W3-7, N+1 failover) needs the **ffmpeg node image on BOTH nodes** —
@@ -329,3 +332,11 @@ plane. mymatasan authenticates with **Basic auth held in React state**, not a co
 plain same-origin `fetch` from the page carries nothing and answers 401 with an empty list,
 which looks exactly like "the case was never created". The screen check sends the header
 explicitly, the way the SPA's own client does.
+
+`uicheck_fleet_wall.js` SEEDS A CAMERA on any appliance that has none, through the control
+plane's own node proxy. That is not decoration: the one thing this screen exists to prove is a
+wall built from more than one machine, and a run against a fleet where only one appliance
+happens to hold cameras proves the opposite by accident — which is exactly what its first run
+did. It also writes `fleetwall-live-<lang>.png` mid-run, because the last frame is an empty
+screen after the cleanup and the defect this check found (tiles collapsed to 40 pixels) was
+only ever visible in a picture.

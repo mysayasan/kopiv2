@@ -74,6 +74,11 @@ const (
 	// path somebody was relying on — both are worth a line. The ENDPOINT is never recorded:
 	// it is a third-party identifier for a personal device, and a trail is read later by
 	// people who never needed to know which phone anybody carries.
+	// Fleet video walls (W3-3d). A wall is a shared arrangement several people watch, so
+	// changing one changes what everybody sees.
+	ActionFleetWallSave   = "fleet_wall.save"
+	ActionFleetWallDelete = "fleet_wall.delete"
+
 	ActionPushSubscribe   = "push.subscribe"
 	ActionPushUnsubscribe = "push.unsubscribe"
 	ActionPushTest        = "push.test"

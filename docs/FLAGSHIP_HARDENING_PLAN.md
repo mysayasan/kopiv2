@@ -1251,6 +1251,14 @@ far.**
 **The fleet-level wall spanning nodes is still unbuilt** and remains the differentiator no
 appliance vendor can match; this is the single-appliance half.
 
+
+**Its fleet-level half is BUILT as W3-3d** (`feat/fleet-video-wall`, benched 2026-08-25: 17/17
+on a real two-appliance fleet plus 25/25 en and 27/27 ar on the screen). A wall on the control
+plane arranges cameras from ANY appliance, is named, shared and saved centrally rather than in
+one browser, and — the part no appliance can do — pulls up the camera raising the alarm in a
+building nobody was watching. The screen check found the first build rendering a "video wall"
+of 40-pixel strips with every assertion green; it was visible only by opening the screenshot.
+
 **W3-4 · Loitering / left-behind / directional** (F-15) — SHIPPED and benched on
 `feat/dwell-rules`. Three evaluators over the tracker line crossing already used, in
 `infra/vision/dwell.go`; no second inference pass, no new pipeline.

@@ -1922,3 +1922,51 @@ produced a check that fails on correct output.
 * **The held footage is a span with nothing behind it here.** The bench's cameras never
   recorded, so the hold correctly reports `missing` — which is the hold being truthful, not a
   failure, and the bench prints it rather than hiding it.
+
+---
+
+## W3-3d — fleet video wall (`bench_w33d_fleet_wall.py`, `uicheck_fleet_wall.js`)
+
+17/17 on a real two-appliance fleet, plus 25/25 en and 27/27 ar on the screen. W3-3b built the
+wall for ONE recorder and left this half unbuilt — the differentiator, because a wall that
+spans machines needs something that can see all of them.
+
+### What is measured
+
+The arrangement survives the round trip **in order**, with tiles that name an appliance as well
+as a camera, resolved against the live fleet. A tile on an appliance that is **offline** is
+counted separately from one on an appliance that is **gone** — the bench `docker stop`s node-b
+and waits for the count to move, because the status is read at read time and not stored on the
+row. Neither kind is silently dropped. Plus the refusals: an unknown layout, no cameras, the
+same camera twice, a strobe instead of a rotation, a name already taken, and two walls claiming
+to be the default.
+
+The screen check builds a wall **through the form**, picking cameras from more than one
+appliance, and reads it back off the server.
+
+### What it found
+
+**A "video wall" of 40-pixel strips.** The first build had no row height on the grid, so every
+tile collapsed to the height of its own caption. Every assertion passed — the tiles were all
+present, all named, all correctly addressed — and the screen was useless. **Found by opening
+the screenshot**, the fourth item running to be caught that way after W3-7, W3-6b and W2-1. The
+check now MEASURES the rendered tile and fails under 120px, and the run leaves a mid-run
+screenshot behind because the last frame of a run is an empty screen after the cleanup.
+
+The same look confirmed the differentiator working by accident: a camera on **node-b** raised
+an alert, and the wall pulled node-b's cameras up with a red ring and said so — an alert on one
+appliance changing what a screen shows about another. That is now asserted rather than admired.
+
+### And one the bench found in ITSELF
+
+The screen check picked cameras from "every appliance offered" and passed with two tiles from
+ONE appliance, because the other had no cameras left from an earlier bench — a run that would
+have proved the opposite of the feature. It now seeds a camera on any appliance that has none.
+
+### Not claimed
+
+* **That the tiles PLAY.** The relay behind them is the existing cross-node WebRTC path,
+  benched separately; a fleet with a test pattern and no ffmpeg on the spare cannot show video
+  in a headless browser. What is proved is the arrangement, the resolution and the refusals.
+* **No capacity check on the wall.** 32 relayed streams may be more than a browser or a link
+  can carry; the limit is a bound, not a measurement, and the screen says so.

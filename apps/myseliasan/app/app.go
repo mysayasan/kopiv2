@@ -793,6 +793,9 @@ func (m *module) Entities() []any {
 		// Mobile push: one row per browser that has agreed to be woken by this control
 		// plane. New table; the auto-migrator creates it.
 		appentities.PushSubscription{},
+		// Fleet video walls: saved camera arrangements that SPAN appliances — the wall a
+		// control room needs and no single recorder can hold. New table.
+		appentities.FleetWall{},
 		// Fleet map: sites + uploaded floor plans (indoor view); node/camera placements.
 		appentities.Site{},
 		appentities.FloorPlan{},
@@ -1821,6 +1824,14 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		func(f string, a ...any) { deps.Logger.Warnf("myseliasan.push", f, a...) })
 	notificationService.Register(pushService.Channel())
 	apis.NewPushApi(api, *deps.Auth, controlSession, pushService)
+
+	// Fleet video walls (W3-3d). The cross-appliance half of W3-3b: mymatasan's own wall
+	// arranges cameras on one recorder, and a guard station covers four buildings. It reuses
+	// the registry only through the narrow node-lister the policy reconciler uses, because a
+	// wall service holding the whole registry is one refactor away from being able to
+	// release an appliance.
+	fleetWallService := services.NewFleetWallService(deps.Db, registry, auditService)
+	apis.NewFleetWallApi(api, *deps.Auth, controlSession, fleetWallService)
 
 	// One pass shortly after boot, so the screen has an answer before the first tick. It is
 	// deliberately not immediate: nodes dial the control channel after this function
