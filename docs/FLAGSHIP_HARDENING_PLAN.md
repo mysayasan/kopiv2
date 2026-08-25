@@ -1571,7 +1571,11 @@ otherwise the real reason.
 
 **Not claimed:** it restores RECORDING, not the recordings — footage on the failed appliance
 is still only there, and the only copies elsewhere are what the W2-3 clip archive already
-pulled off it. No capacity admission control: a spare is not stopped from taking on more
+pulled off it. **Capacity: CLOSED by W3-7b** (`feat/failover-capacity`, benched 2026-08-25, 11/11 against a
+real appliance's own estimate) — the control plane now asks the spare what it can carry, counts
+the spare's own cameras and every other plan committed to it, refuses to call an over-committed
+plan READY, and still never blocks a takeover, because nothing recording is the one outcome
+that cannot be undone. The original gap read: a spare is not stopped from taking on more
 cameras than it can encode, and the drill does not measure load (the honest half — whether it
 can reach and log into each camera — is measured).
 

@@ -457,6 +457,19 @@ WHERE id NOT IN (
 			},
 		},
 		{
+			// W3-7 shipped without a capacity leg: a drill proved the spare could REACH the
+			// cameras and said nothing about whether it could encode them. These four
+			// columns hold what the spare last said about itself. New columns on an
+			// existing table, so a migration rather than the auto-migrator, and backfilled
+			// because an ADD COLUMN without a default leaves existing rows NULL and the
+			// entity's non-pointer int/string fields cannot scan one.
+			ID:   "20260825-01-failover-capacity",
+			Name: "add standby capacity columns to failover_plan",
+			Exec: func(ctx context.Context, tx *sql.Tx, engine string) error {
+				return ensureFailoverCapacityColumns(ctx, tx, engine)
+			},
+		},
+		{
 			// The rollup gained a per-source dimension (per-node baselines); existing
 			// tables need the source column added and the old slot unique index dropped
 			// so the auto-migrator recreates it including source. Shared with mymatasan.
@@ -568,6 +581,36 @@ func ensureSiteGeoColumns(ctx context.Context, tx *sql.Tx, engine string) error 
 
 // ensureFloorDesignColumn adds the design column (drawn-plan vector JSON) to floor_plan if absent
 // and backfills NULLs to ” (the entity's Design string cannot scan a NULL). Idempotent.
+// ensureFailoverCapacityColumns adds the standby-capacity columns to failover_plan and
+// backfills NULLs. Idempotent, like every other migration here.
+func ensureFailoverCapacityColumns(ctx context.Context, tx *sql.Tx, engine string) error {
+	existing, err := tableColumns(ctx, tx, engine, "failover_plan")
+	if err != nil {
+		return err
+	}
+	cols := []struct {
+		name    string
+		colType string
+		zero    string
+	}{
+		{"standby_max", "INTEGER", "0"},
+		{"standby_own", "INTEGER", "0"},
+		{"capacity_state", "TEXT", "''"},
+		{"capacity_checked_at", "INTEGER", "0"},
+	}
+	for _, c := range cols {
+		if !existing[c.name] {
+			if _, err := tx.ExecContext(ctx, "ALTER TABLE failover_plan ADD COLUMN "+c.name+" "+c.colType); err != nil {
+				return fmt.Errorf("add failover_plan.%s: %w", c.name, err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE failover_plan SET "+c.name+" = "+c.zero+" WHERE "+c.name+" IS NULL"); err != nil {
+			return fmt.Errorf("backfill failover_plan.%s NULLs: %w", c.name, err)
+		}
+	}
+	return nil
+}
+
 func ensureFloorDesignColumn(ctx context.Context, tx *sql.Tx, engine string) error {
 	existing, err := tableColumns(ctx, tx, engine, "floor_plan")
 	if err != nil {

@@ -211,3 +211,64 @@ drilled the moment it is created.
 Mutation-checked: treating a successful copy as ready, ignoring the hold-down, dropping the
 respondent check, dropping the per-camera report, and collapsing never-drilled into overdue
 — each makes the matching test fail with a message that names the defect.
+
+## Capacity: the half a drill never answered
+
+W3-7 shipped with this stated as a gap — *"a spare is not stopped from taking on more cameras
+than it can encode, and the drill measures reachability, not load."* This closes it.
+
+**Every number comes from the appliance.** `readCapacity` asks the spare's own
+`GET /api/capacity` over the same tunnel everything else uses. Nothing here models what a box
+can encode; the control plane reports what the box said, along with how confident the box was.
+
+`capacityVerdict(estimatedMax, own, committed, wanted)` turns four numbers into one word:
+
+| Verdict | Meaning |
+|---|---|
+| `unknown` | Not asked, or the spare would not put a number on it. **Not "fine"** — the same rule as an untested drill. |
+| `fits` | Room for everything committed. |
+| `tight` | Fits with less than `capacityTightFraction` (20%) of the estimate spare. A plan that fits with one camera to spare stops fitting the day somebody adds a camera. |
+| `over` | The commitments exceed what the spare says it can carry. |
+
+All four inputs earn their place, and each is mutation-checked:
+
+- **The spare's OWN cameras** count. They do not stop being recorded because somebody else's
+  arrived.
+- **`committedTo`** counts what OTHER *enabled* plans have staged onto the same spare. A spare
+  may cover several recorders, and each plan alone can look comfortable while the three of them
+  together cannot be carried. A **parked** plan holds nothing — it will never take anything
+  over.
+
+## Where it bites, and where it deliberately does not
+
+**It blocks READINESS.** `FailoverReadyOvercommitted` is its own state, reached when the drill
+passed outright *and* the spare is over capacity. It is not a variant of `partial`: "some
+cameras could not be opened" sends somebody to a network or a credential, "the spare would be
+over its own estimate" sends them to a bigger spare or a second one, and telling them the wrong
+thing during an outage costs the time that mattered.
+
+**It NEVER blocks a takeover.** `Activate` records `overCapacity` and says so in the
+notification, then proceeds. A recorder is down; the alternative to a spare that will be over
+its own *estimate* is nothing recording at all, which is the one outcome that cannot be undone
+afterwards. This is the same principle that stops the feature fencing a failed appliance.
+
+**There is no save-time refusal, on purpose.** Capacity is an estimate the appliance itself
+labels as such, and refusing to create a plan on the strength of one leaves an operator with no
+plan rather than a flagged one — strictly worse. Every refusal in `Save` is a *structural*
+impossibility (chaining, self-standby, wrong node kind, a hold-down shorter than the grace
+window), never a measurement.
+
+## When it is measured
+
+On **stage** (the moment the camera count changes) and on **drill** (the button an operator
+presses to find out whether this would work — so it must answer both halves of that question).
+Never on a page load: a fleet screen listing twenty plans must not make twenty tunneled round
+trips, so the view renders what the spare last *said*, with the stamp travelling alongside so
+the screen can show how old the answer is.
+
+`readCapacity` is best effort and never fails the operation it was called from. An appliance
+too old to have the endpoint lands on `unknown`, and unknown does not block a plan that has
+otherwise been proved — otherwise every appliance predating this feature becomes unprotectable.
+
+Columns `standby_max`, `standby_own`, `capacity_state`, `capacity_checked_at` are added by
+migration `20260825-01-failover-capacity` (the auto-migrator creates tables, not columns).

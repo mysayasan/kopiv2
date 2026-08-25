@@ -3209,6 +3209,13 @@ export default {
   'fo.fieldEnabled': '方案已启用',
   'fo.fieldAuto': '无需询问即接管摄像头',
   'fo.fieldAutoHint': '关闭时，方案只通知你并等待。开启时，等待期一过备用设备就自行开始录制——录像机确实死机时这是对的，只是你看不见它时这是错的。请在你自己的测试通过之后再开启。',
+  'fo.ready.overcommitted': '超出容量',
+  'fo.readyHint.overcommitted': '每一路摄像机都能连上，但备机说它带不动这么多。录像机一旦故障，它仍会接管——什么都不录更糟——但会丢帧。请减少交给它的摄像机，或再准备一台备机。',
+  'fo.capacity.fits': '备机说它带得动：{used} 路，约上限 {max} 路。',
+  'fo.capacity.tight': '刚好够用：{used} 路，约上限 {max} 路。再加一路就不够了。',
+  'fo.capacity.over': '超过备机自称能带的数量：{used} 路，约上限 {max} 路。',
+  'fo.capacityUnknown': '备机尚未说明它能带多少。测试此方案即可问它。',
+  'fo.capacityShared': '（其中 {n} 路属于同一台备机上的另一个方案。）',
 
   // --- Mobile push, W3-9 -----------------------------------------------------------
   // Three separate verdicts, deliberately never merged into one line: what this BROWSER
