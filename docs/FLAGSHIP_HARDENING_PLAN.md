@@ -1201,6 +1201,17 @@ caught it because it ran as an administrator.
    "Recording…" label: a fact computed at one resolution and rendered as the answer to a
    different question.**
 
+
+**Its named follow-up is CLOSED by W3-3c** (`feat/case-notification-refs`, benched 2026-08-25:
+17/17 on a real appliance plus 19/19 en and 21/21 ar on the screen). A feed entry now goes into
+a case from the Notifications screen — the screen where somebody actually notices something —
+and the SERVER resolves what it refers to: an entry pointing at an alert becomes an alert item
+with the alert's own camera, time and snapshot, so the same evidence can never sit in a case
+twice wearing two kinds. An entry with no camera goes in too and holds nothing, because "the
+recorder rebooted at 03:12" is the fact that explains the gap in the footage either side of it.
+The screen check found the dialog's Add button permanently DISABLED on this path — its guard
+counted only the timeline's items, and a feed entry carries none.
+
 **W3-3b · Video wall** (F-18) — SHIPPED and benched on `feat/video-wall`. Named walls, cycling,
 alarm-driven auto-pop, and a second-monitor window.
 
@@ -1239,6 +1250,14 @@ far.**
 
 **The fleet-level wall spanning nodes is still unbuilt** and remains the differentiator no
 appliance vendor can match; this is the single-appliance half.
+
+
+**Its fleet-level half is BUILT as W3-3d** (`feat/fleet-video-wall`, benched 2026-08-25: 17/17
+on a real two-appliance fleet plus 25/25 en and 27/27 ar on the screen). A wall on the control
+plane arranges cameras from ANY appliance, is named, shared and saved centrally rather than in
+one browser, and — the part no appliance can do — pulls up the camera raising the alarm in a
+building nobody was watching. The screen check found the first build rendering a "video wall"
+of 40-pixel strips with every assertion green; it was visible only by opening the screenshot.
 
 **W3-4 · Loitering / left-behind / directional** (F-15) — SHIPPED and benched on
 `feat/dwell-rules`. Three evaluators over the tracker line crossing already used, in
@@ -1571,7 +1590,11 @@ otherwise the real reason.
 
 **Not claimed:** it restores RECORDING, not the recordings — footage on the failed appliance
 is still only there, and the only copies elsewhere are what the W2-3 clip archive already
-pulled off it. No capacity admission control: a spare is not stopped from taking on more
+pulled off it. **Capacity: CLOSED by W3-7b** (`feat/failover-capacity`, benched 2026-08-25, 11/11 against a
+real appliance's own estimate) — the control plane now asks the spare what it can carry, counts
+the spare's own cameras and every other plan committed to it, refuses to call an over-committed
+plan READY, and still never blocks a takeover, because nothing recording is the one outcome
+that cannot be undone. The original gap read: a spare is not stopped from taking on more
 cameras than it can encode, and the drill does not measure load (the honest half — whether it
 can reach and log into each camera — is measured).
 

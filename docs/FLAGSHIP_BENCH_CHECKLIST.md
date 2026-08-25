@@ -1837,3 +1837,136 @@ state in the window where the thing under test is the only thing that can produc
   covered by `fleet_policy_live_test.go` and the API bench, not by the screen.
 * **One setting, one section.** The round trip proves the mechanism, not every field in the
   catalog.
+
+---
+
+## W3-7b — failover capacity (`bench_w37b_capacity.py`)
+
+11/11 against a real appliance's own estimate, closing the gap W3-7 shipped with in writing.
+
+### What is measured
+
+The spare's `GET /api/capacity` answered **54** on the bench hardware. The bench then creates
+that many cameras plus five, stages, and requires the verdict to be `over` with `headroom = -5`
+— real numbers from a real appliance through the real tunnel, not a model kept in the control
+plane. It also requires the DRILL to refresh the answer (one button, both halves of the
+question it is asked), and requires the verdict to CLEAR when the cameras are taken away — a
+verdict that can only go red is half a feature.
+
+### The two traps it hit, both in the bench
+
+* **A black-holed camera address costs a full connect timeout PER CAMERA.** The appliance
+  probes a camera before saving it, so the first version took minutes to create *one*. The
+  node's own loopback refuses instantly and is the same "does not answer" for a count.
+* **Saving a discovered camera UPSERTS BY HOST.** Fifty cameras at one address are one camera.
+  The first run staged "1 wanted" against a fleet of five, and every capacity assertion after
+  it failed for that reason rather than the one under test. `127.0.0.2`, `127.0.0.3` … are
+  distinct devices that all refuse immediately.
+
+### Not claimed
+
+* **The readiness composition is not proved live.** A drill that passes outright on a spare
+  that is over capacity must read "over capacity" rather than "ready" — that needs 55+ cameras
+  that all actually open, on a fleet whose only subject is a test pattern. Unit-tested and
+  mutation-checked in `failover_capacity_test.go`.
+* **A spare shared by two plans is not proved live** either: the harness has two appliances and
+  a second plan onto the same spare needs a third recorder. `committedTo` is a pure function
+  with its own test.
+* **The capacity figure is an estimate**, and the appliance says so. Nothing here measures what
+  a spare can really encode under load; it reports what the spare claims, which is exactly what
+  the screen says too.
+
+---
+
+## W3-3c — a feed entry into a case (`bench_w33c_case_feed.py`, `uicheck_case_feed.js`)
+
+17/17 on a real appliance, plus 19/19 en and 21/21 ar on the screen. W3-3a shipped with this as
+a named follow-up and with its case dialog claiming to be *"shared by every screen that can
+produce evidence — the timeline, the object grid, the alert log"*. Only the timeline used it.
+
+### What is measured
+
+A feed entry that names a camera goes into a case with footage around it, and the **hold ledger
+counts it** — checked from two places that answer independently (the case detail's `hold`, and
+the case list's `footageItems`), because the hold is the whole reason a case protects anything.
+A feed entry with no camera goes in too and holds nothing. The provenance survives. And the
+refusals hold: the same entry twice, an entry that does not exist, and a closed case.
+
+The screen check then drives it end to end — button on the row, dialog, a new case named, a
+note typed — and **reads the case back off the server**, not out of the DOM the click just
+re-rendered.
+
+### What it found
+
+**The Add button was permanently disabled on this path.** The dialog's guard counted only the
+timeline's `items`, and a feed entry is sent by id and carries none. The dialog opened, the
+button looked ordinary, and pressing it did nothing at all. A check that dispatched `.click()`
+and trusted the dialog closing would have called it green — this one dispatched a real mouse
+event, read `disabled` back, and then failed on the server read anyway. Fixed, and the dialog
+now also **names the entry it is about to file**: an empty list above the note was a dialog
+asking an operator to confirm something it would not name.
+
+### And one the bench found in ITSELF
+
+It checked for the new-case title field **before** choosing "a new case" — and that field only
+exists when no existing case is selected. On the second run, with a case left by the first, it
+reported "no text input" for a dialog that was working perfectly. Third time this programme has
+produced a check that fails on correct output.
+
+### Not claimed
+
+* **The alert resolution is not proved live.** A feed entry pointing at an AI alert becomes an
+  alert item with the alert's own camera, time and snapshot; that needs a real detection and the
+  harness films a test pattern. Unit-tested and mutation-checked in `case_notification_test.go`,
+  including the case where the alert has been purged and the feed row has not.
+* **The held footage is a span with nothing behind it here.** The bench's cameras never
+  recorded, so the hold correctly reports `missing` — which is the hold being truthful, not a
+  failure, and the bench prints it rather than hiding it.
+
+---
+
+## W3-3d — fleet video wall (`bench_w33d_fleet_wall.py`, `uicheck_fleet_wall.js`)
+
+17/17 on a real two-appliance fleet, plus 25/25 en and 27/27 ar on the screen. W3-3b built the
+wall for ONE recorder and left this half unbuilt — the differentiator, because a wall that
+spans machines needs something that can see all of them.
+
+### What is measured
+
+The arrangement survives the round trip **in order**, with tiles that name an appliance as well
+as a camera, resolved against the live fleet. A tile on an appliance that is **offline** is
+counted separately from one on an appliance that is **gone** — the bench `docker stop`s node-b
+and waits for the count to move, because the status is read at read time and not stored on the
+row. Neither kind is silently dropped. Plus the refusals: an unknown layout, no cameras, the
+same camera twice, a strobe instead of a rotation, a name already taken, and two walls claiming
+to be the default.
+
+The screen check builds a wall **through the form**, picking cameras from more than one
+appliance, and reads it back off the server.
+
+### What it found
+
+**A "video wall" of 40-pixel strips.** The first build had no row height on the grid, so every
+tile collapsed to the height of its own caption. Every assertion passed — the tiles were all
+present, all named, all correctly addressed — and the screen was useless. **Found by opening
+the screenshot**, the fourth item running to be caught that way after W3-7, W3-6b and W2-1. The
+check now MEASURES the rendered tile and fails under 120px, and the run leaves a mid-run
+screenshot behind because the last frame of a run is an empty screen after the cleanup.
+
+The same look confirmed the differentiator working by accident: a camera on **node-b** raised
+an alert, and the wall pulled node-b's cameras up with a red ring and said so — an alert on one
+appliance changing what a screen shows about another. That is now asserted rather than admired.
+
+### And one the bench found in ITSELF
+
+The screen check picked cameras from "every appliance offered" and passed with two tiles from
+ONE appliance, because the other had no cameras left from an earlier bench — a run that would
+have proved the opposite of the feature. It now seeds a camera on any appliance that has none.
+
+### Not claimed
+
+* **That the tiles PLAY.** The relay behind them is the existing cross-node WebRTC path,
+  benched separately; a fleet with a test pattern and no ffmpeg on the spare cannot show video
+  in a headless browser. What is proved is the arrangement, the resolution and the refusals.
+* **No capacity check on the wall.** 32 relayed streams may be more than a browser or a link
+  can carry; the limit is a bound, not a measurement, and the screen says so.

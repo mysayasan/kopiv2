@@ -333,6 +333,12 @@ export function SideNav({ activeTab, busy, onTab, onLogout, session, nodes, mana
         ...(sessionCanGet(session, '/api/nodes')
           ? [
               navItem('liveviews', t('nav.liveViews'), 'video', 'steel'),
+              // The SAVED wall sits next to the scratchpad it is the grown-up version of:
+              // Live Views is per browser and rebuilt every shift; a fleet wall is named,
+              // shared, and pulls up whatever is raising the alarm.
+              ...(sessionCanGet(session, '/api/fleet-walls')
+                ? [navItem('fleetwall', t('nav.fleetWall'), 'grid4', 'steel')]
+                : []),
               navItem('objects', t('nav.objects'), 'eye', 'teal'),
               navItem('teach', t('nav.teach'), 'wand', 'amber'),
               { id: 'nodes', render: () => (

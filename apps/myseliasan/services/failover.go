@@ -125,6 +125,8 @@ type FailoverPlanView struct {
 	ReadyState string `json:"readyState"`
 	// Cameras is the per-camera drill detail from the spare, when it has been asked.
 	Cameras []FailoverCameraView `json:"cameras"`
+	// Capacity is what the spare said it can carry, against what is committed to it.
+	Capacity FailoverCapacityView `json:"capacity"`
 }
 
 // FailoverCameraView is one staged camera as the spare reported it.
@@ -156,7 +158,64 @@ const (
 	FailoverReadyBlind       = "blind"
 	FailoverReadyActive      = "active"
 	FailoverReadyStandbyDown = "standby-down"
+	// FailoverReadyOvercommitted means every staged camera was reachable and the spare
+	// still cannot be called ready: it does not have the capacity to carry them.
+	//
+	// ITS OWN STATE, not a variant of partial. "Some cameras could not be opened" sends
+	// somebody to a network or a credential; "the spare would be over its own estimate"
+	// sends them to a bigger spare or a second one, and telling them the wrong thing during
+	// an outage costs the time that mattered.
+	FailoverReadyOvercommitted = "overcommitted"
 )
+
+// Capacity verdicts. Each is a different thing to do, which is the only reason to have more
+// than one.
+const (
+	// CapacityUnknown means the spare has not been asked, or could not answer. NOT "fine" —
+	// the same rule as an untested drill.
+	CapacityUnknown = "unknown"
+	// CapacityFits means the spare's own estimate leaves room for everything committed to it.
+	CapacityFits = "fits"
+	// CapacityTight means it fits with less than a fifth of the estimate to spare. Worth
+	// saying, because a capacity estimate is an estimate.
+	CapacityTight = "tight"
+	// CapacityOver means the commitments exceed what the spare says it can carry.
+	CapacityOver = "over"
+)
+
+// capacityTightFraction is how much headroom must remain for a fit to be called comfortable.
+// A capacity figure is an estimate — the appliance says so itself — and a plan that fits with
+// one camera to spare is a plan that stops fitting the day somebody adds a camera.
+const capacityTightFraction = 0.2
+
+// FailoverCapacityView is what the spare said about its own capacity, and what this plan
+// would ask of it.
+//
+// EVERY NUMBER HERE COMES FROM THE APPLIANCE. The control plane does not model what a box can
+// encode; it asks, and reports the answer along with how confident the appliance was.
+type FailoverCapacityView struct {
+	// State is one of the Capacity* codes, rendered by the SPA in the operator's language.
+	State string `json:"state"`
+	// EstimatedMax is the spare's own estimate of the cameras it can carry.
+	EstimatedMax int `json:"estimatedMax"`
+	// OwnCameras is how many the spare already has of its own — they do not stop being
+	// recorded because somebody else's arrived.
+	OwnCameras int `json:"ownCameras"`
+	// Committed is how many cameras OTHER enabled plans have staged onto this same spare.
+	// A spare may cover several recorders, and the question is never about one plan alone.
+	Committed int `json:"committed"`
+	// Wanted is what this plan would add.
+	Wanted int `json:"wanted"`
+	// Headroom is EstimatedMax - (OwnCameras + Committed + Wanted). Negative is the whole
+	// point of this view.
+	Headroom int `json:"headroom"`
+	// CheckedAt is when the spare was last asked; 0 means never.
+	CheckedAt int64 `json:"checkedAt"`
+	// Confidence and LimitingWorkload are the appliance's own words about its estimate, so
+	// an operator can weigh it rather than take it as a measurement.
+	Confidence       string `json:"confidence,omitempty"`
+	LimitingWorkload string `json:"limitingWorkload,omitempty"`
+}
 
 // SaveFailoverPlanRequest creates or updates a plan.
 type SaveFailoverPlanRequest struct {
@@ -275,7 +334,7 @@ func (s *failoverService) List(ctx context.Context) ([]FailoverPlanView, error) 
 	}
 	out := make([]FailoverPlanView, 0, len(plans))
 	for _, plan := range plans {
-		out = append(out, s.view(plan, byNode))
+		out = append(out, s.view(plan, byNode, plans))
 	}
 	sortPlansByProtected(out)
 	return out, nil
@@ -290,7 +349,8 @@ func (s *failoverService) Get(ctx context.Context, id int64) (*FailoverPlanView,
 	if err != nil {
 		return nil, err
 	}
-	view := s.view(plan, byNode)
+	others, _ := s.allPlans(ctx)
+	view := s.view(plan, byNode, others)
 	// The per-camera detail is read LIVE from the spare rather than mirrored into a column
 	// here, for the same reason PTZ presets are not mirrored: the spare is the only thing
 	// that knows what it is holding, and two answers to "which cameras are staged" part
@@ -448,7 +508,8 @@ func (s *failoverService) Save(ctx context.Context, req SaveFailoverPlanRequest,
 			displayNodeName(pNode), displayNodeName(sNode), holdDown, plan.AutoActivate),
 		map[string]any{"autoActivate": plan.AutoActivate, "holdDownSeconds": holdDown, "enabled": plan.Enabled})
 
-	view := s.view(&plan, byNode)
+	others, _ := s.allPlans(ctx)
+	view := s.view(&plan, byNode, others)
 	return &view, nil
 }
 
@@ -559,6 +620,12 @@ func (s *failoverService) stage(ctx context.Context, plan *entities.FailoverPlan
 	if plan.State != entities.FailoverStateActive {
 		plan.State = entities.FailoverStateStaged
 	}
+	// Now that the camera count is known, ask the spare what it can carry. Done here rather
+	// than on every page load because it is a tunneled round trip, and here rather than only
+	// in the drill because staging is the moment the number this depends on changes.
+	if others, err := s.allPlans(ctx); err == nil {
+		s.refreshCapacity(ctx, plan, others)
+	}
 	s.persist(ctx, plan)
 	return set, nil
 }
@@ -606,6 +673,12 @@ func (s *failoverService) drill(ctx context.Context, plan *entities.FailoverPlan
 	plan.DrillReadiness = set.Readiness
 	plan.DrillReachable = set.Reachable
 	plan.DrillTotal = set.Total
+	// THE HALF THE DRILL WAS MISSING. Opening every camera proves the spare can REACH them.
+	// It proves nothing about whether it could encode them all at once, and a drill that
+	// answers only the first question sends an operator away believing both were answered.
+	if others, err := s.allPlans(ctx); err == nil {
+		s.refreshCapacity(ctx, plan, others)
+	}
 	s.persist(ctx, plan)
 	return set, nil
 }
@@ -618,6 +691,12 @@ func (s *failoverService) Activate(ctx context.Context, id int64, actor int64, a
 	if plan.State == entities.FailoverStateActive {
 		return nil, errors.New("the spare is already carrying these cameras")
 	}
+	// CAPACITY NEVER REFUSES A TAKEOVER. This is the one place in the feature where a
+	// warning must not become a gate: a recorder is down, and the alternative to a spare
+	// that will be over its own ESTIMATE is nothing recording at all — which is the single
+	// outcome that cannot be undone afterwards. It is recorded and it is announced, so
+	// nobody discovers it from a graph a week later, and then it proceeds.
+	overCapacity := plan.CapacityState == CapacityOver
 	if plan.LastStagedAt == 0 {
 		// The honest refusal. There is nothing on the spare to activate, and the failure
 		// an operator must never meet is pressing this in an emergency and being told
@@ -653,9 +732,16 @@ func (s *failoverService) Activate(ctx context.Context, id int64, actor int64, a
 		fmt.Sprintf("%s took over %s's cameras (%d of %d recording), triggered by %s",
 			plan.StandbyNodeId, plan.ProtectedNodeId, recording, total, how),
 		map[string]any{"automatic": automatic, "recording": recording, "total": total,
-			"outcomes": cameraOutcomes(set)})
-	s.notifyPlan(ctx, FailoverNotifyActivated, plan,
-		fmt.Sprintf("%d of %d camera(s) are recording on the spare", recording, total))
+			"overCapacity": overCapacity, "outcomes": cameraOutcomes(set)})
+	note := fmt.Sprintf("%d of %d camera(s) are recording on the spare", recording, total)
+	if overCapacity {
+		// Said in the notification, not only in the trail. An operator who is told the
+		// takeover succeeded and finds out days later that the spare was over its own
+		// estimate the whole time has been told something true and useless.
+		note += fmt.Sprintf(" — and this is more than the spare estimates it can carry (%d of %d), so expect dropped frames until the recorder is back",
+			plan.StandbyOwn+plan.CameraCount, plan.StandbyMax)
+	}
+	s.notifyPlan(ctx, FailoverNotifyActivated, plan, note)
 	return s.viewWith(ctx, plan, set)
 }
 
@@ -898,6 +984,97 @@ func cameraOutcomes(set *standbySetPayload) map[string]string {
 
 // send makes one tunneled call to a node and unwraps the standard {message,result}
 // envelope, so every caller here works with the payload rather than the envelope.
+// standbyCapacityPayload is the part of mymatasan's GET /api/capacity this needs. The
+// appliance computes it; nothing here models what a box can encode.
+type standbyCapacityPayload struct {
+	EstimatedMax     int    `json:"estimatedMax"`
+	CurrentCameras   int    `json:"currentCameras"`
+	Confidence       string `json:"confidence"`
+	LimitingWorkload string `json:"limitingWorkload"`
+}
+
+// readCapacity asks the spare what it can carry.
+//
+// BEST EFFORT ON PURPOSE. A spare that cannot answer leaves the verdict "unknown", which is
+// its own state and explicitly not "fine" — the same rule as an untested drill. It never
+// fails the operation it was called from: refusing to stage a plan because a capacity read
+// timed out would trade a real protection for an estimate.
+func (s *failoverService) readCapacity(ctx context.Context, plan *entities.FailoverPlan) *standbyCapacityPayload {
+	body, err := s.send(ctx, plan.StandbyNodeId, http.MethodGet, "/api/capacity", nil)
+	if err != nil {
+		s.logf("failover: capacity read from %s: %v", plan.StandbyNodeId, err)
+		return nil
+	}
+	var out standbyCapacityPayload
+	if err := json.Unmarshal(body, &out); err != nil {
+		s.logf("failover: capacity read from %s: %v", plan.StandbyNodeId, err)
+		return nil
+	}
+	if out.EstimatedMax <= 0 {
+		// An appliance that will not put a number on it has not answered the question.
+		return nil
+	}
+	return &out
+}
+
+// refreshCapacity reads the spare's capacity and stores the verdict on the plan. Called from
+// the two places that already talk to the spare and are ABOUT whether this would work: staging
+// and the drill.
+func (s *failoverService) refreshCapacity(ctx context.Context, plan *entities.FailoverPlan, others []*entities.FailoverPlan) {
+	cap := s.readCapacity(ctx, plan)
+	if cap == nil {
+		plan.StandbyMax = 0
+		plan.StandbyOwn = 0
+		plan.CapacityState = CapacityUnknown
+		plan.CapacityCheckedAt = time.Now().Unix()
+		return
+	}
+	plan.StandbyMax = cap.EstimatedMax
+	plan.StandbyOwn = cap.CurrentCameras
+	plan.CapacityCheckedAt = time.Now().Unix()
+	plan.CapacityState = capacityVerdict(cap.EstimatedMax, cap.CurrentCameras,
+		committedTo(plan, others), plan.CameraCount)
+}
+
+// committedTo counts the cameras OTHER enabled plans have staged onto the same spare.
+//
+// THE REASON THIS IS NOT A ONE-PLAN QUESTION. A spare may cover several recorders — the
+// feature says so — and each plan on its own can look comfortable while the three of them
+// together cannot be carried. The count is of what is STAGED (CameraCount), because that is
+// what would arrive if the protected appliance died.
+func committedTo(plan *entities.FailoverPlan, others []*entities.FailoverPlan) int {
+	total := 0
+	for _, other := range others {
+		if other == nil || other.Id == plan.Id || !other.Enabled {
+			continue
+		}
+		if other.StandbyNodeId != plan.StandbyNodeId {
+			continue
+		}
+		total += other.CameraCount
+	}
+	return total
+}
+
+// capacityVerdict turns four numbers into the one word a screen leads with.
+//
+// The spare's OWN cameras are counted. They do not stop being recorded because somebody
+// else's arrived, and a verdict that ignored them would promise a spare could take forty
+// cameras while it was already carrying thirty.
+func capacityVerdict(estimatedMax, own, committed, wanted int) string {
+	if estimatedMax <= 0 {
+		return CapacityUnknown
+	}
+	used := own + committed + wanted
+	if used > estimatedMax {
+		return CapacityOver
+	}
+	if float64(estimatedMax-used) < float64(estimatedMax)*capacityTightFraction {
+		return CapacityTight
+	}
+	return CapacityFits
+}
+
 func (s *failoverService) send(ctx context.Context, nodeID, method, path string, body []byte) (json.RawMessage, error) {
 	if s.sender == nil {
 		return nil, errors.New("the control channel is not available")
@@ -1044,7 +1221,8 @@ func (s *failoverService) viewWith(ctx context.Context, plan *entities.FailoverP
 	if err != nil {
 		return nil, err
 	}
-	view := s.view(plan, byNode)
+	others, _ := s.allPlans(ctx)
+	view := s.view(plan, byNode, others)
 	if set != nil {
 		view.Cameras = cameraViews(set)
 	}
@@ -1072,8 +1250,25 @@ func cameraViews(set *standbySetPayload) []FailoverCameraView {
 // which is a different network path, different credentials and the thing that actually
 // fails. Only a drill answers that, so a plan that has never been drilled reports
 // "untested" no matter how recently it was staged.
-func (s *failoverService) view(plan *entities.FailoverPlan, byNode map[string]*entities.ManagedNode) FailoverPlanView {
+func (s *failoverService) view(plan *entities.FailoverPlan, byNode map[string]*entities.ManagedNode, others []*entities.FailoverPlan) FailoverPlanView {
 	view := FailoverPlanView{Plan: plan, Cameras: []FailoverCameraView{}}
+	// Rendered from what the spare last SAID, not by asking it now: a fleet screen listing
+	// twenty plans must not make twenty tunneled round trips to load. The stamp travels with
+	// it so the screen can say how old the answer is.
+	view.Capacity = FailoverCapacityView{
+		State:        plan.CapacityState,
+		EstimatedMax: plan.StandbyMax,
+		OwnCameras:   plan.StandbyOwn,
+		Committed:    committedTo(plan, others),
+		Wanted:       plan.CameraCount,
+		CheckedAt:    plan.CapacityCheckedAt,
+	}
+	if view.Capacity.State == "" {
+		view.Capacity.State = CapacityUnknown
+	}
+	if plan.StandbyMax > 0 {
+		view.Capacity.Headroom = plan.StandbyMax - (plan.StandbyOwn + view.Capacity.Committed + plan.CameraCount)
+	}
 	if p := byNode[plan.ProtectedNodeId]; p != nil {
 		view.ProtectedName = displayNodeName(p)
 		view.ProtectedStatus = p.Status
@@ -1098,6 +1293,13 @@ func (s *failoverService) view(plan *entities.FailoverPlan, byNode map[string]*e
 		view.ReadyState = FailoverReadyNotStaged
 	case plan.LastDrillAt == 0 || plan.DrillReadiness == "" || plan.DrillReadiness == standbyReadyUntested:
 		view.ReadyState = FailoverReadyUntested
+	case plan.DrillReadiness == standbyReadyReady && plan.CapacityState == CapacityOver:
+		// EVERY CAMERA REACHABLE AND STILL NOT READY. Reachability and capacity are two
+		// different promises, and a drill only ever answered the first. A spare that would
+		// be over its own estimate the moment it took these cameras is not a spare this
+		// plan can claim, and calling it ready would be the same lie as calling an untested
+		// plan ready — arrived at more expensively.
+		view.ReadyState = FailoverReadyOvercommitted
 	case plan.DrillReadiness == standbyReadyReady:
 		view.ReadyState = FailoverReadyReady
 		view.Ready = true

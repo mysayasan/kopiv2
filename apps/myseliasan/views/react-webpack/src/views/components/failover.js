@@ -24,11 +24,11 @@ import { api, formatTimestamp } from '../lib/helpers';
 
 // Ready states, in the order the summary tiles read. The ones asking for an action come
 // first — a screen that leads with what is fine buries what is not.
-const READY_ORDER = ['not-staged', 'untested', 'partial', 'blind', 'standby-down', 'active', 'ready', 'disabled'];
+const READY_ORDER = ['not-staged', 'untested', 'partial', 'blind', 'overcommitted', 'standby-down', 'active', 'ready', 'disabled'];
 
 // The states that mean somebody should do something. Used for ordering and for the tile
 // emphasis; "active" is not one of them — a takeover in progress is working as intended.
-const NEEDS_ATTENTION = new Set(['not-staged', 'untested', 'partial', 'blind', 'standby-down']);
+const NEEDS_ATTENTION = new Set(['not-staged', 'untested', 'partial', 'blind', 'overcommitted', 'standby-down']);
 
 const call = (path, options = {}) => api(path, { noRedirect: true, ...options }).catch(() => ({ ok: false }));
 
@@ -72,6 +72,34 @@ function ReadyBadge({ state }) {
   const t = useT();
   const key = READY_ORDER.includes(state) ? state : 'untested';
   return <span className={`fo-badge fo-badge--${key}`} data-fo-ready={key}>{t(`fo.ready.${key}`)}</span>;
+}
+
+// CapacityLine reports the spare's own capacity estimate against everything committed to it.
+//
+// It is deliberately quiet when the answer is comfortable and loud when it is not: a line
+// that always shouts is a line people stop reading, and the one state that has to be read is
+// "this spare cannot carry what you have pointed at it".
+function CapacityLine({ capacity }) {
+  const t = useT();
+  const c = capacity || {};
+  const state = c.state || 'unknown';
+  if (state === 'unknown') {
+    // Said, not hidden. "We have not been able to ask" is its own answer, exactly as it is
+    // for an untested drill — and an appliance too old to have the endpoint lands here.
+    return (
+      <p className="fo-capacity fo-capacity--unknown" data-fo-capacity="unknown">
+        <Ico n="info" sz={13} /> {t('fo.capacityUnknown')}
+      </p>
+    );
+  }
+  const used = (c.ownCameras || 0) + (c.committed || 0) + (c.wanted || 0);
+  return (
+    <p className={`fo-capacity fo-capacity--${state}`} data-fo-capacity={state}>
+      <Ico n={state === 'over' ? 'warning' : state === 'tight' ? 'info' : 'check-ok'} sz={13} />{' '}
+      {t(`fo.capacity.${state}`, { used, max: c.estimatedMax || 0 })}
+      {c.committed ? ' ' + t('fo.capacityShared', { n: c.committed }) : ''}
+    </p>
+  );
 }
 
 function NodeStatusPill({ status }) {
@@ -263,6 +291,11 @@ function PlanCard({ view, result, canWrite, busy, onAct, onEdit, onDelete }) {
       {/* The sentence the whole screen exists to make honest. Composed here, from the
           state, so it is in the operator's language. */}
       <p className="fo-ready-hint">{t(`fo.readyHint.${READY_ORDER.includes(view.readyState) ? view.readyState : 'untested'}`)}</p>
+
+      {/* WHAT THE SPARE SAID IT CAN CARRY. A drill answers whether the spare can REACH the
+          cameras; this answers whether it could encode them, which is a different promise
+          and the one W3-7 shipped without. Every number here came from the appliance. */}
+      <CapacityLine capacity={view.capacity} />
 
       {outcomes.length ? (() => {
         const allGood = handedBack ? stopped === outcomes.length : recording === outcomes.length;

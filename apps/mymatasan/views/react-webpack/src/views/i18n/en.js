@@ -491,6 +491,7 @@ export default {
   'notif.fType': 'Type',
   'notif.acknowledge': 'Acknowledge',
   'notif.dismiss': 'Dismiss',
+  'notif.addToCase': 'Add to case',
   'notif.viewClip': 'View clip',
   'notif.noClip': 'No clip recorded',
   'notif.cameraHealthSettings': 'Camera Health settings',

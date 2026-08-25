@@ -80,3 +80,19 @@ instant has none". The first version reported the second as the first: a sixty-s
 whose opening seconds predated the recording was labelled "Footage gone" and refused to play,
 on a case that was simultaneously and correctly reporting that it held four clips of it. Found
 by the browser pass; the 48 API checks all passed through it.
+
+## Putting a feed entry into a case (W3-3c)
+
+W3-3a shipped with this as a named follow-up. Until it existed, the only route from *noticing*
+something on the Notifications screen to having it in a case was to read the time off the row,
+go to the timeline, find it again and bookmark it — which loses the provenance and takes long
+enough that people do not do it.
+
+`AddNotification` (see `case_notification.go.md`) is its own entry point rather than a `Kind` on
+`AddItem`, because **the server decides what the entry actually refers to**. A client that made
+that decision would make it differently on every screen that grows this button.
+
+`CaseItemNotification` is the one kind whose camera is optional. "The recorder rebooted at
+03:12" has no footage and is still the fact that explains the gap either side of it;
+`buildItem` zeroes its span so a hold query is never pinned by an item that names no camera,
+and `HoldsFootage` already reports the rest correctly with no special case.

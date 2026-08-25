@@ -481,6 +481,7 @@ export default {
   'notif.fType': 'Jenis',
   'notif.acknowledge': 'Akui',
   'notif.dismiss': 'Tolak',
+  'notif.addToCase': 'Tambah ke kes',
   'notif.viewClip': 'Lihat klip',
   'notif.noClip': 'Tiada klip dirakam',
   'notif.cameraHealthSettings': 'Tetapan Kesihatan Kamera',

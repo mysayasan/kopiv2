@@ -457,6 +457,19 @@ WHERE id NOT IN (
 			},
 		},
 		{
+			// W3-7 shipped without a capacity leg: a drill proved the spare could REACH the
+			// cameras and said nothing about whether it could encode them. These four
+			// columns hold what the spare last said about itself. New columns on an
+			// existing table, so a migration rather than the auto-migrator, and backfilled
+			// because an ADD COLUMN without a default leaves existing rows NULL and the
+			// entity's non-pointer int/string fields cannot scan one.
+			ID:   "20260825-01-failover-capacity",
+			Name: "add standby capacity columns to failover_plan",
+			Exec: func(ctx context.Context, tx *sql.Tx, engine string) error {
+				return ensureFailoverCapacityColumns(ctx, tx, engine)
+			},
+		},
+		{
 			// The rollup gained a per-source dimension (per-node baselines); existing
 			// tables need the source column added and the old slot unique index dropped
 			// so the auto-migrator recreates it including source. Shared with mymatasan.
@@ -568,6 +581,36 @@ func ensureSiteGeoColumns(ctx context.Context, tx *sql.Tx, engine string) error 
 
 // ensureFloorDesignColumn adds the design column (drawn-plan vector JSON) to floor_plan if absent
 // and backfills NULLs to ” (the entity's Design string cannot scan a NULL). Idempotent.
+// ensureFailoverCapacityColumns adds the standby-capacity columns to failover_plan and
+// backfills NULLs. Idempotent, like every other migration here.
+func ensureFailoverCapacityColumns(ctx context.Context, tx *sql.Tx, engine string) error {
+	existing, err := tableColumns(ctx, tx, engine, "failover_plan")
+	if err != nil {
+		return err
+	}
+	cols := []struct {
+		name    string
+		colType string
+		zero    string
+	}{
+		{"standby_max", "INTEGER", "0"},
+		{"standby_own", "INTEGER", "0"},
+		{"capacity_state", "TEXT", "''"},
+		{"capacity_checked_at", "INTEGER", "0"},
+	}
+	for _, c := range cols {
+		if !existing[c.name] {
+			if _, err := tx.ExecContext(ctx, "ALTER TABLE failover_plan ADD COLUMN "+c.name+" "+c.colType); err != nil {
+				return fmt.Errorf("add failover_plan.%s: %w", c.name, err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE failover_plan SET "+c.name+" = "+c.zero+" WHERE "+c.name+" IS NULL"); err != nil {
+			return fmt.Errorf("backfill failover_plan.%s NULLs: %w", c.name, err)
+		}
+	}
+	return nil
+}
+
 func ensureFloorDesignColumn(ctx context.Context, tx *sql.Tx, engine string) error {
 	existing, err := tableColumns(ctx, tx, engine, "floor_plan")
 	if err != nil {
@@ -750,6 +793,9 @@ func (m *module) Entities() []any {
 		// Mobile push: one row per browser that has agreed to be woken by this control
 		// plane. New table; the auto-migrator creates it.
 		appentities.PushSubscription{},
+		// Fleet video walls: saved camera arrangements that SPAN appliances — the wall a
+		// control room needs and no single recorder can hold. New table.
+		appentities.FleetWall{},
 		// Fleet map: sites + uploaded floor plans (indoor view); node/camera placements.
 		appentities.Site{},
 		appentities.FloorPlan{},
@@ -1778,6 +1824,14 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		func(f string, a ...any) { deps.Logger.Warnf("myseliasan.push", f, a...) })
 	notificationService.Register(pushService.Channel())
 	apis.NewPushApi(api, *deps.Auth, controlSession, pushService)
+
+	// Fleet video walls (W3-3d). The cross-appliance half of W3-3b: mymatasan's own wall
+	// arranges cameras on one recorder, and a guard station covers four buildings. It reuses
+	// the registry only through the narrow node-lister the policy reconciler uses, because a
+	// wall service holding the whole registry is one refactor away from being able to
+	// release an appliance.
+	fleetWallService := services.NewFleetWallService(deps.Db, registry, auditService)
+	apis.NewFleetWallApi(api, *deps.Auth, controlSession, fleetWallService)
 
 	// One pass shortly after boot, so the screen has an answer before the first tick. It is
 	// deliberately not immediate: nodes dial the control channel after this function

@@ -12,6 +12,7 @@ import './styles/fleet-rules.css';
 import './styles/fleet-policy.css';
 import './styles/failover.css';
 import './styles/push.css';
+import './styles/fleet-wall.css';
 import { SideNav, WorkspaceHeader } from './components/layout';
 import { ToastStack, LangProvider, normalizeLang, useT, AppFooter } from '@shared';
 import { ManualProvider, ManualLibrary } from '@shared/Manual';
@@ -26,6 +27,7 @@ import { FleetRulesPage } from './components/fleet_rules';
 import { FleetPolicyPage } from './components/fleet_policy';
 import { FailoverPage } from './components/failover';
 import { LiveViewsPage } from './components/live_views';
+import { FleetWallPage } from './components/fleet_wall';
 import { ObjectsPage } from './components/objects';
 import { TeachPage } from './components/teach';
 import { NotificationsPage } from './components/notifications';
@@ -294,6 +296,7 @@ function AppInner({ lang, onLangChange }) {
           </Suspense>
         ) : null}
         {activeTab === 'liveviews' && canNodes ? <LiveViewsPage nodes={nodes} /> : null}
+        {activeTab === 'fleetwall' ? <FleetWallPage session={session} refreshSignal={notifVersion} onToast={pushToast} /> : null}
         {activeTab === 'objects' && canNodes ? <ObjectsPage nodes={nodes} onToast={pushToast} /> : null}
         {activeTab === 'teach' && canNodes ? <TeachPage nodes={nodes} onToast={pushToast} /> : null}
         {activeTab === 'fleetrules' && canFleetRules ? <FleetRulesPage nodes={nodes} session={session} onToast={pushToast} prefill={rulePrefill} onPrefillConsumed={() => setRulePrefill(null)} /> : null}

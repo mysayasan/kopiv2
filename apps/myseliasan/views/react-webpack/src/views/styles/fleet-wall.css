@@ -1,0 +1,189 @@
+/* Fleet video walls (W3-3d).
+ *
+ * Logical properties throughout, so the Arabic screen is this screen mirrored rather than a
+ * second layout to maintain. The status colours are stated literally rather than through
+ * --ui-* tokens, for the reason the failover screen states its own: red here means "somebody
+ * has to look at this now" and it has to mean that in every theme, so each one carries an
+ * explicit dark counterpart at the bottom of the file. */
+
+.fw-lead {
+  margin: 0 0 8px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ui-text, #1f2937);
+}
+
+/* What this is NOT. Set apart, because somebody choosing between this and the Live Views
+ * page is choosing between a saved arrangement and a scratchpad. */
+.fw-limit {
+  margin: 0;
+  padding-inline-start: 10px;
+  border-inline-start: 3px solid rgba(148, 163, 184, 0.55);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ui-text-muted, #64748b);
+}
+
+.fw-picker {
+  min-width: 160px;
+  margin-inline-end: 8px;
+}
+
+.fw-warn {
+  font-size: 12px;
+  font-weight: 560;
+  color: #b45309;
+  margin-inline-end: 8px;
+}
+
+/* An appliance that is no longer in the fleet is a different problem from one that is merely
+ * offline, and it needs a different colour as well as a different sentence. */
+.fw-warn--gone { color: #b91c1c; }
+
+.fw-alarm {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: rgba(220, 38, 38, 0.12);
+  color: #b91c1c;
+  font-size: 12px;
+  font-weight: 620;
+  margin-inline-end: 8px;
+}
+
+.fw-grid {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  /* THE ROWS NEED A HEIGHT. Without one the tiles collapse to the height of their own
+   * caption — the first build of this screen rendered a "video wall" of 40-pixel strips, and
+   * every assertion passed because the tiles were all present, all named and all correctly
+   * addressed. It was visible only by opening the screenshot. Rows are sized from the aspect
+   * ratio a camera actually produces rather than a fixed pixel height, so a 2x2 and a 4x4 both
+   * fill the width without distorting the picture. */
+  grid-auto-rows: minmax(0, auto);
+}
+
+.fw-tile > :not(.fw-tile-head) {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* The tile body — whatever the relay renders into it — gets the 16:9 box. */
+.fw-tile-body,
+.fw-tile .camera-tile,
+.fw-tile video,
+.fw-tile img {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  display: block;
+}
+
+.fw-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  /* A floor as well as a ratio: a tile whose content has not arrived yet must still hold its
+   * place, or the whole wall reflows the moment one appliance is slow. */
+  min-height: 160px;
+  border: 1px solid var(--ui-border, #e2e8f0);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0b1220;
+}
+
+/* THE ALARMED TILE. A ring rather than a tint, because a tint over live video is a tint over
+ * the thing somebody is trying to look at. */
+.fw-tile--alarmed {
+  outline: 3px solid #dc2626;
+  outline-offset: -3px;
+}
+
+.fw-tile-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 9px;
+  background: rgba(15, 23, 42, 0.85);
+  color: #e2e8f0;
+  font-size: 12px;
+}
+
+.fw-tile-node { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fw-tile-cam { color: #94a3b8; flex: 0 0 auto; }
+
+/* A tile that cannot show a picture SAYS SO. Rendering an offline appliance as a black
+ * rectangle makes it indistinguishable from a dark room, which is the failure that matters:
+ * a wall is watched by somebody who will not investigate every dark square. */
+.fw-tile--dark { background: rgba(30, 41, 59, 0.9); }
+
+.fw-tile-dark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
+  min-height: 120px;
+  padding: 16px;
+  text-align: center;
+  color: #fbbf24;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.fw-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border: 1px solid rgba(220, 38, 38, 0.28);
+  border-radius: 9px;
+  background: rgba(220, 38, 38, 0.09);
+  color: #b91c1c;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.fw-default { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; }
+
+.fw-nodes { display: flex; flex-direction: column; gap: 8px; }
+
+.fw-node {
+  border: 1px solid var(--ui-border, #e2e8f0);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.fw-node-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  text-align: start;
+}
+
+.fw-cams {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 6px;
+  padding: 4px 12px 12px;
+}
+
+.fw-cam { display: flex; align-items: center; gap: 7px; font-size: 13px; }
+
+@media (max-width: 720px) {
+  .fw-grid { grid-template-columns: 1fr !important; }
+}
+
+/* Dark theme. Every status colour above is restated — see the note at the top. */
+[data-theme='dark'] .fw-warn { color: #fcd34d; }
+[data-theme='dark'] .fw-warn--gone { color: #fca5a5; }
+[data-theme='dark'] .fw-alarm { background: rgba(248, 113, 113, 0.18); color: #fca5a5; }
+[data-theme='dark'] .fw-error { background: rgba(248, 113, 113, 0.16); border-color: rgba(248, 113, 113, 0.32); color: #fca5a5; }
