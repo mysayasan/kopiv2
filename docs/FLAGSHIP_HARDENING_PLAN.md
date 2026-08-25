@@ -1201,6 +1201,17 @@ caught it because it ran as an administrator.
    "Recording…" label: a fact computed at one resolution and rendered as the answer to a
    different question.**
 
+
+**Its named follow-up is CLOSED by W3-3c** (`feat/case-notification-refs`, benched 2026-08-25:
+17/17 on a real appliance plus 19/19 en and 21/21 ar on the screen). A feed entry now goes into
+a case from the Notifications screen — the screen where somebody actually notices something —
+and the SERVER resolves what it refers to: an entry pointing at an alert becomes an alert item
+with the alert's own camera, time and snapshot, so the same evidence can never sit in a case
+twice wearing two kinds. An entry with no camera goes in too and holds nothing, because "the
+recorder rebooted at 03:12" is the fact that explains the gap in the footage either side of it.
+The screen check found the dialog's Add button permanently DISABLED on this path — its guard
+counted only the timeline's items, and a feed entry carries none.
+
 **W3-3b · Video wall** (F-18) — SHIPPED and benched on `feat/video-wall`. Named walls, cycling,
 alarm-driven auto-pop, and a second-monitor window.
 

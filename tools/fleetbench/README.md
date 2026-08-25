@@ -67,6 +67,9 @@ node   tools/fleetbench/uicheck_push.js .artifacts/fleetbench ar
 node   tools/fleetbench/uicheck_policy.js .artifacts/fleetbench en   # W2-1: the policy SCREEN
 node   tools/fleetbench/uicheck_policy.js .artifacts/fleetbench ar
 python tools/fleetbench/bench_w37b_capacity.py     # W3-7b: failover capacity, real estimate
+python tools/fleetbench/bench_w33c_case_feed.py   # W3-3c: a feed entry into a case file
+node   tools/fleetbench/uicheck_case_feed.js .artifacts/fleetbench en
+node   tools/fleetbench/uicheck_case_feed.js .artifacts/fleetbench ar
 ```
 
 `bench_w37_failover.py` (W3-7, N+1 failover) needs the **ffmpeg node image on BOTH nodes** —
@@ -320,3 +323,9 @@ camera UPSERTS BY HOST, so fifty cameras at one address are one camera, and the 
 this bench staged "1 wanted" against a fleet of five. The addresses refuse instantly because
 the appliance probes a camera before saving it — a black-holed address costs a full connect
 timeout per camera, which is minutes for one.
+
+`bench_w33c_case_feed.py` and `uicheck_case_feed.js` target a NODE (`:18444`), not the control
+plane. mymatasan authenticates with **Basic auth held in React state**, not a cookie — so a
+plain same-origin `fetch` from the page carries nothing and answers 401 with an empty list,
+which looks exactly like "the case was never created". The screen check sends the header
+explicitly, the way the SPA's own client does.

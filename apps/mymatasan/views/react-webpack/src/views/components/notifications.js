@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Ico } from './icons';
+import { AddToCaseDialog } from './cases';
 import { useT } from '@shared/i18n';
 import { HelpButton } from '@shared/Manual';
 import { useSnapshotBlob } from '../hooks';
@@ -68,6 +69,8 @@ export function NotificationsTab({
   const [loadingVideo, setLoadingVideo] = useState(false);
   // Alert id whose snapshot is open in the zoomable lightbox (0 = closed).
   const [zoomAlertId, setZoomAlertId] = useState(0);
+  // The feed entry an operator is putting into a case, or null.
+  const [addingTo, setAddingTo] = useState(null);
 
   const closeVideoModal = useCallback(() => {
     setVideoUrl((prev) => {
@@ -266,6 +269,20 @@ export function NotificationsTab({
         </select>
       </div>
 
+      {/* Putting what you just noticed into a case, from the screen where you noticed it.
+          Until this existed the only route was to read the time off a row, go to the
+          timeline, find it again and bookmark it — which loses the provenance and takes
+          long enough that people do not do it. */}
+      {addingTo ? (
+        <AddToCaseDialog
+          notificationId={Number(addingTo.id)}
+          summary={addingTo.title || addingTo.body || ''}
+          authHeader={authHeader}
+          onClose={() => setAddingTo(null)}
+          onAdded={() => setAddingTo(null)}
+        />
+      ) : null}
+
       <div className="notifications-list">
         {items.map((notif) => (
           <NotificationRow
@@ -285,6 +302,7 @@ export function NotificationsTab({
             onZoomImage={setZoomAlertId}
             onOpenSettingsSection={onOpenSettingsSection}
             onOpenUser={onOpenUser}
+            onAddToCase={setAddingTo}
           />
         ))}
       </div>
@@ -429,6 +447,7 @@ function NotificationRow({
   onZoomImage,
   onOpenSettingsSection,
   onOpenUser,
+  onAddToCase,
 }) {
   const t = useT();
   const isAi = isVisionAlertNotification(notif);
@@ -521,6 +540,11 @@ function NotificationRow({
               <span className="btn-icon"><Ico n="check-ok" /> {t('notif.dismiss')}</span>
             </button>
           ) : null}
+          {onAddToCase ? (
+            <button type="button" className="quiet" data-notif-act="case" onClick={() => onAddToCase(notif)}>
+              <span className="btn-icon"><Ico n="folder" /> {t('notif.addToCase')}</span>
+            </button>
+          ) : null}
           {!clip && noClip ? (
             <span className="notification-noclip"><Ico n="film" sz={13} /> {t('notif.noClip')}</span>
           ) : null}
@@ -561,6 +585,11 @@ function NotificationRow({
         {deepLink ? (
           <button type="button" className="quiet" onClick={() => { if (unread) onDismiss(notif); deepLink.run(); }}>
             <span className="btn-icon"><Ico n={deepLink.icon} /> {deepLink.label}</span>
+          </button>
+        ) : null}
+        {onAddToCase ? (
+          <button type="button" className="quiet" data-notif-act="case" onClick={() => onAddToCase(notif)}>
+            <span className="btn-icon"><Ico n="folder" /> {t('notif.addToCase')}</span>
           </button>
         ) : null}
         {unread ? (
