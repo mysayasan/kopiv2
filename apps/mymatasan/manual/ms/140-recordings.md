@@ -69,6 +69,31 @@ Dua perkara yang perlu diketahui sebelum anda bergantung padanya:
 - Rakaman disulitkan pada cakera. Fail yang dieksport **tidak** — ia video biasa. Uruskannya
   sewajarnya.
 
+## Menyembunyikan wajah dalam salinan {#faces}
+
+Eksport boleh diminta memusnahkan wajah di dalamnya. Setiap bingkai diimbas, dan setiap wajah yang
+ditemui diisi dengan kotak hitam pekat — diluaskan melebihi wajah itu dan dikekalkan pada bingkai
+sebelum dan selepasnya, supaya pengesan yang terlepas wajah seketika tidak meninggalkannya
+kelihatan.
+
+**Ini usaha terbaik, dan produk ini tidak akan berpura-pura sebaliknya.** Pengesan automatik
+terlepas wajah yang berpaling, jauh, terlindung sebahagian atau kabur kerana pergerakan. Zon
+privasi ialah jaminan, kerana seseorang melukisnya dan ia tidak bergerak; ini bukan janji yang
+sama jenis, dan berkas itu menyatakannya dalam manifes dan pada skrin. **Semak fail sebelum anda
+menyerahkannya.**
+
+Kiraan yang dipaparkan ialah kiraan PENGESANAN, bukan kiraan orang: seorang yang hadir selama
+seminit menghasilkan pengesanan seminit.
+
+Dua nota praktikal. Ia membaca setiap bingkai, jadi ia mengambil masa jauh lebih lama daripada
+eksport biasa dan terhad kepada dua puluh minit rakaman pada satu masa. Dan ia memerlukan model
+pengecaman wajah dipasang — peranti tanpa model itu akan menolak eksport, bukannya memulangkan
+salinan yang tidak menyembunyikan apa-apa.
+
+Hasilnya ialah terbitan yang dikodkan semula, sama seperti redaksi zon privasi: fail itu tidak
+akan sepadan dengan jumlah semak rakaman asal, yang kekal pada perakam. Kedua-duanya boleh
+digunakan pada salinan yang sama.
+
 ## Pengekalan, dan mengapa rakaman hilang {#retention}
 
 Setiap kamera mempunyai tempoh pengekalan, dan rakaman yang melepasinya dibersihkan secara automatik

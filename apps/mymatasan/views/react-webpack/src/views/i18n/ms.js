@@ -2060,6 +2060,11 @@ export default {
   'privacy.removed': '{name} dibuang',
   'ev.redact': 'Sembunyikan kawasan peribadi dalam salinan ini',
   'ev.redactHint': 'Menghitamkan kawasan privasi kamera ini dalam video yang dieksport. Salinan itu dikodkan semula untuk berbuat demikian, jadi ia ditandai sebagai salinan yang disunting dan tidak akan sepadan dengan checksum asal perakam - perkara ini dinyatakan di dalam bundel.',
+  'ev.blurFaces': 'Sembunyikan wajah dalam salinan ini',
+  'ev.blurFacesHint': 'Setiap bingkai diimbas dan setiap wajah yang ditemui dimusnahkan dengan kotak hitam pekat, diluaskan melebihi wajah itu dan dikekalkan pada bingkai sebelum dan selepasnya. Ini usaha terbaik, bukan jaminan: pengesan automatik terlepas wajah yang berpaling, jauh, terlindung sebahagian atau kabur kerana pergerakan. Wajah mungkin masih kekal dalam fail.',
+  'ev.blurFacesSlow': 'Ini meneliti setiap bingkai, jadi ia mengambil masa jauh lebih lama daripada eksport biasa dan terhad kepada 20 minit rakaman pada satu masa.',
+  'ev.faceResult': '{faces} pengesanan wajah dimusnahkan merentas {frames} bingkai yang diimbas. Itu kiraan pengesanan, bukan kiraan orang.',
+  'ev.faceResultLimit': 'Wajah mungkin masih kelihatan dalam fail ini. Hanya wajah yang ditemui oleh pengesan automatik dimusnahkan; ia terlepas wajah yang berpaling, jauh, terlindung sebahagian atau kabur kerana pergerakan. Semak fail sebelum menyerahkannya.',
   'ev.redactedBundle': 'Salinan disunting',
 
   // The privacy status sentence, composed on the CLIENT (W3-6) - the server's

@@ -200,10 +200,46 @@ type ExportRedaction struct {
 	// Regions are the privacy zones burned in, by name, so the recipient knows what they
 	// are NOT being shown rather than merely that something is missing.
 	Regions []string `json:"regions"`
+	// Faces records the face pass, when one was run (W3-6b). Absent when it was not.
+	//
+	// It is a SEPARATE block from Regions rather than more names in the same list, because
+	// the two make claims of different strength and merging them would quietly promote the
+	// weaker one. See ExportFaceRedaction.
+	Faces *ExportFaceRedaction `json:"faces,omitempty"`
 	// Method is how the pixels were destroyed, in plain words.
 	Method string `json:"method"`
 	// Note is the sentence for a human reading the manifest.
 	Note string `json:"note"`
+}
+
+// ExportFaceRedaction records the face pass — and, more importantly, its limits (W3-6b).
+//
+// A PRIVACY ZONE IS A GUARANTEE AND A FACE PASS IS NOT, and the manifest must never let the
+// two be read as the same kind of statement. A zone was named by a human, does not move, and
+// is covered. A face pass covers the faces a DETECTOR FOUND — and detectors miss faces in
+// profile, at distance, partly occluded or motion-blurred.
+//
+// So this block reports what was actually done, in counts, and carries a Limitation sentence
+// saying plainly that faces may remain. Somebody handing a bundle to a journalist has to know
+// that before they hand it over, not when somebody else notices.
+type ExportFaceRedaction struct {
+	Applied bool `json:"applied"`
+	// FramesScanned is every frame the detector looked at; the export fails rather than
+	// producing a bundle where some frames went unscanned.
+	FramesScanned int `json:"framesScanned"`
+	// FacesObscured is the number of DETECTIONS, summed over frames — not a number of
+	// people. One person present for a minute is up to a minute of detections, and saying
+	// "faces obscured: 900" without this note invites a reader to infer a crowd.
+	FacesObscured int `json:"facesObscured"`
+	// FramesObscured is how many frames had at least one rectangle filled.
+	FramesObscured int `json:"framesObscured"`
+	// HoldFrames / MarginPercent are the two safety margins: every detection was also
+	// covered for this many frames either side of it, and widened by this much beyond the
+	// box the detector returned.
+	HoldFrames    int    `json:"holdFrames"`
+	MarginPercent int    `json:"marginPercent"`
+	Method        string `json:"method"`
+	Limitation    string `json:"limitation"`
 }
 
 // ExportJob is one export's live state.
@@ -243,7 +279,16 @@ type ExportRequest struct {
 	// everything that was recorded, and a copy handed outside the organisation must not
 	// carry the neighbour's window. The same operator makes both, from the same footage,
 	// on different days.
-	Redact     bool   `json:"redact"`
+	Redact bool `json:"redact"`
+	// BlurFaces obscures the faces a detector finds in the exported video (W3-6b).
+	//
+	// Independent of Redact: a camera may have no privacy zones and still be handed over
+	// with faces hidden, and a bundle may need the neighbour's window covered while every
+	// face in it stays visible because the faces are the point.
+	//
+	// Asking for it on an appliance that cannot do it is an ERROR, not a downgrade. See
+	// ErrFaceRedactionUnavailable.
+	BlurFaces  bool   `json:"blurFaces"`
 	ExporterId int64  `json:"-"`
 	Exporter   string `json:"-"`
 }
@@ -280,6 +325,9 @@ type evidenceExportService struct {
 	// privacy supplies the regions a redacted export must obscure (W3-6). Optional: nil
 	// means no zones, and every export behaves exactly as it did before.
 	privacy exportPrivacySource
+	// faces obscures the faces a detector finds (W3-6b). Optional: nil means the appliance
+	// cannot do it, and asking for it is refused rather than silently skipped.
+	faces *FaceRedactor
 
 	mu   sync.Mutex
 	jobs map[string]*ExportJob
@@ -294,12 +342,14 @@ func NewEvidenceExportService(
 	workDir string,
 	appVersion string,
 	privacy exportPrivacySource,
+	faces *FaceRedactor,
 ) IEvidenceExportService {
 	return &evidenceExportService{
 		recording:  rec,
 		camera:     camera,
 		cipher:     cipher,
 		privacy:    privacy,
+		faces:      faces,
 		ffmpegPath: ffmpegPath,
 		workDir:    workDir,
 		appVersion: appVersion,
@@ -465,12 +515,30 @@ func (s *evidenceExportService) Create(ctx context.Context, req ExportRequest) (
 	if strings.TrimSpace(req.Reason) == "" {
 		return nil, fmt.Errorf("a reason is required for an evidence export")
 	}
+	// REFUSED HERE, not later. An appliance that cannot obscure faces must say so at the
+	// moment somebody asks, while they are still looking at the form — not ten minutes into
+	// a job, and above all not by handing back a bundle that did not do it.
+	if req.BlurFaces {
+		if s.faces == nil {
+			return nil, fmt.Errorf("%w: face redaction is not available on this appliance", ErrFaceRedactionUnavailable)
+		}
+		if err := s.faces.Available(); err != nil {
+			return nil, err
+		}
+	}
 	man, segs, err := s.plan(ctx, req.CameraId, req.From, req.To)
 	if err != nil {
 		return nil, err
 	}
 	if len(segs) == 0 {
 		return nil, fmt.Errorf("there is no footage for that camera in that range")
+	}
+	// A face pass looks at EVERY frame, so its cost is the length of the clip rather than a
+	// fixed overhead. The cap is here rather than inside the redactor so the refusal arrives
+	// before any work is done, with the number the operator has to change.
+	if req.BlurFaces && man.Output.MediaSeconds > maxFaceRedactionSeconds {
+		return nil, fmt.Errorf("hiding faces means looking at every frame, and this range is %d minutes — export at most %d minutes at a time with faces hidden",
+			man.Output.MediaSeconds/60, maxFaceRedactionSeconds/60)
 	}
 	man.Reason = strings.TrimSpace(req.Reason)
 	man.ExporterId = req.ExporterId
@@ -493,7 +561,7 @@ func (s *evidenceExportService) Create(ctx context.Context, req ExportRequest) (
 	safego.Go("mymatasan.evidence.export", func() {
 		buildCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Minute)
 		defer cancel()
-		s.build(buildCtx, id, man, segs, req.Redact)
+		s.build(buildCtx, id, man, segs, req.Redact, req.BlurFaces)
 	})
 	cp := *job
 	return &cp, nil
@@ -507,7 +575,7 @@ func (s *evidenceExportService) setStatus(id string, fn func(*ExportJob)) {
 	}
 }
 
-func (s *evidenceExportService) build(ctx context.Context, id string, man *ExportManifest, segs []*entities.RecordingSegment, redact bool) {
+func (s *evidenceExportService) build(ctx context.Context, id string, man *ExportManifest, segs []*entities.RecordingSegment, redact, blurFaces bool) {
 	s.setStatus(id, func(j *ExportJob) { j.Status = ExportRunning })
 
 	fail := func(err error) {
@@ -548,7 +616,7 @@ func (s *evidenceExportService) build(ctx context.Context, id string, man *Expor
 	// A redacted bundle is NAMED as one. The filename is the first thing anybody sees and
 	// often the only thing that survives being forwarded, so it carries the fact rather
 	// than leaving it to a manifest nobody opens.
-	redaction := s.redactionFor(ctx, redact, man.Camera.Id)
+	redaction := s.redactionFor(ctx, redact, blurFaces, man.Camera.Id)
 	prefix := "camera"
 	if redaction != nil {
 		prefix = "camera-REDACTED"
@@ -557,16 +625,37 @@ func (s *evidenceExportService) build(ctx context.Context, id string, man *Expor
 		time.Unix(man.RequestedRange.From, 0).UTC().Format("20060102T150405Z"),
 		time.Unix(man.RequestedRange.To, 0).UTC().Format("150405Z"))
 	outPath := filepath.Join(dir, outName)
-	if redaction != nil {
+	switch {
+	case redaction != nil && redaction.faces:
+		// The face pass needs ONE file to scan, so the parts are joined by stream copy
+		// first — that join is not the export, it is the input to it.
+		joined := filepath.Join(dir, "joined.mp4")
+		if err := s.concat(ctx, parts, joined); err != nil {
+			fail(err)
+			return
+		}
+		// The zones ride along in the SAME encode: a second pass would degrade the picture
+		// twice for no benefit.
+		report, err := s.faces.Render(ctx, joined, outPath, dir, redaction.regions)
+		_ = os.Remove(joined)
+		if err != nil {
+			fail(err)
+			return
+		}
+		man.Output.Transcoded = true
+		man.Redaction = redaction.manifestWith(&report)
+	case redaction != nil:
 		if err := s.redact(ctx, parts, outPath, redaction.regions); err != nil {
 			fail(err)
 			return
 		}
 		man.Output.Transcoded = true
-		man.Redaction = redaction.manifest
-	} else if err := s.concat(ctx, parts, outPath); err != nil {
-		fail(err)
-		return
+		man.Redaction = redaction.manifestWith(nil)
+	default:
+		if err := s.concat(ctx, parts, outPath); err != nil {
+			fail(err)
+			return
+		}
 	}
 
 	outSum, err := recording.HashPlaintextFile(outPath)
@@ -636,11 +725,58 @@ func (s *evidenceExportService) materialize(src, dst string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// redactionPlan is what a redacted export needs: the regions, and the manifest block that
-// declares the result a derivative.
+// maxFaceRedactionSeconds caps how much footage one face-redacted export will scan.
+//
+// A face pass reads every frame, so an unbounded range is an unbounded job. Twenty minutes is
+// far longer than any clip anybody hands over as evidence and short enough that the operator
+// gets an answer the same morning; beyond it they are told the number rather than left
+// watching a progress bar that never moves.
+const maxFaceRedactionSeconds = int64(20 * 60)
+
+// redactionPlan is what a redacted export needs: the regions, whether faces are being
+// obscured, and the names for the manifest.
 type redactionPlan struct {
-	regions  []PrivacyRegion
-	manifest *ExportRedaction
+	regions []PrivacyRegion
+	names   []string
+	faces   bool
+}
+
+// manifestWith composes the manifest block once the work is done.
+//
+// It is composed AFTER the render rather than before, because the face numbers are the whole
+// value of the block and they are not known until the pass has run. A block written in
+// advance would be a statement of intent formatted as a statement of fact.
+func (p *redactionPlan) manifestWith(faces *FaceRedactionReport) *ExportRedaction {
+	out := &ExportRedaction{Applied: true, Regions: p.names}
+	what := []string{}
+	if len(p.names) > 0 {
+		what = append(what, "the listed regions")
+	}
+	if faces != nil {
+		what = append(what, "every face the detector found")
+		out.Faces = &ExportFaceRedaction{
+			Applied:        true,
+			FramesScanned:  faces.FramesScanned,
+			FacesObscured:  faces.FacesFound,
+			FramesObscured: faces.FramesObscured,
+			HoldFrames:     faces.HoldFrames,
+			MarginPercent:  faces.MarginPercent,
+			Method: fmt.Sprintf("every frame was scanned for faces; each detection was filled with solid black, widened by %d%% on every side and held for %d frames either side of the frame it was found in",
+				faces.MarginPercent, faces.HoldFrames),
+			// THE SENTENCE THIS WHOLE BLOCK EXISTS FOR.
+			Limitation: "This is NOT a guarantee that no face is visible in this file. Faces were found by an automatic detector, " +
+				"and detectors miss faces that are turned away, distant, partly hidden or blurred by motion. The count above is the " +
+				"number of detections, not the number of people. Treat this file as a copy in which the faces that could be found " +
+				"have been destroyed — not as a copy that has been checked by a person.",
+		}
+	}
+	out.Method = strings.Join(what, " and ") + " were filled with solid black and the video re-encoded"
+	out.Note = "This file is a REDACTED DERIVATIVE of the recorded footage, not a copy of it. " +
+		"What is listed above has been destroyed in this file and cannot be recovered from it. " +
+		"Every other pixel has also been re-encoded, so this file will not match the digests of the " +
+		"source segments listed under `sources` — those digests describe the ORIGINAL footage, which " +
+		"remains on the recorder and can be exported separately by somebody entitled to see it."
+	return out
 }
 
 // redactionFor decides whether this export is redacted, and what it obscures.
@@ -650,34 +786,25 @@ type redactionPlan struct {
 // to redact, and the bundle simply is not marked as redacted. What must never happen is the
 // reverse: a bundle MARKED redacted that had nothing burned into it, which is a false claim
 // about what a recipient is being protected from.
-func (s *evidenceExportService) redactionFor(ctx context.Context, want bool, cameraId int64) *redactionPlan {
-	if !want || s.privacy == nil {
-		return nil
-	}
-	regions, err := s.privacy.ExportRegions(ctx, cameraId)
-	if err != nil || len(regions) == 0 {
+func (s *evidenceExportService) redactionFor(ctx context.Context, wantZones, wantFaces bool, cameraId int64) *redactionPlan {
+	plan := &redactionPlan{faces: wantFaces && s.faces != nil}
+	if wantZones && s.privacy != nil {
+		regions, err := s.privacy.ExportRegions(ctx, cameraId)
 		if err != nil {
 			log.Printf("evidence: cam%d: could not read privacy zones for redaction: %v", cameraId, err)
 		}
+		for _, r := range regions {
+			plan.regions = append(plan.regions, r)
+			plan.names = append(plan.names, r.Name)
+		}
+	}
+	// Nothing to do: NOT an error, and NOT a bundle marked redacted. A camera with no zones
+	// has nothing to redact, and marking the bundle anyway would be a false claim about what
+	// the recipient is being protected from.
+	if len(plan.regions) == 0 && !plan.faces {
 		return nil
 	}
-	names := make([]string, 0, len(regions))
-	for _, r := range regions {
-		names = append(names, r.Name)
-	}
-	return &redactionPlan{
-		regions: regions,
-		manifest: &ExportRedaction{
-			Applied: true,
-			Regions: names,
-			Method:  "the listed regions were filled with solid black and the video re-encoded",
-			Note: "This file is a REDACTED DERIVATIVE of the recorded footage, not a copy of it. " +
-				"The regions listed above have been destroyed in this file and cannot be recovered from it. " +
-				"Every other pixel has also been re-encoded, so this file will not match the digests of the " +
-				"source segments listed under `sources` — those digests describe the ORIGINAL footage, which " +
-				"remains on the recorder and can be exported separately by somebody entitled to see it.",
-		},
-	}
+	return plan
 }
 
 // redact joins the parts and burns the privacy regions into the result.

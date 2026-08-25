@@ -113,3 +113,26 @@ The bench also measures the pixels (`signalstats` YAVG inside the zone and outsi
 because a bundle that *says* it was redacted and a bundle that *was* are different claims -
 and the first version of that check, which guessed from a PNG's file size, passed on
 unredacted footage.
+
+## Face redaction (W3-6b)
+
+`ExportRequest.BlurFaces` obscures the faces a detector finds, independently of `Redact`: a
+camera may have no privacy zones and still be handed over with faces hidden, and a bundle may
+need the neighbour's window covered while every face in it stays visible because the faces are
+the point.
+
+**`ExportFaceRedaction` is a SEPARATE manifest block from `Regions`, not more names in the same
+list.** A zone is a guarantee and a face pass is a best effort; merging them would quietly
+promote the weaker claim. The block carries the counts and a `Limitation` sentence stating that
+faces may remain and that a count of detections is not a count of people.
+
+`redactionFor(ctx, wantZones, wantFaces, cameraId)` returns a plan or nil; `manifestWith(report)`
+composes the block **after** the render, because the face numbers are the value of the block and
+are not known until the pass has run — a block written in advance would be a statement of intent
+formatted as a statement of fact.
+
+`Create` refuses a face-redacted export up front when the appliance cannot do it, and when the
+range exceeds `maxFaceRedactionSeconds` (20 minutes). The build joins the parts by stream copy
+first — that join is not the export, it is the input to it — and hands the result to
+`FaceRedactor.Render`, which burns the zones in during the same encode. See
+`face_redactor.go.md`.

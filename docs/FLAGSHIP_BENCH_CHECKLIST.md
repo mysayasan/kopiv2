@@ -1614,3 +1614,102 @@ Both worth more than the checks they broke.
   See the plan for why that is the better worst case.
 * The camera set is copied hourly, so a site that gains a camera and loses its recorder within
   the same hour fails over without it. The screen reports when the copy was last taken.
+
+---
+
+## W3-6b - Face redaction on export  DONE (2026-08-25), 29/29 + 18/18 en and 20/20 ar
+
+```
+docker run --name faceimg debian-ffmpeg:bench sh -c "apt-get update -qq && \
+  apt-get install -y -qq --no-install-recommends python3 python3-pip python3-numpy libgl1 \
+  libglib2.0-0 && pip3 install --break-system-packages --no-cache-dir opencv-python-headless"
+docker commit faceimg debian-ffmpeg-face:bench && docker rm -f faceimg
+
+KOPIV2_NODE_IMAGE=debian-ffmpeg-face:bench KOPIV2_NODE_PYTHON=python3 \
+    python tools/fleetbench/fleet_harness.py
+KOPIV2_NODE_IMAGE=debian-ffmpeg-face:bench python tools/fleetbench/bench_w36b_faceredact.py
+node tools/fleetbench/uicheck_faceredact.js .artifacts/fleetbench en
+node tools/fleetbench/uicheck_faceredact.js .artifacts/fleetbench ar
+```
+
+The YuNet model must be at `apps/mymatasan/ai/face_detection_yunet_2023mar.onnx` — the same
+place a real install puts it. `.gitignore` now covers `apps/mymatasan/ai/*.onnx`, which it did
+not: `setup.ps1` downloads the face models into `ai/` while the ignore rule only covered
+`models/`.
+
+`KOPIV2_NODE_PYTHON` is new: the shipped config names the interpreter by its HOST path (a
+Windows one), which no container has. Most benches never notice because nothing they do runs a
+Python worker; this one gets a failure that names ffmpeg or the model rather than the
+interpreter.
+
+### HOW A FLEET WITH NOTHING TO FILM BENCHED A DETECTOR
+
+This is the transferable part. The harness films test patterns, so W3-4 stated plainly that its
+evaluators were never driven end to end — and here that would have gutted the bench, because
+the whole feature IS a detector.
+
+So the camera films a DRAWN face. **YuNet detects it at 0.7-0.9 confidence** — checked in a
+throwaway script BEFORE the bench was written, not assumed, and checked again inside the bench
+image because the image ships a different OpenCV major version than the host. That gives what a
+synthetic scene normally cannot: a real detector making a real detection at a position we KNOW.
+
+The face is STATIONARY and the BACKGROUND moves. Both halves matter: a fixed face means the
+region to measure is known without mapping an export's frames back to the source's, and a moving
+background means "the rest of the frame is not black" is a reading of a picture that is actually
+changing.
+
+Then the W3-6 rule, twice: **the face region must be black AND the rest must not be.** Measured
+16.0 inside (16 = black in limited range) against 141.7 in the unredacted control, background
+106.5. A control export is taken FIRST precisely so the "unredacted" reading is a fact rather
+than an assumption — a face region that had somehow already been dark would make the redacted
+reading meaningless.
+
+### What else the bench proves
+
+* the flag crosses the API (the W3-6 defect, on the same handler that dropped `redact` once);
+* the manifest reports the face pass in its OWN block, with frames scanned, and says in words
+  that it is NOT a guarantee and that a detection is not a person;
+* the file NAMES itself a redacted derivative and still carries the source digests;
+* the copy is not truncated (120.00s against 120.00s);
+* **with the model removed the export is REFUSED at request time**, with a message naming what
+  is missing — not a bundle that quietly hid nothing;
+* zones and faces in one bundle: both black, both named, neither folded into the other;
+* the audit trail records WHICH kind of copy left the building.
+
+### What it found
+
+1. **OpenCV writes its own warnings to stderr**, and the worker's report is written there too.
+   Treating that stream as pure JSON turned a completely successful export into "the worker did
+   not report what it wrote". Found by running the worker in the bench image and READING ITS
+   OUTPUT rather than only its exit code. The parser now reads backwards for the last decodable
+   JSON line.
+2. **The evidence export dialog had never had a panel.** `.modal` is used by exactly one element
+   in the app and no `.modal` rule existed — every other dialog uses `.modal-card`. Inputs
+   looked fine because inputs paint themselves; every label, hint and warning rendered
+   transparently over the darkened page behind. Shipped that way in W1-4. **Found by LOOKING at
+   the screenshot on a run where all twenty assertions passed, in both languages.**
+
+### And three the bench found in ITSELF
+
+* **The terminal status is `ready`, not `done`.** The first run asserted a string no code path
+  ever sets, so a completely successful export was reported as a failure. A check that fails on
+  working output is the same class of mistake as one that passes on broken output — and it
+  wastes a run either way. Grep the constant, do not guess the vocabulary.
+* **The audit trail stores `metadata` as a JSON STRING**, not an object. Iterating it as a dict
+  raises `'str' has no attribute 'get'` — the same envelope-shaped assumption that cost W3-7 two
+  checks, in a different costume.
+* **A screen check must not match translated labels.** The Arabic run reached the dialog and
+  then silently did nothing, because the regexes matching "Check" and the build button in
+  English matched neither in Arabic — so it reported "no result panel" for a feature it never
+  asked to run. `data-ev="check|build|reason|blurFaces"` fixed it, exactly as `data-fo-*` did
+  for W3-7 one item earlier. **Name the controls.**
+
+### Not claimed
+
+* **No real human face.** The detector is real and the detection is real, but the subject is
+  drawn. Nothing here says how the detector performs on people, at distance, in profile, or in
+  poor light — and the product's own wording is careful not to either.
+* **No tracking.** Each frame is detected independently; the hold is a fixed window, not a
+  motion model.
+* The 20-minute cap is enforced in code but NOT exercised by the bench: it is measured against
+  the footage actually found, and the bench never records twenty minutes.

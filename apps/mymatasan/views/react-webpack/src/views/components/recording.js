@@ -349,6 +349,11 @@ export function EvidenceExportDialog({ camera, authHeader, onClose, onMessage })
   // investigator working the incident wants everything, and a copy handed outside the
   // organisation must not carry the window next door.
   const [redact, setRedact] = useState(false);
+  // Whether the faces in this copy are destroyed (W3-6b). SEPARATE from redact, and the
+  // separation is the point: a zone is a guarantee about a fixed region, and a face pass is
+  // a best effort against a detector. Folding them into one control would let the weaker
+  // claim borrow the stronger one's credibility.
+  const [blurFaces, setBlurFaces] = useState(false);
   const [preview, setPreview] = useState(null);
   const [job, setJob] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -394,7 +399,7 @@ export function EvidenceExportDialog({ camera, authHeader, onClose, onMessage })
     try {
       let current = await call('/api/evidence/exports', {
         method: 'POST',
-        body: JSON.stringify({ cameraId, from: fromUnix, to: toUnix, reason, redact }),
+        body: JSON.stringify({ cameraId, from: fromUnix, to: toUnix, reason, redact, blurFaces }),
       });
       setJob(current);
       // Poll: decrypting and joining a long range takes minutes, and the server builds
@@ -442,6 +447,7 @@ export function EvidenceExportDialog({ camera, authHeader, onClose, onMessage })
             type="text"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
+            data-ev="reason"
             placeholder={t('rec.exportReasonPlaceholder')}
             maxLength={200}
           />
@@ -449,7 +455,7 @@ export function EvidenceExportDialog({ camera, authHeader, onClose, onMessage })
         </label>
 
         <label className="check-row">
-          <input type="checkbox" checked={redact} onChange={(e) => setRedact(e.target.checked)} />
+          <input type="checkbox" data-ev="redact" checked={redact} onChange={(e) => setRedact(e.target.checked)} />
           {t('ev.redact')}
         </label>
         {/* Said next to the box, not after the fact: a redacted copy is deliberately not
@@ -457,10 +463,24 @@ export function EvidenceExportDialog({ camera, authHeader, onClose, onMessage })
             they make it rather than when the other side points it out. */}
         <p className="field-hint">{t('ev.redactHint')}</p>
 
+        <label className="check-row">
+          <input type="checkbox" data-ev="blurFaces" checked={blurFaces} onChange={(e) => setBlurFaces(e.target.checked)} />
+          {t('ev.blurFaces')}
+          {/* The manual says the same thing at more length. The "?" goes on THIS control
+              because it is the one whose limits somebody has to understand before using it. */}
+          <HelpButton slug="recordings" anchor="faces" />
+        </label>
+        {/* THE LIMIT, next to the control that offers it. A privacy zone is a guarantee; a
+            face pass is a detector's best effort, and it misses faces that are turned away,
+            distant, partly hidden or blurred by motion. Somebody about to hand this file to
+            a journalist has to read that HERE, not discover it afterwards. */}
+        <p className="field-hint">{t('ev.blurFacesHint')}</p>
+        {blurFaces ? <p className="field-hint">{t('ev.blurFacesSlow')}</p> : null}
+
         {error ? <FormAlert message={error} /> : null}
 
         <div className="settings-actions">
-          <button type="button" className="quiet" onClick={runPreview} disabled={busy || !rangeValid}>
+          <button type="button" data-ev="check" className="quiet" onClick={runPreview} disabled={busy || !rangeValid}>
             <span className="btn-icon"><Ico n="search" /> {t('rec.exportCheck')}</span>
           </button>
         </div>
@@ -497,6 +517,20 @@ export function EvidenceExportDialog({ camera, authHeader, onClose, onMessage })
           <div className="auto-tune-result">
             <strong>{t('rec.exportReady')}</strong>
             <p className="field-hint mono">{job.manifest?.output?.sha256}</p>
+            {/* What the face pass ACTUALLY did, on the screen and not only in a manifest
+                nobody opens — and the limit repeated at the moment the file is handed over,
+                which is the moment it matters. */}
+            {job.manifest?.redaction?.faces ? (
+              <div data-ev="faceResult">
+                <p className="field-hint">
+                  {t('ev.faceResult', {
+                    faces: job.manifest.redaction.faces.facesObscured ?? 0,
+                    frames: job.manifest.redaction.faces.framesScanned ?? 0,
+                  })}
+                </p>
+                <FormAlert message={t('ev.faceResultLimit')} />
+              </div>
+            ) : null}
             <div className="settings-actions">
               <a
                 className="button primary"
@@ -512,6 +546,7 @@ export function EvidenceExportDialog({ camera, authHeader, onClose, onMessage })
         <div className="settings-actions">
           <button
             type="button"
+            data-ev="build"
             className="primary"
             onClick={build}
             disabled={busy || !rangeValid || !reason.trim() || !preview || ready}

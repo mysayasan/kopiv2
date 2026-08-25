@@ -38,6 +38,11 @@ apps/mymatasan/models/.venv/
 apps/mymatasan/models/__pycache__/
 apps/mymatasan/models/*.pt
 apps/mymatasan/models/*.onnx
+# The face models the face-recognition setup DOWNLOADS next to the worker scripts
+# (setup.ps1/setup.sh put them in ai/, not models/). They are large binaries fetched at
+# install time, and face redaction on export made them load-bearing for a second feature —
+# so the directory they actually land in needs the same rule the models/ directory has.
+apps/mymatasan/ai/*.onnx
 apps/mymatasan/ai/__pycache__/
 tools/fleetbench/__pycache__/
 

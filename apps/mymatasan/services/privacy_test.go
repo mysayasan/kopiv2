@@ -479,28 +479,37 @@ func TestRedactionFilterIsResolutionIndependent(t *testing.T) {
 // statement about what the recipient is being protected from.
 func TestARedactionWithNoZonesDoesNotClaimToBeRedacted(t *testing.T) {
 	svc := &evidenceExportService{privacy: emptyPrivacy{}}
-	if plan := svc.redactionFor(context.Background(), true, 7); plan != nil {
-		t.Fatalf("want no redaction, got %+v", plan.manifest)
+	if plan := svc.redactionFor(context.Background(), true, false, 7); plan != nil {
+		t.Fatalf("want no redaction, got %+v", plan)
 	}
 	// ...and an export that did not ask for one never gets one.
 	svc2 := &evidenceExportService{privacy: onePrivacy{}}
-	if plan := svc2.redactionFor(context.Background(), false, 7); plan != nil {
+	if plan := svc2.redactionFor(context.Background(), false, false, 7); plan != nil {
 		t.Fatal("an export that did not ask to be redacted must not be")
 	}
 	// When there IS something to redact, the manifest names it — a recipient has to know
 	// what they are NOT being shown, not merely that something is missing.
-	plan := svc2.redactionFor(context.Background(), true, 7)
-	if plan == nil || !plan.manifest.Applied {
+	plan := svc2.redactionFor(context.Background(), true, false, 7)
+	if plan == nil {
 		t.Fatal("want a redaction")
 	}
-	if len(plan.manifest.Regions) != 1 || plan.manifest.Regions[0] != "Window" {
-		t.Fatalf("the manifest must name the regions: %+v", plan.manifest.Regions)
+	man := plan.manifestWith(nil)
+	if !man.Applied {
+		t.Fatal("want a redaction")
 	}
-	if !strings.Contains(plan.manifest.Note, "DERIVATIVE") {
-		t.Fatalf("the note must say the file is a derivative: %q", plan.manifest.Note)
+	if len(man.Regions) != 1 || man.Regions[0] != "Window" {
+		t.Fatalf("the manifest must name the regions: %+v", man.Regions)
 	}
-	if !strings.Contains(plan.manifest.Note, "will not match the digests") {
-		t.Fatalf("the note must warn that the source digests will not match: %q", plan.manifest.Note)
+	if !strings.Contains(man.Note, "DERIVATIVE") {
+		t.Fatalf("the note must say the file is a derivative: %q", man.Note)
+	}
+	if !strings.Contains(man.Note, "will not match the digests") {
+		t.Fatalf("the note must warn that the source digests will not match: %q", man.Note)
+	}
+	// A zone-only redaction says nothing about faces at all. An empty faces block would
+	// read as "we looked and found none", which is a different and untrue statement.
+	if man.Faces != nil {
+		t.Fatalf("a zone-only redaction must not carry a faces block: %+v", man.Faces)
 	}
 }
 
