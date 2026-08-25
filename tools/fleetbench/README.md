@@ -55,7 +55,24 @@ node   tools/fleetbench/uicheck_relay.js .artifacts/fleetbench ar
 KOPIV2_NODE_IMAGE=debian-ffmpeg:bench python tools/fleetbench/bench_w36_privacy.py  # W3-6
 node   tools/fleetbench/uicheck_privacy.js .artifacts/fleetbench en
 node   tools/fleetbench/uicheck_privacy.js .artifacts/fleetbench ar
+KOPIV2_NODE_IMAGE=debian-ffmpeg:bench python tools/fleetbench/bench_w37_failover.py # W3-7
+node   tools/fleetbench/uicheck_failover.js .artifacts/fleetbench en
+node   tools/fleetbench/uicheck_failover.js .artifacts/fleetbench ar
 ```
+
+`bench_w37_failover.py` (W3-7, N+1 failover) needs the **ffmpeg node image on BOTH nodes** —
+the SPARE is the one that has to record, so patching only the protected node's ffmpeg path
+produces a takeover that reports success and writes nothing. It runs for about fourteen
+minutes, most of it the real 120s hold-down plus the liveness grace window, because the
+feature is ABOUT waiting long enough. It `docker stop`s node-a mid-run and starts it again,
+and it downloads a segment the spare wrote and runs ffprobe over it — "a file exists" passes
+on a zero-byte file and "the API says enabled" passes on a node with no ffmpeg.
+
+It removes its camera source (`fosrc-one`) in a `finally`, so **seed a recording camera again
+before `uicheck_failover.js`** — that check needs node-a to hold one. The screen check creates
+its own PLAN through the form, deletes anything a previous run left, and asserts the badge
+STATE (`data-fo-ready`) rather than its text, which is what lets it run in four languages and
+still assert that the text is not the state token.
 
 ## `onvifsim.py` — a real ONVIF device, on demand
 

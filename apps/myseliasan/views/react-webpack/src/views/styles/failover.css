@@ -1,0 +1,300 @@
+/* N+1 node failover (W3-7).
+ *
+ * Written with LOGICAL properties throughout — margin-inline, padding-inline, border-inline
+ * — so the Arabic screen is the same screen mirrored rather than a second layout that has
+ * to be maintained. The one thing that must NOT mirror is the pair arrow: it points from
+ * the protected appliance to its spare, and in RTL the two boxes swap places, so the glyph
+ * has to swap with them (see [dir='rtl'] at the bottom).
+ *
+ * Colours are stated literally rather than through --ui-* tokens because they are STATUS
+ * colours: red means somebody must act, and it must mean that in every theme. Which is why
+ * each one has an explicit dark counterpart at the bottom of this file — a light-only
+ * status colour is invisible in the theme half the operators use. */
+
+.fo-pitch-lead {
+  margin: 0 0 8px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ui-text, #1f2937);
+}
+
+/* The two limits of the feature. Set apart from the lead, because somebody reading this
+ * screen during an outage is looking for exactly these two sentences. */
+.fo-pitch-limit {
+  margin: 0 0 6px;
+  padding-inline-start: 10px;
+  border-inline-start: 3px solid rgba(148, 163, 184, 0.55);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ui-text-muted, #64748b);
+}
+
+.fo-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-block-end: 14px;
+}
+
+.fo-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 108px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(148, 163, 184, 0.12);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+}
+
+.fo-tile-n { font-size: 22px; font-weight: 650; line-height: 1.1; }
+.fo-tile-label { font-size: 12px; color: var(--ui-text-muted, #64748b); }
+
+.fo-tile--attention { background: rgba(220, 38, 38, 0.09); border-color: rgba(220, 38, 38, 0.24); }
+.fo-tile--attention .fo-tile-n { color: #b91c1c; }
+.fo-tile--ready { background: rgba(22, 163, 74, 0.1); border-color: rgba(22, 163, 74, 0.24); }
+.fo-tile--ready .fo-tile-n { color: #15803d; }
+.fo-tile--active { background: rgba(217, 119, 6, 0.12); border-color: rgba(217, 119, 6, 0.28); }
+.fo-tile--active .fo-tile-n { color: #b45309; }
+
+.fo-list { display: flex; flex-direction: column; gap: 12px; }
+
+.fo-card {
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--ui-border, rgba(148, 163, 184, 0.3));
+  background: var(--ui-surface, #fff);
+}
+
+.fo-card--off { opacity: 0.72; }
+
+/* A takeover in progress is the one state the card must announce from across a room. */
+.fo-card--active {
+  border-color: rgba(217, 119, 6, 0.5);
+  box-shadow: inset 4px 0 0 0 rgba(217, 119, 6, 0.65);
+}
+[dir='rtl'] .fo-card--active { box-shadow: inset -4px 0 0 0 rgba(217, 119, 6, 0.65); }
+
+.fo-card-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-block-end: 10px;
+}
+
+.fo-card-name { margin: 0; font-size: 15px; font-weight: 620; }
+
+.fo-badge {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  background: rgba(148, 163, 184, 0.16);
+  color: var(--ui-text-muted, #475569);
+}
+
+.fo-badge--ready { background: rgba(22, 163, 74, 0.14); color: #15803d; }
+.fo-badge--active { background: rgba(217, 119, 6, 0.16); color: #b45309; }
+/* Untested is deliberately NOT grey-and-quiet. It is the state most likely to be mistaken
+ * for "fine", and the whole screen exists to stop that mistake. */
+.fo-badge--untested,
+.fo-badge--not-staged { background: rgba(217, 119, 6, 0.14); color: #b45309; }
+.fo-badge--partial,
+.fo-badge--blind,
+.fo-badge--standby-down { background: rgba(220, 38, 38, 0.12); color: #b91c1c; }
+
+.fo-tag {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: rgba(148, 163, 184, 0.14);
+  color: var(--ui-text-muted, #64748b);
+}
+.fo-tag--auto { background: rgba(37, 99, 235, 0.12); color: #1d4ed8; }
+.fo-tag--off { background: rgba(148, 163, 184, 0.2); }
+
+/* The pair: which appliance covers which. */
+.fo-pair {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  margin-block-end: 10px;
+  flex-wrap: wrap;
+}
+
+.fo-pair-side {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 180px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.fo-pair-role {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ui-text-muted, #64748b);
+}
+.fo-pair-name { font-size: 14px; font-weight: 600; }
+
+.fo-pair-arrow {
+  display: flex;
+  align-items: center;
+  color: var(--ui-text-muted, #94a3b8);
+}
+/* The arrow means "covered by", so it has to follow the reading direction rather than
+ * stay pointing right while the two boxes it joins have swapped sides. */
+[dir='rtl'] .fo-pair-arrow svg { transform: scaleX(-1); }
+
+.fo-ready-hint {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ui-text-muted, #64748b);
+}
+
+.fo-active-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #b45309;
+  background: rgba(217, 119, 6, 0.1);
+  border: 1px solid rgba(217, 119, 6, 0.24);
+}
+
+/* What the last action actually did. Not a status colour by default: a takeover in which
+ * two of forty cameras did not start is not a success, and must not be painted as one. */
+.fo-outcome-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 550;
+  color: #b45309;
+  background: rgba(217, 119, 6, 0.1);
+  border: 1px solid rgba(217, 119, 6, 0.24);
+}
+.fo-outcome-line--all {
+  color: #15803d;
+  background: rgba(22, 163, 74, 0.1);
+  border-color: rgba(22, 163, 74, 0.24);
+}
+
+.fo-cam-outcome--ok { color: #15803d; }
+.fo-cam-outcome--bad { color: #b91c1c; }
+
+.fo-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-block-end: 8px;
+}
+
+.fo-fact {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--ui-text-muted, #64748b);
+}
+
+.fo-stage-error,
+.fo-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #b91c1c;
+  background: rgba(220, 38, 38, 0.09);
+  border: 1px solid rgba(220, 38, 38, 0.24);
+}
+.fo-error svg { flex: 0 0 auto; margin-block-start: 2px; }
+
+.fo-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-block-start: 8px;
+  border-block-start: 1px solid var(--ui-border, rgba(148, 163, 184, 0.24));
+}
+
+.fo-card-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.fo-cameras { margin-block-start: 10px; }
+
+.fo-camera-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.fo-camera-table th,
+.fo-camera-table td {
+  text-align: start;
+  padding: 6px 8px;
+  border-block-end: 1px solid var(--ui-border, rgba(148, 163, 184, 0.2));
+}
+
+.fo-camera-table th {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ui-text-muted, #64748b);
+}
+
+.fo-cam-detail { color: var(--ui-text-muted, #94a3b8); }
+.fo-cam--ok td { color: inherit; }
+.fo-cam--unauthorized td:last-child { color: #b91c1c; }
+.fo-cam--unreachable td:last-child { color: #b45309; }
+
+.fo-editor-switches {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-block: 12px;
+}
+
+/* Dark theme. The status colours above are stated literally, so their dark counterparts
+ * have to be stated too — the --ui-* tokens flip on their own, these do not. */
+[data-theme='dark'] .fo-tile--attention { background: rgba(220, 38, 38, 0.16); }
+[data-theme='dark'] .fo-tile--attention .fo-tile-n,
+[data-theme='dark'] .fo-badge--partial,
+[data-theme='dark'] .fo-badge--blind,
+[data-theme='dark'] .fo-badge--standby-down,
+[data-theme='dark'] .fo-stage-error,
+[data-theme='dark'] .fo-error,
+[data-theme='dark'] .fo-cam--unauthorized td:last-child { color: #fca5a5; }
+[data-theme='dark'] .fo-tile--ready { background: rgba(22, 163, 74, 0.18); }
+[data-theme='dark'] .fo-tile--ready .fo-tile-n,
+[data-theme='dark'] .fo-badge--ready { color: #86efac; }
+[data-theme='dark'] .fo-tile--active { background: rgba(217, 119, 6, 0.2); }
+[data-theme='dark'] .fo-tile--active .fo-tile-n,
+[data-theme='dark'] .fo-badge--active,
+[data-theme='dark'] .fo-badge--untested,
+[data-theme='dark'] .fo-badge--not-staged,
+[data-theme='dark'] .fo-active-note,
+[data-theme='dark'] .fo-cam--unreachable td:last-child { color: #fcd34d; }
+[data-theme='dark'] .fo-tag--auto { color: #93c5fd; }
+[data-theme='dark'] .fo-outcome-line { color: #fcd34d; }
+[data-theme='dark'] .fo-outcome-line--all,
+[data-theme='dark'] .fo-cam-outcome--ok { color: #86efac; }
+[data-theme='dark'] .fo-cam-outcome--bad { color: #fca5a5; }

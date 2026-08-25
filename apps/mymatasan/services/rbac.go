@@ -161,6 +161,13 @@ func Policy() []PolicyRule {
 		{Path: "/api/teach", Description: "Teach a camera a new skill", Viewer: none, Operator: none},
 		{Path: "/api/anomaly", Description: "Configure the anomaly monitor", Viewer: none, Operator: none},
 		{Path: "/api/pairing", Description: "Pair this node with a control plane", Viewer: none, Operator: none},
+		// N+1 failover (W3-7). Two independent reasons this is administrator-only, either
+		// of which would be enough on its own: one of these routes hands this appliance's
+		// entire camera set — credentials included, sealed for one named spare — to another
+		// machine, and another starts recording forty cameras that belong to a different
+		// site. Both are decisions about the ESTATE. Neither is a shift task, and neither
+		// is something to acquire as a side effect of being allowed to review footage.
+		{Path: "/api/standby", Description: "Stand by for another appliance's cameras, and take them over when it fails", Viewer: none, Operator: none},
 		{Path: "/api/system", Description: "Restart, update, factory reset, secure wipe", Viewer: none, Operator: none},
 		{Path: "/api/settings/users", Description: "Manage users and their roles", Viewer: none, Operator: none},
 		{Path: "/api/settings/roles", Description: "See the roles that can be assigned", Viewer: none, Operator: none},

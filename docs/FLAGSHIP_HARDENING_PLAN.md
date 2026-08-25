@@ -38,7 +38,7 @@ lands the work.
 | W3-5b | ONVIF events (PullPoint), digital inputs & relay outputs | F-14 | `feat/onvif-events` | ✅ shipped, benched 2026-08-24 (34/34 against a real ONVIF device + 16/16 en and 16/16 ar screen passes; found an alert-log write that silently never happened, and a control that could not be clicked at all) |
 | W3-6 | Privacy zones: camera masks + export redaction | F-19 | `feat/privacy-masking` | ✅ shipped, benched 2026-08-24 (51/51 against a real ONVIF device, including a camera that LIES about what it stored, + 22/22 en and 25/25 ar screen passes; found a redact flag the API silently dropped and a status sentence hard-coded in English) |
 | W3-6b | Face blur on export | F-19 | — | ☐ not started (the redacting export pipeline now exists) |
-| W3-7 | N+1 node failover | F-23 | — | ☐ not started |
+| W3-7 | N+1 node failover | F-23 | `feat/node-failover` | ✅ shipped, benched 2026-08-25 (55/55 on a real two-node fleet with real footage + 27/27 en and 30/30 ar screen passes; found four defects — a per-camera takeover result the control plane silently dropped, a takeover that called a retrying ffmpeg process "recording", a sweep that drilled every new plan on its first tick and turned the badge green by itself, and a clean fail-back rendered as an alarm that only LOOKING at the screenshot caught) |
 | W3-8 | Tenant isolation | F-24 | — | ✅ CLOSED 2026-08-21 — single-org per install, will not build |
 | W3-9 | Mobile PWA + web push | F-20b | — | ☐ not started |
 
@@ -1517,9 +1517,115 @@ per-frame detection is a different order of cost and a separate failure mode). N
 camera: `onvifsim.py` implements the calls the product makes and can be told to lie, but it
 is not any vendor's firmware.
 
-**W3-7 · N+1 node failover** (F-23). Driven from the control plane, which already knows
-which nodes are alive and which cameras they own. `apis/deployment.go` is right that
-mymatasan cannot cluster; failover is a myseliasan feature.
+**W3-7 · N+1 node failover** (F-23) — **SHIPPED and BENCHED, `feat/node-failover`.**
+55/55 on a real two-node fleet with real recorded footage, plus 27/27 en and 30/30 ar screen
+passes. **The benches found four real defects; see the bottom of this section.**
+
+Driven from the control plane, which is the only party that talks to both appliances, knows
+which are alive, and is still running when one of them is not. `apis/deployment.go` is right
+that mymatasan cannot cluster — it is pinned to its own disks and its own capture hardware.
+So this is not clustering; it is a **rehearsed handover** arranged in advance.
+
+`infra/handoff` (new, stdlib-only) · `apps/mymatasan/{entities,services,apis}/standby*` ·
+`apps/myseliasan/{entities,services,apis}/failover*` · the Failover screen in the SPA.
+
+**THE FACT EVERYTHING FOLLOWS FROM: when failover matters, the failed appliance is
+unreachable.** Nothing can be fetched from it — not its camera list, not its credentials, not
+its recording settings. So the copy is taken EARLY and repeatedly, while it is healthy, and
+the spare is asked to PROVE it can open those cameras before anything has gone wrong. **That
+proof is the product.** A spare nobody has drilled is a line in a contract.
+
+**READY IS NEVER INFERRED FROM A SUCCESSFUL COPY.** A staged set proves the two appliances
+can talk to each other; it says nothing about whether the spare can reach the CAMERAS — a
+different network path, different credentials, and the thing that actually fails. A plan that
+has never been drilled reports `untested`, in the same place a proved one reports `ready`.
+Same rule as the policy reconciler's `unknown`: absence of evidence gets its own colour.
+
+**THE CONTROL PLANE CARRIES AN ENVELOPE IT CANNOT OPEN.** Moving a camera set means moving
+camera credentials, and the obvious "export my cameras" endpoint would be a bulk credential
+dump readable by anything that can call it. Instead the SPARE mints a one-exchange X25519
+key, the PROTECTED appliance seals its set to that key with the spare's node id as associated
+data, and myseliasan relays a blob it has no key for. A bundle captured in flight cannot be
+staged onto a different node. **The exchange also asserts that the appliance which ANSWERED
+is the spare the plan names** — without that check a mis-delivered tunnel would seal a site's
+credentials to a machine nobody chose, silently, because every later step still succeeds.
+
+**FAILOVER IS ADDITIVE, AND NOTHING IS EVER FENCED.** A control plane that cannot reach a
+node cannot tell "dead" from "partitioned and recording perfectly". Stopping the returning
+appliance means being willing to stop the only thing recording, on evidence that is
+definitionally incomplete. So at worst both record the same camera until an operator fails
+back — a duplicate stream and duplicate footage. **Nothing recording is the one unrecoverable
+outcome, and no path here can produce it.** Fail-back is therefore manual too: a recorder that
+returns for thirty seconds and dies again would otherwise thrash the whole building.
+
+**A STAGED CAMERA IS NOT A CAMERA.** It does not appear in the camera list, is not probed, is
+not recorded and is not on the wall; the camera row is created at ACTIVATION and only then. A
+spare covering four recorders would otherwise show four sites' worth of cameras it is not
+watching, in a control room, permanently. **And fail-back does NOT delete it**: the footage
+recorded during the outage hangs off that row, and removing the camera would purge it.
+
+**ACTIVATION READS THE RECORDER BACK.** Writing a recording config row starts nothing — the
+settings screen has always had to hot-reload the recorder after a save — so a takeover that
+only wrote rows would report success and record nothing until the next restart. Each camera's
+outcome comes from `Manager.Statuses()`: `recording` only when ffmpeg is actually running,
+otherwise the real reason.
+
+**Not claimed:** it restores RECORDING, not the recordings — footage on the failed appliance
+is still only there, and the only copies elsewhere are what the W2-3 clip archive already
+pulled off it. No capacity admission control: a spare is not stopped from taking on more
+cameras than it can encode, and the drill does not measure load (the honest half — whether it
+can reach and log into each camera — is measured).
+
+**WHAT THE BENCHES FOUND — four, and every one of them was a screen or an API telling an
+operator something other than the truth.**
+
+1. **A PER-CAMERA TAKEOVER RESULT THE CONTROL PLANE SILENTLY DROPPED.** The appliance computes
+   what happened to each camera while taking over and does NOT store it — it is a result, not
+   a state — so the control plane rebuilding its view from the database afterwards returned an
+   empty list. An operator who had just pressed the button in an emergency was told "active"
+   and nothing about which of their forty cameras was actually being recorded. Every status
+   code was 200 and the audit trail even had the outcomes in it. **The same shape as the
+   redact flag W3-6 dropped: a field that existed at both ends and never crossed the middle.**
+2. **A TAKEOVER THAT CALLED A RETRYING FFMPEG PROCESS "RECORDING".** `FFmpegRunning` is a
+   weaker claim than it looks: a recorder pointed at a host the spare cannot resolve has a
+   live process too, because it is retrying. So the takeover reported "recording" for a camera
+   the DRILL ROW IMMEDIATELY ABOVE IT said could not be reached. A card that says both things
+   at once is worse than one that says nothing. Now the whole set is started and then settled
+   once, and `recording` requires `LiveFiles > 0` — footage on disk, not a live process. The
+   third answer, "started, nothing written yet", is the honest one for the seconds in which a
+   slow camera and a dead one look identical.
+3. **A SWEEP THAT DRILLED EVERY NEW PLAN ON ITS FIRST TICK.** `now - LastDrillAt` on a plan
+   that has never been drilled is fifty-five years, so the badge an operator had just watched
+   say "never tested" turned green by itself half a minute later — beside a sentence telling
+   them to press Test to find out whether the spare can reach the cameras. **The product and
+   its own screen disagreed, and the distinction between COPIED and PROVED — the whole feature
+   — became invisible in ordinary use.** "Never" is not "long ago"; they are different
+   questions and one subtraction cannot answer both.
+
+
+4. **A CLEAN FAIL-BACK SUMMARISED AS AN ALARM.** After handing the cameras back, every camera
+   correctly reported "stopped" — and the card summarised that as "0 of 1 cameras are
+   recording on the spare", in the amber it uses for a partial takeover. A successful,
+   deliberate operation rendered as a warning. **Found by LOOKING at the Arabic screenshot on
+   a run where all twenty-nine assertions passed** — which is the entire argument for looking
+   at the picture the screen check writes and nobody reads.
+
+**And two the bench found in ITSELF, both worth more than the checks they broke:** the camera
+list answers with `{data:{result:[…]}}` rather than `{result:{items:[…]}}`, so "nothing
+appeared on the spare" passed for the wrong reason while "the camera exists on the spare"
+failed on a takeover that had worked; and the hold-down refusal was tested after a plan
+already existed, so it hit the already-protected check and passed for a reason that had
+nothing to do with the hold-down. `result_list` is the harness helper for the first, and the
+second is a reminder to run a refusal in the state where only the thing under test can refuse.
+
+**What the bench actually exercises:** two adopted nodes, a real mediamtx camera, real
+recording on the protected node; the sealed bundle inspected for the camera password;
+staging asserted to create NO cameras; a drill that comes back PARTIAL against a camera that
+cannot be reached and READY only after it is removed; `docker stop` on the recorder and the
+real 120s hold-down; the takeover; **a segment downloaded off the spare and decoded with
+ffprobe — 60.00s of video, not a filename**; the recorder brought back and confirmed NOT
+fenced (its own segment count grows again); the fail-back; and the footage surviving both the
+fail-back and the deletion of the plan.
 
 **W3-8 · Tenant isolation** (F-24). **CLOSED 2026-08-21 — decided: NO.** Each install
 serves a single organisation; integrator/MSP resale off one shared control plane is not a

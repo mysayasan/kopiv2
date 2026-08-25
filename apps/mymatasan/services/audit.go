@@ -113,6 +113,18 @@ const (
 	ActionPrivacyZoneChange = "privacy.zone_change"
 	ActionPrivacyZoneDelete = "privacy.zone_delete"
 
+	// Standby / N+1 failover (W3-7). Every step, because each one is a change to WHICH
+	// APPLIANCE IS RESPONSIBLE for a building's cameras, and that question is asked after
+	// an incident by somebody holding a gap in the footage. Handing a camera set out is
+	// audited on the appliance that hands it out (it is that appliance's credentials
+	// leaving it); staging, drilling, taking over and handing back are audited on the spare.
+	ActionStandbyHandoff  = "standby.handoff"
+	ActionStandbyStage    = "standby.stage"
+	ActionStandbyDrill    = "standby.drill"
+	ActionStandbyActivate = "standby.activate"
+	ActionStandbyRelease  = "standby.release"
+	ActionStandbyForget   = "standby.forget"
+
 	// Cameras. A credential change is recorded; the credential itself never is.
 	ActionCameraCreate           = "camera.create"
 	ActionCameraUpdate           = "camera.update"
@@ -150,6 +162,10 @@ const (
 	TargetVision    = "vision"
 	TargetCase      = "case"
 	TargetWall      = "wall"
+	// TargetStandby is a whole staged camera set, identified by the appliance it came
+	// from — not a camera. A takeover is one decision about forty cameras, and forty audit
+	// rows would bury the decision in its own consequences.
+	TargetStandby = "standby"
 )
 
 // RelayAuditRecorder adapts the audit service into the recorder the relay chokepoint takes.

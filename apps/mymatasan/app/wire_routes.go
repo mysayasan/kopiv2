@@ -73,6 +73,11 @@ func registerRoutes(api *mux.Router, w *wiring) *mux.Router {
 	// Single-instance by design (local recordings + host-pinned capture/GPU).
 	apis.NewDeploymentApi(protected)
 	apis.NewPairingApi(protected, w.pairing)
+	// N+1 failover (W3-7). Administrator-only and normally driven by the control plane
+	// over the fleet tunnel; it is mounted on the ordinary protected router so it is
+	// subject to exactly the same authorization as everything else, rather than getting a
+	// private path to the camera table.
+	apis.NewStandbyApi(protected, w.standby, w.audit)
 	// The audit trail's READ surface. Writing happens inside the handlers above; this
 	// only exposes the trail for review and CSV export, and has no delete or update
 	// route by design — see apis/audit.go.

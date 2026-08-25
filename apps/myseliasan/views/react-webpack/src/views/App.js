@@ -10,6 +10,7 @@ import './styles/notifications.css';
 import './styles/node-settings.css';
 import './styles/fleet-rules.css';
 import './styles/fleet-policy.css';
+import './styles/failover.css';
 import { SideNav, WorkspaceHeader } from './components/layout';
 import { ToastStack, LangProvider, normalizeLang, useT, AppFooter } from '@shared';
 import { ManualProvider, ManualLibrary } from '@shared/Manual';
@@ -22,6 +23,7 @@ import { NodesTab } from './components/nodes';
 import { AIInsightPage } from './components/insight';
 import { FleetRulesPage } from './components/fleet_rules';
 import { FleetPolicyPage } from './components/fleet_policy';
+import { FailoverPage } from './components/failover';
 import { LiveViewsPage } from './components/live_views';
 import { ObjectsPage } from './components/objects';
 import { TeachPage } from './components/teach';
@@ -236,6 +238,10 @@ function AppInner({ lang, onLangChange }) {
   // Reading the compliance report follows the matrix; WRITING a policy is superadmin-only
   // and enforced server-side. The report is a health view — hiding it helps nobody.
   const canFleetPolicy = sessionCanGet(session, '/api/fleet-policies');
+  // Failover: READING which sites are covered follows the matrix — "is this recorder
+  // covered" is a health question and hiding it from the people who would notice a gap
+  // helps nobody. Every write, including the takeover, is superadmin-only server-side.
+  const canFailover = sessionCanGet(session, '/api/failover-plans');
   // The AI Insight page (digest + ask-the-fleet) follows the matrix on /api/agent:
   // GET shows the digest; POST (generate/chat) is checked inside the page itself.
   const canAgent = sessionCanGet(session, '/api/agent');
@@ -244,6 +250,7 @@ function AppInner({ lang, onLangChange }) {
   if ((activeTab === 'nodes' || activeTab === 'liveviews' || activeTab === 'objects' || activeTab === 'teach') && !canNodes) setActiveTab('dashboard');
   if (activeTab === 'fleetrules' && !canFleetRules) setActiveTab('dashboard');
   if (activeTab === 'fleetpolicy' && !canFleetPolicy) setActiveTab('dashboard');
+  if (activeTab === 'failover' && !canFailover) setActiveTab('dashboard');
   if (activeTab === 'insight' && !canAgent) setActiveTab('dashboard');
 
   return (
@@ -290,6 +297,7 @@ function AppInner({ lang, onLangChange }) {
         {activeTab === 'teach' && canNodes ? <TeachPage nodes={nodes} onToast={pushToast} /> : null}
         {activeTab === 'fleetrules' && canFleetRules ? <FleetRulesPage nodes={nodes} session={session} onToast={pushToast} prefill={rulePrefill} onPrefillConsumed={() => setRulePrefill(null)} /> : null}
         {activeTab === 'fleetpolicy' && canFleetPolicy ? <FleetPolicyPage nodes={nodes} session={session} onToast={pushToast} /> : null}
+        {activeTab === 'failover' && canFailover ? <FailoverPage nodes={nodes} session={session} onToast={pushToast} /> : null}
         {activeTab === 'notifications' ? <NotificationsPage nodes={nodes} refreshSignal={notifVersion} onChanged={loadNotifUnread} /> : null}
         {activeTab === 'nodes' && canNodes ? (
           <NodesTab

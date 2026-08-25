@@ -744,6 +744,9 @@ func (m *module) Entities() []any {
 		// drift from it can be reported instead of discovered.
 		appentities.FleetPolicy{},
 		appentities.FleetPolicyItem{},
+		// N+1 failover: which spare appliance covers which recorder, and whether that has
+		// ever been proved. New table; the auto-migrator creates it.
+		appentities.FailoverPlan{},
 		// Fleet map: sites + uploaded floor plans (indoor view); node/camera placements.
 		appentities.Site{},
 		appentities.FloorPlan{},
@@ -1734,6 +1737,27 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 			deps.Logger.Warnf("myseliasan.fleet-policy", "reconcile sweep: %v", err)
 		}
 	})
+	// N+1 node failover. Wired beside the policy reconciler and for the same reason: it
+	// reaches both appliances through the SAME tunnel the operator's own node screens use,
+	// asserting a role name the node evaluates against its own matrix.
+	failoverService := services.NewFailoverService(deps.Db, registry, nodeSender, auditService,
+		failoverNotifier(notificationService),
+		func(f string, a ...any) { deps.Logger.Warnf("myseliasan.failover", f, a...) })
+	apis.NewFailoverApi(api, *deps.Auth, controlSession, failoverService)
+	// Leader-gated, like the heartbeat and the clip archive. Two instances sweeping would
+	// stage the same plan twice and — the part that matters — could both decide to take the
+	// same recorder over, which is two takeover commands racing at one spare.
+	//
+	// Half a minute, because unlike the configuration sweep this one is watching for an
+	// EVENT. The hold-down is measured in minutes, so a slower tick would add a random
+	// fraction of itself to every failover; a faster one buys nothing, since the fleet's own
+	// liveness cannot change more often than the heartbeat. Most ticks do nothing at all:
+	// the staging pass is hourly and the drill daily, both checked against a stored
+	// timestamp rather than a timer of their own.
+	leaderTicker(bgCtx, deps.Leader, 30*time.Second, func(ctx context.Context) {
+		failoverService.Sweep(ctx)
+	})
+
 	// One pass shortly after boot, so the screen has an answer before the first tick. It is
 	// deliberately not immediate: nodes dial the control channel after this function
 	// returns, and a sweep run now would report the entire fleet unreachable and store that
@@ -2056,6 +2080,73 @@ func publishFleetEvent(svc *notification.Service, e services.FleetEvent) {
 			Source:   source,
 			Data:     data,
 		})
+	}
+}
+
+// failoverNotifier turns a failover event into a notification in the unified feed.
+//
+// It lives here, next to publishFleetEvent, because this is where the control plane decides
+// what a fleet event SOUNDS like — and because the failover service should be able to say
+// "this happened" without also owning how it is worded. The wording matters more than usual
+// here: the ready-to-activate message is the one somebody acts on at 3am, and the
+// protected-back message is the only warning that two appliances may now be recording the
+// same cameras.
+//
+// These are FEED entries, composed server-side in English exactly as every other fleet
+// notification is — the same feed, the same categories, the same relay to email and
+// webhooks. That is deliberately different from the failover SCREEN, which is handed a
+// state and composes its own sentence in the operator's language.
+func failoverNotifier(svc *notification.Service) services.FailoverNotifier {
+	return func(kind string, plan *appentities.FailoverPlan, protectedName, standbyName, detail string) {
+		if svc == nil || plan == nil {
+			return
+		}
+		data := map[string]any{
+			"planId":          plan.Id,
+			"protectedNodeId": plan.ProtectedNodeId,
+			"standbyNodeId":   plan.StandbyNodeId,
+			"kind":            kind,
+		}
+		source := "node:" + plan.ProtectedNodeId
+		n := notification.Notification{
+			Category: notification.CategoryHealthCheck,
+			Source:   source,
+			Data:     data,
+		}
+		switch kind {
+		case services.FailoverNotifyReadyToActivate:
+			n.Severity = notification.Critical
+			n.Title = "Ready to fail over"
+			n.Body = fmt.Sprintf("%q has been out of contact (%s) and its cameras are not being recorded. %q holds a copy of its camera set and can take them over.",
+				protectedName, detail, standbyName)
+		case services.FailoverNotifyActivated:
+			n.Severity = notification.Warning
+			n.Title = "Cameras taken over by the standby"
+			n.Body = fmt.Sprintf("%q is now recording %q's cameras (%s). The footage already on %q is still only on %q.",
+				standbyName, protectedName, detail, protectedName, protectedName)
+		case services.FailoverNotifyActivateFailed:
+			n.Severity = notification.Critical
+			n.Title = "Failover did not happen"
+			n.Body = fmt.Sprintf("%q is down and %q could not take its cameras over: %s", protectedName, standbyName, detail)
+		case services.FailoverNotifyProtectedBack:
+			n.Severity = notification.Warning
+			n.Title = "Failed-over appliance is back"
+			n.Body = fmt.Sprintf("%q is reachable again while %q is still recording its cameras — %s. Fail back when you are ready; nothing is stopped automatically.",
+				protectedName, standbyName, detail)
+		case services.FailoverNotifyReleased:
+			n.Severity = notification.Info
+			n.Title = "Cameras handed back"
+			n.Body = fmt.Sprintf("%q has stopped recording %q's cameras. The footage it recorded during the outage stays on %q.",
+				standbyName, protectedName, standbyName)
+		case services.FailoverNotifyDrillFailed:
+			n.Severity = notification.Warning
+			n.Title = "Failover drill did not pass"
+			n.Body = fmt.Sprintf("%q could not open all of %q's cameras: %s. Failover would be incomplete.",
+				standbyName, protectedName, detail)
+		default:
+			return
+		}
+		svc.Publish(context.Background(), n)
 	}
 }
 

@@ -1493,3 +1493,124 @@ was "near zero" and failed on a perfectly black rectangle. Measured values on th
 * No real camera. `onvifsim.py` implements the calls the product makes and can be told to
   lie, but it is not any vendor's firmware, and no real device's coordinate-space quirks are
   reproduced.
+
+---
+
+## W3-7 - N+1 node failover  DONE (2026-08-25), 55/55 + 27/27 en and 30/30 ar
+
+```
+KOPIV2_NODE_IMAGE=debian-ffmpeg:bench python tools/fleetbench/fleet_harness.py
+KOPIV2_NODE_IMAGE=debian-ffmpeg:bench python tools/fleetbench/bench_w37_failover.py   # ~14 min
+node tools/fleetbench/uicheck_failover.js .artifacts/fleetbench en
+node tools/fleetbench/uicheck_failover.js .artifacts/fleetbench ar
+```
+
+The screen check needs a recording camera on node-a; the API bench leaves none behind (it
+removes its own source in a `finally`), so seed one before running the screen half.
+
+### What the API bench actually proves
+
+Not "the endpoints return 200". Two adopted nodes, a real mediamtx camera, real recording on
+the protected node, and then:
+
+* the sealed bundle **inspected for the camera password** - a distinctive credential is put
+  on a second camera, the handoff is called directly, and the base64 is searched for it;
+* a bundle sealed for the spare **refused by anybody else**, and an appliance refusing to
+  stand by for itself;
+* **staging asserted to create NO cameras** on the spare;
+* a drill that comes back **PARTIAL** against a camera that cannot be reached, names WHICH,
+  and goes **READY only after that camera is removed and the set re-copied**;
+* `docker stop` on the recorder and the **real 120s hold-down**, then the alarm;
+* the takeover, and then the assertion the whole item rests on: **a segment downloaded off
+  the spare and decoded with ffprobe - 60.00s of video, not a filename and not a row**;
+* the recorder brought back and confirmed **NOT fenced** (its own segment count grows again)
+  while the plan stays active and nothing is handed back on its own;
+* the fail-back, and the footage surviving both it and the deletion of the plan.
+
+### What the benches found - four, and all four are a screen or an API being kind
+
+1. **A per-camera takeover result the control plane SILENTLY DROPPED.** The appliance
+   computes what happened to each camera while taking over and does not store it - it is a
+   RESULT, not a state - so the control plane rebuilding its view from the database
+   afterwards returned an empty list. An operator who had just pressed the button in an
+   emergency was told "active" and nothing about which of their cameras were recording. Every
+   status code on that path was 200 and the AUDIT TRAIL EVEN HAD THE OUTCOMES IN IT. Same
+   shape as W3-6's redact flag: a field that existed at both ends and never crossed the
+   middle. **Caught because the bench asserted the CONTROL PLANE's response, not the
+   appliance's.**
+2. **A takeover that called a retrying ffmpeg process "recording".** `FFmpegRunning` is
+   weaker than it looks - a recorder pointed at a host the spare cannot resolve has a live
+   process, because it is retrying. So the takeover reported "recording" for a camera the
+   DRILL ROW IMMEDIATELY ABOVE IT said could not be reached. **A card that says both things
+   at once is worse than one that says nothing.** `recording` now requires `LiveFiles > 0`
+   - footage on disk - and there is a third answer, "started, nothing written yet", for the
+   seconds in which a slow camera and a dead one are indistinguishable.
+3. **A sweep that drilled every new plan on its first tick.** `now - LastDrillAt` on a plan
+   that has never been drilled is fifty-five years, so the badge an operator had just watched
+   say "never tested" went green by itself half a minute later - beside a sentence telling
+   them to press Test. The product and its own screen disagreed, and the distinction between
+   COPIED and PROVED, which is the entire feature, became invisible in normal use.
+   **"Never" is not "long ago".**
+
+4. **A clean fail-back summarised as an alarm.** After handing the cameras back every camera
+   correctly reported "stopped", and the card summarised that as "0 of 1 cameras are recording
+   on the spare", in the amber reserved for a partial takeover — a deliberate, successful
+   operation rendered as a warning. **Found by LOOKING at the screenshot on a run where all
+   twenty-nine assertions passed.** The screen checks write a PNG every run; this is what it
+   is for, and it is the first time in this programme that looking at it caught something the
+   assertions did not.
+
+Plus a fifth that is really the third one wearing different clothes: the per-camera outcome
+was a finished English sentence, so an Arabic operator read "recording" in English in a table
+whose every other cell was Arabic. **THIRD SIGHTING of the server-composed-sentence defect**
+(W3-4's schedule summaries, W3-6's privacy status line). The appliance now returns a STATE and
+the screen composes the sentence; the raw machine detail beside it stays raw on purpose.
+
+### And two the bench found in ITSELF
+
+Both worth more than the checks they broke.
+
+* **THE ENVELOPE.** `/api/cameras` and `/api/recording/status` do not use the `{result:{...}}`
+  shape the rest of the API uses - the first is `{data:{result:[...]}}` and the second is a
+  bare array. Reading `result_of(...)["items"]` returned `[]` for a node full of cameras, so
+  **"nothing appeared on the spare" passed for the wrong reason** while "the camera exists on
+  the spare" failed on a takeover that had worked perfectly. `result_list` exists for exactly
+  this and the harness README warns about it. **A check that passes on broken output is worse
+  than no check** - this is the second item in a row to hit that.
+* **A refusal tested in the wrong state.** "A hold-down shorter than the grace window" was
+  asserted after a plan already covered that appliance, so it hit the already-protected check
+  and passed for a reason that had nothing to do with hold-downs. Run a refusal in the state
+  where only the thing under test can refuse.
+
+### The assertions worth copying
+
+* **Ask the recorder, then ask the DISK.** "The process is alive" and "footage exists" are
+  different claims and the gap between them is where a takeover lies.
+* **Assert the response the SCREEN reads**, not the one the subsystem produced. The two were
+  different here and only one of them mattered.
+* **Read the state out of a data attribute, not the rendered text.** `data-fo-ready` and
+  `data-fo-outcome` let the screen check assert a STATE in four languages, and then assert
+  separately that the rendered text is not that state token - which is precisely how the
+  untranslated-outcome defect was caught.
+* **Hit-test every control at its own centre** (`document.elementFromPoint`) and assert it is
+  inside its own card, in both directions. Third item running with that check; it is cheap.
+
+### Harness traps this bench re-learned
+
+* The ffmpeg path in `runtime_setting`, again - and this time on BOTH nodes, because the
+  SPARE is the one that has to record. A spare with the host's Windows ffmpeg path takes over
+  and records nothing, which is the exact failure the feature exists to prevent, arriving as
+  a pass.
+* **Rebuild the LINUX binaries AND the SPA after every fix.** The static bundle is served
+  from the bind-mounted `apps/<app>/static`, so a screen change needs `make web APP=...`; a
+  run against the previous bundle reports every new control as missing.
+
+### Not claimed
+
+* **No capacity admission control.** A spare is not stopped from taking on more cameras than
+  it can encode, and the drill measures reachability, not load. The honest half - can this
+  appliance open and log into each camera - is measured; how many it can run at once is not.
+* **No fencing, deliberately.** Both appliances may record the same camera during a partition.
+  See the plan for why that is the better worst case.
+* The camera set is copied hourly, so a site that gains a camera and loses its recorder within
+  the same hour fails over without it. The screen reports when the copy was last taken.
