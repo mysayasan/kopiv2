@@ -58,6 +58,9 @@ node   tools/fleetbench/uicheck_privacy.js .artifacts/fleetbench ar
 KOPIV2_NODE_IMAGE=debian-ffmpeg:bench python tools/fleetbench/bench_w37_failover.py # W3-7
 node   tools/fleetbench/uicheck_failover.js .artifacts/fleetbench en
 node   tools/fleetbench/uicheck_failover.js .artifacts/fleetbench ar
+KOPIV2_NODE_IMAGE=debian-ffmpeg-face:bench python tools/fleetbench/bench_w36b_faceredact.py
+node   tools/fleetbench/uicheck_faceredact.js .artifacts/fleetbench en
+node   tools/fleetbench/uicheck_faceredact.js .artifacts/fleetbench ar
 ```
 
 `bench_w37_failover.py` (W3-7, N+1 failover) needs the **ffmpeg node image on BOTH nodes** —
@@ -73,6 +76,22 @@ before `uicheck_failover.js`** — that check needs node-a to hold one. The scre
 its own PLAN through the form, deletes anything a previous run left, and asserts the badge
 STATE (`data-fo-ready`) rather than its text, which is what lets it run in four languages and
 still assert that the text is not the state token.
+
+`bench_w36b_faceredact.py` (W3-6b, face redaction on export) needs a THIRD node image —
+`debian-ffmpeg-face:bench`, which is `debian-ffmpeg:bench` plus python3 and
+opencv-python-headless — and `KOPIV2_NODE_PYTHON=python3` when standing the harness up, because
+the shipped config names the interpreter by its HOST path and no container has it. It also needs
+the YuNet model at `apps/mymatasan/ai/face_detection_yunet_2023mar.onnx`, where a real install
+puts it.
+
+**It films a DRAWN face, and YuNet detects it.** That is what lets a fleet with nothing to film
+bench a detector end to end: a real detection at a position the bench knows, so the output can be
+MEASURED (face region black, background not) rather than admired. The face is stationary and the
+background moves — see the checklist entry for why both halves matter.
+
+`uicheck_faceredact.js` drives the export dialog and runs a real face-redacted export from the
+browser, so it is slow (a face pass reads every frame). Run the API bench first — the screen
+check needs a camera with footage on node-a.
 
 ## `onvifsim.py` — a real ONVIF device, on demand
 

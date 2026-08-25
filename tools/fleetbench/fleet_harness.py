@@ -86,6 +86,13 @@ def base_config(app, tls_port):
     src["rateLimit"]["enabled"] = False
     if "sso" in src:
         src["sso"]["enabled"] = False
+    # The shipped config names a python interpreter by its HOST path (a Windows one, here),
+    # which does not exist in the container. Most benches never notice, because nothing they
+    # do runs a Python worker. A bench that DOES — face redaction on export (W3-6b) — gets a
+    # failure that names ffmpeg or the model rather than the interpreter, so the override is
+    # explicit and opt-in.
+    if app == "mymatasan" and NODE_PYTHON:
+        src.setdefault("vision", {}).setdefault("detector", {})["command"] = NODE_PYTHON
     return src
 
 
@@ -118,6 +125,11 @@ def teardown(wipe=False):
 # ffmpeg (debian-ffmpeg:bench is that image plus `apt-get install ffmpeg`, committed once)
 # when the bench needs recording.
 NODE_IMAGE = os.environ.get("KOPIV2_NODE_IMAGE", "debian:bookworm-slim")
+
+# NODE_PYTHON overrides the interpreter the node's vision workers are launched with. Empty
+# leaves the shipped config alone. Set it (with an image that HAS that interpreter and the
+# needed wheels) for any bench that exercises a Python worker.
+NODE_PYTHON = os.environ.get("KOPIV2_NODE_PYTHON", "")
 
 
 # NODE_HOME_RW makes each node's application directory a WRITABLE PRIVATE COPY instead of a

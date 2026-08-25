@@ -2060,6 +2060,11 @@ export default {
   'privacy.removed': '已移除 {name}',
   'ev.redact': '在此副本中隐藏隐私区域',
   'ev.redactHint': '会在导出的视频中涂黑该摄像机的隐私区域。为此副本需重新编码，因此它会被标记为“已脱敏副本”，且不会与录像机原始校验值一致——这一点已在包内说明。',
+  'ev.blurFaces': '隐去此副本中的人脸',
+  'ev.blurFacesHint': '逐帧扫描，找到的每张人脸都用纯黑矩形抹除，范围比人脸更大，并在其前后若干帧内保持。这是尽力而为，不是保证：自动检测器会漏掉侧脸、远处、被部分遮挡或因运动而模糊的人脸。文件中仍可能残留人脸。',
+  'ev.blurFacesSlow': '这会逐帧处理，因此比普通导出慢得多，并且一次最多处理 20 分钟录像。',
+  'ev.faceResult': '在扫描的 {frames} 帧中抹除了 {faces} 次人脸检测。这是检测次数，不是人数。',
+  'ev.faceResultLimit': '此文件中仍可能有人脸可见。只有自动检测器找到的人脸被抹除；它会漏掉侧脸、远处、被部分遮挡或因运动而模糊的人脸。移交前请先检查文件。',
   'ev.redactedBundle': '已脱敏副本',
 
   // The privacy status sentence, composed on the CLIENT (W3-6) - the server's

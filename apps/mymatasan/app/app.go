@@ -784,6 +784,22 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 			currentVersion,
 			// The privacy zones a redacted export burns in (W3-6).
 			privacyService,
+			// Face redaction on export (W3-6b). It reuses the SAME YuNet model the face
+			// recognition feature installs — a second face detector would be a second thing
+			// to keep aligned — and refuses at request time when that model is absent
+			// rather than handing back a bundle that did not hide anything.
+			services.NewFaceRedactor(
+				appCfg.Vision.Detector.Command,
+				filepath.Join(filepath.Dir(detectorPaths.FacesWorkerScript), "face_redact_worker.py"),
+				detectorPaths.FaceYunetFile,
+				func() string {
+					if dec, err := settingsService.Decoder(context.Background()); err == nil {
+						return dec.MJPEG.FFmpegPath
+					}
+					return ""
+				},
+				func(f string, a ...any) { deps.Logger.Warnf("mymatasan.faceredact", f, a...) },
+			),
 		),
 
 		ffmpegInstaller: services.NewFFmpegInstaller(ffmpegBinDir, settingsService),

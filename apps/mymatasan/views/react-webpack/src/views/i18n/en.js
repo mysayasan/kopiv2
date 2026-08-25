@@ -2078,6 +2078,11 @@ export default {
   'privacy.removed': 'Removed {name}',
   'ev.redact': 'Hide the private areas in this copy',
   'ev.redactHint': 'Blacks out the privacy areas of this camera in the exported video. The copy is re-encoded to do it, so it is marked as a redacted copy and will not match the original checksums held by the recorder - which is stated inside the bundle.',
+  'ev.blurFaces': 'Hide the faces in this copy',
+  'ev.blurFacesHint': 'Every frame is scanned and each face found is destroyed with a solid black box, widened beyond the face and held either side of it. This is a best effort, not a guarantee: an automatic detector misses faces that are turned away, distant, partly hidden or blurred by motion. Faces may remain in the file.',
+  'ev.blurFacesSlow': 'This looks at every frame, so it takes considerably longer than an ordinary export and is limited to 20 minutes of footage at a time.',
+  'ev.faceResult': '{faces} face detection(s) destroyed across {frames} frames scanned. That is a count of detections, not of people.',
+  'ev.faceResultLimit': 'Faces may still be visible in this file. Only the faces an automatic detector found were destroyed; it misses faces that are turned away, distant, partly hidden or blurred by motion. Check the file before handing it over.',
   'ev.redactedBundle': 'Redacted copy',
 
   // The privacy status sentence, composed on the CLIENT (W3-6) - the server's

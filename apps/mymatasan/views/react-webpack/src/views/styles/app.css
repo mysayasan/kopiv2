@@ -6878,6 +6878,47 @@ input.input-error:focus,
 
 /* --- Evidence export ----------------------------------------------------- */
 
+/* THE EVIDENCE EXPORT DIALOG HAD NO PANEL.
+ *
+ * It is the only element in the app that uses `.modal`, and there was no `.modal` rule —
+ * every other dialog uses `.modal-card`. So the panel had no background, no padding and no
+ * scrolling: the inputs looked fine because inputs paint themselves, and every label, hint
+ * and warning rendered transparently OVER the darkened page behind it.
+ *
+ * It shipped that way with the export itself (W1-4) and nobody saw it, because the dialog
+ * was mostly controls. Face redaction added three paragraphs of text — including the one
+ * sentence this feature's honesty depends on, the one that says faces may remain — and a
+ * mild wrinkle became an unreadable overlap. Found by LOOKING at the screenshot on a run
+ * where all twenty assertions passed, in both languages.
+ *
+ * Written as `.modal` rather than only `.modal.evidence-export` so the next dialog to use
+ * the class is not born broken. */
+.modal {
+  background: var(--bg-surface);
+  border-radius: 12px;
+  padding: 20px 22px;
+  width: 100%;
+  max-width: min(520px, 100%);
+  box-shadow: 0 24px 72px rgba(0, 0, 0, 0.55);
+  /* A dialog whose content is taller than the viewport must scroll ITSELF rather than
+     spilling off the screen — this one grows with the gap list and the export result. */
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+
+.modal > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-block-end: 12px;
+}
+
+.modal > header h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
 .modal.evidence-export {
   max-width: 620px;
 }

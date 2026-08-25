@@ -37,7 +37,7 @@ lands the work.
 | W3-5a | PTZ presets, home, guard tours + alarm recall | F-13 | `feat/ptz-presets` | ✅ shipped, benched 2026-08-24 (60/60 against a real ONVIF device + 26/26 en and 26/26 ar screen passes; found a patrol that moved the camera after being stopped, a tour that outlived its deleted camera, and a control that landed outside its tile in Arabic) |
 | W3-5b | ONVIF events (PullPoint), digital inputs & relay outputs | F-14 | `feat/onvif-events` | ✅ shipped, benched 2026-08-24 (34/34 against a real ONVIF device + 16/16 en and 16/16 ar screen passes; found an alert-log write that silently never happened, and a control that could not be clicked at all) |
 | W3-6 | Privacy zones: camera masks + export redaction | F-19 | `feat/privacy-masking` | ✅ shipped, benched 2026-08-24 (51/51 against a real ONVIF device, including a camera that LIES about what it stored, + 22/22 en and 25/25 ar screen passes; found a redact flag the API silently dropped and a status sentence hard-coded in English) |
-| W3-6b | Face blur on export | F-19 | — | ☐ not started (the redacting export pipeline now exists) |
+| W3-6b | Face redaction on export | F-19 | `feat/face-redaction` | ✅ shipped, benched 2026-08-25 (29/29 against a REAL detector on real recorded footage — the face region measured at YAVG 16.0 against 141.7 unredacted — plus 18/18 en and 20/20 ar screen passes; found OpenCV's warnings colliding with the worker's report, and a dialog that had been rendering with no panel since W1-4) |
 | W3-7 | N+1 node failover | F-23 | `feat/node-failover` | ✅ shipped, benched 2026-08-25 (55/55 on a real two-node fleet with real footage + 27/27 en and 30/30 ar screen passes; found four defects — a per-camera takeover result the control plane silently dropped, a takeover that called a retrying ffmpeg process "recording", a sweep that drilled every new plan on its first tick and turned the badge green by itself, and a clean fail-back rendered as an alarm that only LOOKING at the screenshot caught) |
 | W3-8 | Tenant isolation | F-24 | — | ✅ CLOSED 2026-08-21 — single-org per install, will not build |
 | W3-9 | Mobile PWA + web push | F-20b | — | ☐ not started |
@@ -1512,10 +1512,9 @@ recovered, and on a low-detail region it sometimes can be.
 where luma runs 16–235. A "near zero" threshold fails on a perfectly black rectangle and
 reads as a broken redaction.
 
-**Not claimed:** no face blur on export (W3-6b — the pipeline it needs now exists, but
-per-frame detection is a different order of cost and a separate failure mode). No real
-camera: `onvifsim.py` implements the calls the product makes and can be told to lie, but it
-is not any vendor's firmware.
+**Not claimed:** no real camera: `onvifsim.py` implements the calls the product makes and can
+be told to lie, but it is not any vendor's firmware. (Face redaction on export was W3-6b and
+has since shipped — see below.)
 
 **W3-7 · N+1 node failover** (F-23) — **SHIPPED and BENCHED, `feat/node-failover`.**
 55/55 on a real two-node fleet with real recorded footage, plus 27/27 en and 30/30 ar screen
@@ -1638,6 +1637,65 @@ any new table.** An unused dimension is not free — it has to be filtered on in
 forever, and the one place it gets forgotten is a cross-tenant leak in a product that never
 had tenants. An integrator running several customers runs several installs; myseliasan
 already federates across sites, which covers the multi-site case that motivated F-24.
+
+**W3-6b · Face redaction on export** (F-19) — **SHIPPED and BENCHED, `feat/face-redaction`.**
+
+`apps/mymatasan/ai/face_redact_worker.py` + `services/face_redactor.go`, riding the redacting
+export pipeline W3-6 built and the YuNet model face recognition already installs.
+
+**A PRIVACY ZONE IS A GUARANTEE AND A FACE PASS IS NOT, AND NOTHING IN THE PRODUCT LETS THE TWO
+BE READ AS THE SAME KIND OF STATEMENT.** A zone was named by a human, does not move, and is
+covered. A face pass covers the faces a DETECTOR FOUND — and detectors miss faces in profile,
+at distance, partly occluded or motion-blurred. So the manifest gets its own `faces` block,
+never more names in the `regions` list, and it carries a Limitation sentence saying faces may
+remain and that a count of detections is not a count of people. The screen says it beside the
+control AND beside the finished file.
+
+**SOLID BLACK, NOT BLUR** — the same decision for the reason W3-6 already recorded: a blur
+invites the argument that something could be recovered, and on a small region it sometimes can.
+The register names the item "face blur"; the mechanism is a fill, deliberately.
+
+**THE MISS THAT CAN BE PREVENTED IS THE FLICKER.** A detector finds a face at frames 100 and
+102 and misses 101 — one full-resolution face in the middle of a clip nobody will scrub
+through, which is exactly what makes naive face blurring worthless, because it looks like it
+worked. Every detection is HELD three frames either side and WIDENED 28% beyond the detector's
+box (which is tight around the features and leaves the jaw, hairline and ears outside it).
+**That arithmetic is in Go, not in the worker**: it is the difference between covered and
+visible, so it belongs where it can be unit-tested and mutation-checked.
+
+**THREE REFUSALS, ALL THE SAME SHAPE.** An appliance that cannot obscure faces refuses at
+REQUEST time rather than returning a bundle that did not; a scan with any unreadable frame
+refuses rather than producing a partial redaction that looks complete; and a render that wrote
+fewer frames than were scanned refuses rather than handing over a file that simply ends early.
+
+**WHAT THE BENCH FOUND — one, plus one found by looking.** The pipeline came up clean, which is
+unusual here and is explained by the two shakedowns that preceded it: the worker was run end to
+end on the host and then inside the bench image before a line of it was wired in. The second of
+those runs is what exposed **OpenCV writing its own warnings to stderr**, where the worker's
+report is also written — treating that stream as pure JSON turned a completely successful
+export into "the worker did not report what it wrote".
+
+**And then, by LOOKING at the screenshot on a run where all twenty assertions passed in both
+languages: THE EVIDENCE EXPORT DIALOG HAD NEVER HAD A PANEL.** It is the only element in the
+app that uses `.modal`, and no `.modal` rule existed — every other dialog uses `.modal-card`.
+The inputs looked fine because inputs paint themselves; every label, hint and warning rendered
+transparently over the darkened page behind. It shipped that way with the export itself in
+W1-4. Face redaction added three paragraphs of text — including the one sentence this feature's
+honesty depends on — and a mild wrinkle became an unreadable overlap. **Second item running
+where opening the PNG caught what the assertions could not.**
+
+**HOW A FLEET WITH NOTHING TO FILM BENCHED A DETECTOR.** The harness films test patterns, so
+W3-4 stated plainly that its evaluators were never driven end to end. Here that would have
+gutted the item. Instead the camera films a DRAWN face — and YuNet detects it at 0.7-0.9
+confidence, checked before the bench was written rather than assumed. That yields the thing a
+synthetic scene normally cannot: a real detector making a real detection at a position we know,
+which is what lets the output be MEASURED (face region YAVG 16.0 — black — against 141.7 in the
+unredacted control, and a background at 106.5 so the reading means something).
+
+**Not claimed:** no tracking (each frame is detected independently; a face lost for longer than
+the hold is uncovered for the gap); no speed guarantee, so a face export is capped at 20 minutes
+of footage; and the feature needs opencv plus the YuNet model the face-recognition setup
+downloads — without them it refuses rather than degrading.
 
 **W3-9 · Mobile PWA + web push** (F-20b). The higher-effort half of the notification gap.
 

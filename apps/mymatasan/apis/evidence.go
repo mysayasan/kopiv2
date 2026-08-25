@@ -71,6 +71,8 @@ func (a *evidenceApi) create(w http.ResponseWriter, r *http.Request) {
 		Reason   string `json:"reason"`
 		// Redact burns the camera's privacy zones into the exported video (W3-6).
 		Redact bool `json:"redact"`
+		// BlurFaces obscures the faces a detector finds in it (W3-6b).
+		BlurFaces bool `json:"blurFaces"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		controllers.SendError(w, controllers.ErrParseFailed, "invalid request body")
@@ -91,6 +93,9 @@ func (a *evidenceApi) create(w http.ResponseWriter, r *http.Request) {
 		// export came out unredacted with a manifest that correctly said so. The bench
 		// caught it because it asserted the MANIFEST, not just that the export succeeded.
 		Redact: body.Redact,
+		// Threaded the same way, and for the same reason — this is the second flag on this
+		// exact handler, and the first one was dropped here.
+		BlurFaces: body.BlurFaces,
 	})
 	target := strconv.FormatInt(body.CameraId, 10)
 	if err != nil {
@@ -111,6 +116,9 @@ func (a *evidenceApi) create(w http.ResponseWriter, r *http.Request) {
 			// different disclosures, and "which one did they take" is exactly the question
 			// asked afterwards.
 			"redacted": body.Redact,
+			// And whether the faces in it were hidden. A copy with faces destroyed and one
+			// without are different disclosures about different people.
+			"facesHidden": body.BlurFaces,
 		})
 	controllers.SendResult(w, job, "succeed")
 }

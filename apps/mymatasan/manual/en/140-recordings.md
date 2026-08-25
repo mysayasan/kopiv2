@@ -67,6 +67,30 @@ Two things to be aware of before you rely on it:
 - Recordings are encrypted on disk. The exported file is **not** — it is a normal video. Handle it
   accordingly.
 
+## Hiding the faces in a copy {#faces}
+
+An export can be asked to destroy the faces in it. Every frame is scanned, and each face found is
+filled with a solid black box — widened beyond the face and held for the frames either side of it,
+so a detector that drops a face for a moment does not leave it visible.
+
+**This is a best effort, and the product will not pretend otherwise.** An automatic detector
+misses faces that are turned away, distant, partly hidden or blurred by motion. A privacy zone is
+a guarantee, because a person drew it and it does not move; this is not the same kind of promise,
+and the bundle says so in the manifest and on the screen. **Check the file before you hand it
+over.**
+
+The count you are shown is a count of DETECTIONS, not of people: one person present for a minute
+is a minute's worth of detections.
+
+Two practical notes. It reads every frame, so it takes considerably longer than an ordinary export
+and is limited to twenty minutes of footage at a time. And it needs the face-recognition models
+installed — an appliance without them refuses the export rather than handing back a copy that hid
+nothing.
+
+The result is a re-encoded derivative, exactly as a privacy-zone redaction is: the file will not
+match the checksums of the original recordings, which stay on the recorder. Both can be applied to
+the same copy.
+
 ## Retention, and why footage disappears {#retention}
 
 Every camera has a retention period, and footage past it is purged automatically to make room for
