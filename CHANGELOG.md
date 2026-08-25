@@ -112,6 +112,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-25 — myseliasan 1.75.0, core 1.105.0 (1ec2a05)
+
+### Added
+
+- **core,myseliasan**: The control plane can now wake a phone. Add the fleet page to your home screen and it installs like an app; register a device and this control plane will raise a notification on it when the fleet needs attention, even with the page closed and the screen off. Each device gets its own threshold, deliberately: the phone in somebody's pocket at three in the morning and the laptop on their desk want different answers, and one setting for the whole site either wakes everybody for everything or wakes nobody for anything. What the feature will not do is claim to work. Registering a device sends a real notification there and then, and the screen reports what actually happened rather than that a switch is on — including "never tested", which is shown as its own state because it is not the same as working. If no push service could be reached, it says so in plain words and names the hosts the machine would need to talk to, and it says that this is the expected answer on a site with no internet access rather than leaving somebody to hunt a fault that is not there. Every device shows what its last real attempt did and when, and a device that has been reinstalled is removed on its own instead of being retried forever. Also fixed: the fleet has been raising an alarm when a site goes dark and never once telling anybody when it came back — the all-clear existed, but the way a node actually returns meant it could never fire.
 ## 2026-08-25 — mymatasan 1.141.0 (9fd9546)
 
 ### Added
