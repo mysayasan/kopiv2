@@ -1,0 +1,1 @@
+"use strict";(self.webpackChunkreact_webpack=self.webpackChunkreact_webpack||[]).push([[455],{455(e,a,c){c.r(a);var r=c(213),t=c(848);c.d(a,["default",0,function(){return(0,t.jsx)(r.C5,{to:{pathname:"/app",search:window.location.search},replace:!0})}])}}]);

@@ -73,6 +73,7 @@ node   tools/fleetbench/uicheck_case_feed.js .artifacts/fleetbench ar
 python tools/fleetbench/bench_w33d_fleet_wall.py  # W3-3d: fleet video wall across appliances
 node   tools/fleetbench/uicheck_fleet_wall.js .artifacts/fleetbench en
 node   tools/fleetbench/uicheck_fleet_wall.js .artifacts/fleetbench ar
+node   tools/fleetbench/uicheck_bundle.js apps/myidsan/static myidsan   # does the SPA MOUNT?
 ```
 
 `bench_w37_failover.py` (W3-7, N+1 failover) needs the **ffmpeg node image on BOTH nodes** —
@@ -340,3 +341,14 @@ happens to hold cameras proves the opposite by accident — which is exactly wha
 did. It also writes `fleetwall-live-<lang>.png` mid-run, because the last frame is an empty
 screen after the cleanup and the defect this check found (tiles collapsed to 40 pixels) was
 only ever visible in a picture.
+
+`uicheck_bundle.js` needs no fleet and no database. It serves an app's built `static/` over
+plain HTTP, loads it in a real browser and asserts that nothing threw while the modules
+evaluated, that React mounted into `#root`, and that every design token the stylesheet declares
+resolves. It exists for myidsan, myiotsan and mypintusan, which have no live instance to drive
+— a frontend dependency bump changes the bundle, and a bundle can break in a way that leaves
+`npm audit` clean, webpack reporting success, and the app rendering a white page.
+
+It proves the bundle loads and the app boots. It proves nothing about whether a feature works:
+there is no backend behind the page, so every API call fails and the screen reaches its
+signed-out state. That is expected.
