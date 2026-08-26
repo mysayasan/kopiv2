@@ -244,6 +244,8 @@ func TestAuthorizeRedirectsRegisteredClientWithoutSessionToLogin(t *testing.T) {
 		nil, // no metrics recorder: token-exchange counting is nil-safe in tests
 		nil, // no security-key service: the challenge path is nil-safe and off in these tests
 		nil, // no audit service: the federation trail is nil-safe in tests
+		nil, // no session index: indexing is nil-safe, and a nil one leaves the session id
+		//      unminted exactly as before this page indexed anything
 		nil, // no trusted proxies: the client address is taken straight off the connection
 	)
 

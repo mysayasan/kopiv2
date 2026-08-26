@@ -925,6 +925,18 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		loginGuard = loginGuard.WithSharedStore(deps.Cache, "myseliasan")
 	}
 
+	// Noticing that the identity server ended a session this app is still serving. Without
+	// it, "revoke this account's sessions" at myidsan went 401 there and kept working HERE
+	// for up to sso.sessionTtlSeconds — three days by default — because each app validates
+	// against its own cache and nothing ever asked the other. Nil on a standalone install
+	// (no sso.providerBaseUrl), which is unchanged.
+	if checker := apis.NewSessionRevocationChecker(deps.Config); checker != nil {
+		deps.Auth.SetRevocationChecker(checker)
+		deps.Logger.Infof("myseliasan.auth",
+			"session revocation checks enabled against %s every %ds",
+			deps.Config.SSO.ProviderBaseURL, deps.Config.SSO.PolicyCacheTTLSeconds)
+	}
+
 	apis.NewAuthApi(api, deps.Config, deps.Auth, deps.Cache, userService, loginGuard, auditService)
 	apis.NewSessionApi(api, *deps.Auth, userService, roleService, deps.AccessPerms)
 	apis.NewRbacAdminApi(api, *deps.Auth, controlSession, roleService, userService, auditService)

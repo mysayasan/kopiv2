@@ -468,7 +468,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// Without it an account whose only second factor is a key would clear this page's gate
 	// with no factor checked — and this is the page a relying app's SSO hop lands on, so the
 	// bypass would have been reachable from every app in the suite.
-	apis.NewFederatedAuthApi(api, deps.Config, deps.Auth, providerRegistry, directoryService, kerberosLabel, loginGuard, userLoginService, appRegistryRepo, appAuthConfigRepo, appRedirectUriRepo, deps.Cache, mfaService, passwordResetService, deps.Metrics, webauthnService, auditService, deps.Config.RateLimit.TrustedProxies)
+	apis.NewFederatedAuthApi(api, deps.Config, deps.Auth, providerRegistry, directoryService, kerberosLabel, loginGuard, userLoginService, appRegistryRepo, appAuthConfigRepo, appRedirectUriRepo, deps.Cache, mfaService, passwordResetService, deps.Metrics, webauthnService, auditService, sessionService, deps.Config.RateLimit.TrustedProxies)
 	apis.NewDirectoryConfigApi(api, *deps.Auth, deps.Access, directoryService, groupMappingRepo, auditService, deps.Config.RateLimit.TrustedProxies)
 	apis.NewAppAuthConfigApi(api, *deps.Auth, deps.Access, appAuthConfigRepo)
 	apis.NewAppRedirectUriApi(api, *deps.Auth, deps.Access, appRedirectUriRepo)

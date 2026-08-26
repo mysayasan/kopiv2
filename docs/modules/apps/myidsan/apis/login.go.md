@@ -407,3 +407,11 @@ have built some up).
 - Third-party accounts (empty password) are rejected for local credential login/register override.
 - Federated login now carries the pending `continue` path (e.g. an `/api/auth/authorize` URL from a relying-app SSO redirect) through the round-trip. `setOAuthContinue` stores a base64-encoded, validated path in a short-lived provider-scoped HttpOnly cookie before the provider redirect; `consumeOAuthContinue` reads and clears it in the callback. `setOAuthSession` no longer writes a response body — control passes to the caller, which performs the redirect to the consumed `continue` target (or `/` when absent). This means a user arriving at myidsan's federated login page via a relying-app SSO redirect lands back at the relying app after completing federated login, not on a raw JSON payload.
 - Account resolution for a federated login is centralized in `services.UpsertFederated` (strict `(provider, subject)` matching; a same-email account with no bound identity may claim it once, a bound one is refused) — this file no longer does its own `GetByEmail`-then-`Create` per provider, which is what let Google and GitHub each hand-roll a slightly different account-matching path before. `admitRedirectIdentity` wraps that same call with the directory's group→role seeding when a directory service is wired (see "Federated Callback Flow" above and `services/directory.go.md`); the underlying `(provider, subject)` matching is unchanged either way.
+
+## Session indexing (`recordSession`, `setOAuthSession`)
+
+`issueSessionCookies` has always indexed the session it issues, and now does it through the shared
+helper in `apps/myidsan/apis/session_index.go.md`. **`setOAuthSession` did not** — so an account
+that signed in with Google or GitHub held a session no administrator could list or revoke. It now
+pre-mints the id and indexes it the same way. See that module doc for the full picture; the third
+path (the server-rendered SSO login page) is in `federated_auth.go.md`.

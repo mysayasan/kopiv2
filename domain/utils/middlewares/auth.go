@@ -27,6 +27,9 @@ type AuthMidware struct {
 	sessionCache  cache.Store
 	sessionTTL    time.Duration
 	policyVersion int64
+	// revocation, when set, lets a RELYING app notice that the identity server has ended a
+	// session it is still serving. See revocation.go.
+	revocation *RevocationChecker
 }
 
 const (
@@ -47,6 +50,10 @@ type AuthConfig struct {
 	SessionCache  cache.Store
 	SessionTTL    time.Duration
 	PolicyVersion int64
+	// Revocation is optional and only meaningful for a RELYING app: it re-asks the identity
+	// server, on a TTL, whether a session it is serving is still live. An app that issues its
+	// own sessions (myidsan itself, the appliance apps) leaves it nil and is unchanged.
+	Revocation *RevocationChecker
 }
 
 type SessionCacheEntry struct {
@@ -85,7 +92,22 @@ func NewAuthWithConfig(cfg AuthConfig) *AuthMidware {
 		sessionCache:  cfg.SessionCache,
 		sessionTTL:    sessionTTL,
 		policyVersion: policyVersion,
+		revocation:    cfg.Revocation,
 	}
+}
+
+// SetRevocationChecker attaches (or clears) the relying-app revocation check after
+// construction.
+//
+// A setter rather than a constructor argument because of ordering: apphost builds this
+// middleware for every app before any app wires its own services, and the checker needs the
+// app's SSO client credentials and its CA-trusting HTTP client. The same reason
+// AccessSessionMidware takes its resolver through SetResolver.
+func (m *AuthMidware) SetRevocationChecker(c *RevocationChecker) {
+	if m == nil {
+		return
+	}
+	m.revocation = c
 }
 
 // Middleware function, which will be called for each request
@@ -376,6 +398,13 @@ func (m *AuthMidware) validateSession(ctx context.Context, claims *models.JwtCus
 	// to be bounced to login until they re-authenticated).
 	if entry.Email != "" && !strings.EqualFold(entry.Email, claims.Email) {
 		return fmt.Errorf("session email mismatch")
+	}
+	// Everything above is answered from THIS app's own cache, which is exactly the problem
+	// when this app is a relying party: the identity server can have ended the session and
+	// this cache would never hear about it. Asking is the last step, and it is rate-limited
+	// to once per TTL rather than run per request.
+	if m.revocation != nil && !m.revocation.stillActive(ctx, m.sessionCache, &entry) {
+		return fmt.Errorf("session revoked at the identity server")
 	}
 	return nil
 }
