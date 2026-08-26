@@ -405,8 +405,27 @@ func (m *loginApi) recordFederatedLogin(provider, result string) {
 // recorded as-is (bounded by the audit service) rather than resolved, since resolving it
 // would turn the trail into its own account-existence oracle.
 func (m *loginApi) recordLoginFailure(w http.ResponseWriter, r *http.Request, attempted, method, reason string) {
+	m.recordCredentialFailure(r, services.ActionLoginFailure, attempted, method, reason)
+}
+
+// recordMfaChallengeFailure audits a refused SECOND-FACTOR attempt under its own action,
+// and advances the same lockout a wrong password does.
+//
+// Filed as a plain login failure — which is what it used to be — a code being ground is
+// indistinguishable from a password being guessed, and the two are not the same incident
+// at all: whoever is here has ALREADY cleared the password. That is a much later stage of
+// an intrusion, and the one where the operator still has time to act.
+//
+// No identifier is attached: this step presents a challenge token, not a username.
+func (m *loginApi) recordMfaChallengeFailure(r *http.Request, reason string) {
+	m.recordCredentialFailure(r, services.ActionMfaChallenge, "", services.MethodLocal, reason)
+}
+
+// recordCredentialFailure writes one refused-credential entry, delays the response, and
+// advances the shared lockout — recording the lockout itself if this attempt engaged it.
+func (m *loginApi) recordCredentialFailure(r *http.Request, action, attempted, method, reason string) {
 	m.recordAudit(r, services.AuditEntry{
-		Action:     services.ActionLoginFailure,
+		Action:     action,
 		ActorEmail: attempted,
 		TargetType: "user",
 		TargetId:   attempted,
@@ -582,6 +601,18 @@ func loginGuardKeys(r *http.Request, identifier string) []string {
 }
 
 func writeLoginLockout(w http.ResponseWriter, retry time.Duration) {
+	writeLockout(w, retry, "too many failed login attempts")
+}
+
+// writeLockout answers a throttled credential check: 429, a Retry-After header, and a body
+// carrying both the wait and a message naming what was being attempted.
+//
+// The message is a parameter because the SPA surfaces it verbatim, and the same wording
+// does not fit every surface. A step-up lockout telling an operator — who is signed in, and
+// looking at a re-authentication prompt — that there were "too many failed LOGIN attempts"
+// describes something they did not do, and sends them to check whether their account is
+// under attack at the front door instead of waiting the minute out.
+func writeLockout(w http.ResponseWriter, retry time.Duration, message string) {
 	secs := int(math.Ceil(retry.Seconds()))
 	if secs < 1 {
 		secs = 1
@@ -590,7 +621,7 @@ func writeLoginLockout(w http.ResponseWriter, retry time.Duration) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusTooManyRequests)
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"message":           "too many failed login attempts",
+		"message":           message,
 		"retryAfterSeconds": secs,
 	})
 }
@@ -786,19 +817,24 @@ func (m *loginApi) mfaLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userId, err := m.mfa.redeem(r.Context(), r, body.MfaToken, body.Code)
+	userId, usedRecovery, err := m.mfa.redeem(r.Context(), r, body.MfaToken, body.Code)
 	if err != nil {
 		if errors.Is(err, services.ErrMfaBadCode) {
 			m.recordMfaChallenge("failed")
-			// The password already verified to reach this point, so the identifier is
-			// withheld here: the challenge token, not a username, is what was presented.
-			m.recordLoginFailure(w, r, "", services.MethodLocal, "invalid second-factor code")
+			m.recordMfaChallengeFailure(r, "invalid second-factor code")
 			controllers.SendError(w, controllers.ErrAuthFailed, "invalid verification code")
 			return
 		}
 		// Unknown/expired/rebound token, or an internal error — either way the
 		// client must restart the login. Do not distinguish, to avoid oracles.
 		m.recordMfaChallenge("expired")
+		m.recordAudit(r, services.AuditEntry{
+			Action:     services.ActionMfaChallenge,
+			TargetType: "user",
+			Outcome:    services.OutcomeDenied,
+			Detail:     "second-factor challenge expired, exhausted, or presented from a different client",
+			Metadata:   map[string]any{"method": services.MethodLocal},
+		})
 		controllers.SendError(w, controllers.ErrAuthFailed, "your verification session expired — sign in again")
 		return
 	}
@@ -813,7 +849,31 @@ func (m *loginApi) mfaLogin(w http.ResponseWriter, r *http.Request) {
 	// Source key only: this step redeemed a challenge token, not a username.
 	guardSuccess(m.guard, r, "")
 	m.recordMfaChallenge("success")
+	m.recordRecoveryLogin(r, user, usedRecovery)
 	m.issueLocalSession(w, r, user, loginMethodForUser(user))
+}
+
+// recordRecoveryLogin notes a sign-in that cleared the second factor with a RECOVERY code
+// rather than an authenticator.
+//
+// The sign-in itself is already recorded, and looks completely ordinary — which is the
+// problem. Somebody using break-glass has either lost their authenticator or is not the
+// person who owns it, and both are worth a second look on an identity server. The codes are
+// also finite: without this the count silently walks down and the first anyone hears of it
+// is when the last one is spent.
+func (m *loginApi) recordRecoveryLogin(r *http.Request, user *entities.UserLogin, usedRecovery bool) {
+	if !usedRecovery || user == nil {
+		return
+	}
+	m.recordAudit(r, services.AuditEntry{
+		Action:     services.ActionMfaRecovery,
+		ActorId:    user.Id,
+		ActorEmail: user.Email,
+		TargetType: "user",
+		TargetId:   strconv.FormatInt(user.Id, 10),
+		Detail:     "signed in with a single-use recovery code instead of the authenticator",
+		Metadata:   map[string]any{"method": services.MethodRecovery, "surface": "login"},
+	})
 }
 
 // webauthnLoginBegin hands back an assertion challenge for a login already holding a

@@ -46,6 +46,14 @@ Admin, `auth.Middleware` + `access.Middleware` + `access.RequireSuperadmin`:
 
 ## Notes
 
+- `reproveIdentity(r, claims, password, code)` — the shared re-proof gate behind `remove`
+  and `adminResetAll`'s self-service caller — checks a submitted `code` via
+  `IMfaService.VerifyCode`, which now returns `MfaVerifyResult{Ok, UsedRecovery}` rather than
+  a bare bool. When `UsedRecovery` is true, it records `services.ActionMfaRecovery`
+  (`Metadata: {method: recovery_code, surface: "webauthn"}`) before returning — a recovery
+  code spent to re-prove identity here is still a break-glass secret gone, and the
+  security-key change it unlocks (removing a key) is exactly the kind of change worth being
+  able to date afterwards.
 - `maxWebAuthnBody = 128 << 10` caps a ceremony response body — an attestation object with
   a long certificate chain is a few KiB; 128 KiB is far beyond any legitimate response.
 - `writeErr` maps `IWebAuthnService` errors onto status codes and deliberately does **not**

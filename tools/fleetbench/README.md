@@ -77,7 +77,32 @@ node   tools/fleetbench/uicheck_bundle.js apps/myidsan/static myidsan   # does t
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o .artifacts/fleetbench/bin/myidsan ./cmd/myidsan
 python tools/fleetbench/idsan_harness.py       # myidsan + a real relying app + redis
 python tools/fleetbench/bench_idsan_sso.py     # the sign-in every other app depends on
+python tools/fleetbench/bench_idsan_mfa.py     # the second factor + step-up (FRESH stand-up)
 ```
+
+`bench_idsan_mfa.py` needs a **freshly stood-up harness**: it enrols a second factor on the
+stock superadmin, and its first check is that the account starts without one. Run
+`idsan_harness.py` immediately before it. Things it costs time to rediscover:
+
+- **The TOTP replay guard will refuse two codes generated seconds apart** — they are the
+  same code, and any step ≤ the last accepted one is rejected. The `Totp` helper waits out
+  the 30-second step; `repeat()` hands back the spent code so the replay itself is testable.
+  The generator is hand-rolled rather than `pyotp` on purpose: a bench that shares a library
+  with the thing under test can pass because both are wrong the same way.
+- **Failed second-factor attempts feed the SAME eight-in-five-minutes lockout a wrong
+  password does**, and this bench produces them deliberately. `clear_guard()` (one
+  successful password POST) resets the counters between batches; without it the bench ends
+  up measuring the lockout instead of the check it meant to make.
+- The throttle check **deliberately trips the lockout**, and a tripped lockout is evaluated
+  before the credential — so the account cannot clear it by signing in correctly.
+  `wait_out_lockout()` waits the 60s out rather than measuring it.
+- It drops a **`RESET_MFA` marker into `.artifacts/fleetbench/idsan/` and restarts the
+  container** to exercise the documented lost-device escape hatch. That asymmetry is the
+  control being tested: the hatch must work from the host and be unreachable over HTTP.
+- **A refusal has to be tested where only the thing under test can refuse.** A session-less
+  client is turned away by the CSRF check first, which proves nothing about authorization,
+  so the escape-hatch checks plant a matching CSRF pair and the challenge token as the
+  access cookie — leaving the auth check as the only thing left that can say no.
 
 `bench_w37_failover.py` (W3-7, N+1 failover) needs the **ffmpeg node image on BOTH nodes** —
 the SPARE is the one that has to record, so patching only the protected node's ffmpeg path

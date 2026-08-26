@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -206,6 +207,18 @@ func (m *federatedAuthApi) recordSso(r *http.Request, action, clientID, outcome,
 	}
 	entry.ClientIp, entry.UserAgent = auditContext(r, m.trustedProxies)
 	m.audit.Record(r.Context(), entry)
+}
+
+// recordAuth writes one AUTHENTICATION event from this surface — a refused second factor,
+// a recovery code being spent. Separate from recordSso because those are federation events
+// targeting a client id, whereas these target the account and would be unreadable filed
+// under a "sso_client" with no client to name. Nil-safe and non-fatal for the same reason.
+func (m *federatedAuthApi) recordAuth(r *http.Request, e services.AuditEntry) {
+	if m.audit == nil {
+		return
+	}
+	e.ClientIp, e.UserAgent = auditContext(r, m.trustedProxies)
+	m.audit.Record(r.Context(), e)
 }
 
 func (m *federatedAuthApi) authorize(w http.ResponseWriter, r *http.Request) {
@@ -943,7 +956,7 @@ func (m *federatedAuthApi) mfaPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	token := r.Form.Get("mfaToken")
-	userId, err := m.mfa.redeem(r.Context(), r, token, r.Form.Get("code"))
+	userId, usedRecovery, err := m.mfa.redeem(r.Context(), r, token, r.Form.Get("code"))
 	if err != nil {
 		if errors.Is(err, services.ErrMfaBadCode) {
 			if m.guard != nil {
@@ -951,6 +964,15 @@ func (m *federatedAuthApi) mfaPost(w http.ResponseWriter, r *http.Request) {
 				// Source key only: this step presents a challenge token, not a username.
 				m.guard.RecordFailure(loginGuardKey(r))
 			}
+			// Under its own action, not login.failure: whoever is grinding codes here has
+			// already cleared the password, which is a different — and later — incident.
+			m.recordAuth(r, services.AuditEntry{
+				Action:     services.ActionMfaChallenge,
+				TargetType: "user",
+				Outcome:    services.OutcomeDenied,
+				Detail:     "invalid second-factor code",
+				Metadata:   map[string]any{"method": services.MethodLocal, "surface": "browser"},
+			})
 			m.renderMfaChallenge(w, r, http.StatusUnauthorized, continueTo, token, "That code did not match. Try again.")
 			return
 		}
@@ -967,6 +989,20 @@ func (m *federatedAuthApi) mfaPost(w http.ResponseWriter, r *http.Request) {
 	if err != nil || user == nil {
 		http.Redirect(w, r, "/api/auth/login?error=sso_failed"+continueQuery(continueTo), http.StatusFound)
 		return
+	}
+	if usedRecovery {
+		// Break-glass, on the browser leg. Same event as the SPA's, and just as invisible
+		// without this: the sign-in it produces looks exactly like any other.
+		m.recordAuth(r, services.AuditEntry{
+			Action:     services.ActionMfaRecovery,
+			ActorId:    user.Id,
+			ActorEmail: user.Email,
+			ActorRole:  user.UserRoleId,
+			TargetType: "user",
+			TargetId:   strconv.FormatInt(user.Id, 10),
+			Detail:     "signed in with a single-use recovery code instead of the authenticator",
+			Metadata:   map[string]any{"method": services.MethodRecovery, "surface": "browser"},
+		})
 	}
 	if err := m.issueProviderSession(w, r, user); err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())

@@ -325,12 +325,6 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		mfaPolicy: deps.Config.Mfa.Effective(),
 	})
 	deps.Metrics.Describe(apis.MetricMfaChallengeTotal, "Second-factor verification outcomes (result=issued|success|failed|expired): a spike in failures flags online guessing against a known password.")
-	// Escape hatch for a sole-superadmin lost-device lockout: a RESET_MFA marker in
-	// the data dir clears the stock superadmin's second factor on boot.
-	if err := consumeMfaResetMarker(deps, mfaService, userLoginService); err != nil {
-		return nil, err
-	}
-
 	// Account recovery: an always-on operator queue plus an OPTIONAL internal-SMTP
 	// self-service link. The mailer stays disabled unless config.smtp.enabled — an
 	// air-gapped install never reaches for a network; the queue covers it regardless.
@@ -400,6 +394,20 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// counter exists to make visible.
 	auditService = services.WithAuditMetrics(auditService, deps.Metrics)
 	startAuditRetention(deps, auditService)
+
+	// Escape hatch for a sole-superadmin lost-device lockout: a RESET_MFA marker in the
+	// data dir clears the stock superadmin's second factor on boot.
+	//
+	// Deliberately sequenced AFTER the audit trail exists, and that ordering is the whole
+	// reason this call moved down here. The marker strips the second factor from the most
+	// privileged account on the identity server, and the act erases its own evidence — the
+	// factor row and every recovery-code hash are deleted. Run before the trail was built
+	// it left nothing behind but a line in the application log, so an install could come up
+	// with its superadmin silently downgraded to password-only and no security record of it
+	// anywhere. Everything it needs was already constructed well above.
+	if err := consumeMfaResetMarker(deps, mfaService, userLoginService, auditService); err != nil {
+		return nil, err
+	}
 
 	// Session index. The cache entry remains the authority on whether a session is valid;
 	// this table exists so sessions can be LISTED per user, which the cache cannot answer.
@@ -479,7 +487,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	apis.NewBackupApi(api, *deps.Auth, deps.Access, backupService, auditService, stepUpService, deps.Config.RateLimit.TrustedProxies)
 	// Read-only append-only security trail. Superadmin-only: it names who did what
 	// from where, and on an identity server it also reveals which usernames exist.
-	apis.NewStepUpApi(api, *deps.Auth, stepUpService, auditService, deps.Config.RateLimit.TrustedProxies)
+	apis.NewStepUpApi(api, *deps.Auth, stepUpService, auditService, loginGuard, deps.Config.RateLimit.TrustedProxies)
 	apis.NewAuditApi(api, *deps.Auth, deps.Access, auditService)
 	// Session listing and revocation. Self-service routes are auth-only (ending your own
 	// session is not privileged); cross-account routes are superadmin.

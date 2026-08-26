@@ -11,17 +11,27 @@ credential the same way.
 
 ## Responsibilities
 
-- `consumeMfaResetMarker(deps, mfaService, users)` — the second-factor lock-out
-  recovery path: the documented escape hatch for "the sole superadmin lost the
-  authenticator device **and** the recovery codes". If `<dataDir>/RESET_MFA`
-  exists, it is **deleted first** (so a crash mid-reset, or any later restart,
-  can never silently re-clear MFA), then the stock superadmin is looked up by
+- `consumeMfaResetMarker(deps, mfaService, users, audit services.IAuditService)` — the
+  second-factor lock-out recovery path: the documented escape hatch for "the sole
+  superadmin lost the authenticator device **and** the recovery codes". If
+  `<dataDir>/RESET_MFA` exists, it is **deleted first** (so a crash mid-reset, or any later
+  restart, can never silently re-clear MFA), then the stock superadmin is looked up by
   `deps.Config.LocalAuth.Username` and its second factor is cleared via
   `mfaService.Disable`. Resets **only** the second factor, never the password —
   pair it with `RESET_ADMIN` if both are needed. A missing stock-superadmin
   account (marker dropped on an install where it was renamed/removed) logs a
   `WARNING` and is a no-op, not a boot failure. No-op (returns `nil`
-  immediately) when the marker is absent — the normal boot path.
+  immediately) when the marker is absent — the normal boot path. On a successful reset, and
+  when `audit != nil`, also records `services.ActionMfaAdminReset` with `ActorEmail:
+  "system"` and `Metadata: {marker: "RESET_MFA", account: <username>}` — no actor and no
+  client address, deliberately: nobody authenticated to cause this, and what the entry
+  points the reader at is filesystem access to the data directory, not an account. `audit`
+  *may* be nil (defensive), but should not be in practice: this is the one path that removes
+  the most privileged account's second factor with nobody signing in, and it deletes the
+  only other evidence the factor existed — an application-log line is not the security trail
+  an operator reviews or retains. See "Call sequence" below for why the parameter had to be
+  added rather than reached through a global: this function used to run **before** the audit
+  service existed in `RegisterAppRoutes`.
 - `consumeAdminResetMarker(deps, users, superRoleId)` — the lock-out recovery path.
   If `<dataDir>/RESET_ADMIN` exists, it is **deleted first**, then
   `IUserLoginService.ResetStockSuperadmin` is called with `deps.Config.LocalAuth`
@@ -60,10 +70,14 @@ credential the same way.
 2. Otherwise `EnsureStockSuperadmin` runs normally.
 3. If the resulting `seed.Seeded` is true (account created or reset), call
    `announceFirstRunAdmin`.
-4. Separately, before the login/MFA APIs are constructed, `consumeMfaResetMarker`
-   runs once `mfaService` exists — independent of the admin-reset sequence above,
-   since a password reset and an MFA reset are two different lockouts an operator
-   may need one, the other, or both.
+4. `consumeMfaResetMarker` now runs **much later** — after `mfaService`, `stepUpService`,
+   and `auditService` are all constructed (immediately after `startAuditRetention`),
+   rather than right after `mfaService` alone as it did previously. The reordering is
+   deliberate: the marker strips the second factor from the most privileged account on the
+   server, and running it before the audit trail existed left nothing behind but an
+   application-log line. Still independent of the admin-reset sequence above — a password
+   reset and an MFA reset are two different lockouts an operator may need one, the other, or
+   both.
 
 ## Notes
 

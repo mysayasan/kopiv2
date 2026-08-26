@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/mysayasan/kopiv2/apps/myidsan/services"
@@ -33,7 +34,12 @@ const mfaResetMarkerFile = "RESET_MFA"
 // can be recovered offline (mirrors the RESET_ADMIN password-recovery path). The
 // marker is deleted BEFORE the reset runs, so a crash can never silently re-clear
 // MFA on a later restart. No-op (nil) when the marker is absent.
-func consumeMfaResetMarker(deps apphost.Dependencies, mfaService services.IMfaService, users services.IUserLoginService) error {
+//
+// audit may be nil, but should not be: this is the one path that removes the second factor
+// from the most privileged account on the server without anybody signing in, and it deletes
+// the only other evidence the factor existed. The application log records it too, but an
+// application log is not the security trail an operator reviews — or retains.
+func consumeMfaResetMarker(deps apphost.Dependencies, mfaService services.IMfaService, users services.IUserLoginService, audit services.IAuditService) error {
 	marker := filepath.Join(deps.DataDir, mfaResetMarkerFile)
 	if _, err := os.Stat(marker); err != nil {
 		return nil // absent marker is the normal path
@@ -51,6 +57,19 @@ func consumeMfaResetMarker(deps apphost.Dependencies, mfaService services.IMfaSe
 		return fmt.Errorf("clear stock superadmin mfa: %w", err)
 	}
 	log.Printf("WARNING: RESET_MFA marker consumed — cleared the second factor for stock superadmin %q", deps.Config.LocalAuth.Username)
+	if audit != nil {
+		// No actor and no client address on purpose: nobody authenticated to cause this.
+		// Whoever dropped the marker had filesystem access to the data directory, and that
+		// — rather than any account — is what the entry is telling the reader to go look at.
+		audit.Record(ctx, services.AuditEntry{
+			Action:     services.ActionMfaAdminReset,
+			ActorEmail: "system",
+			TargetType: "user",
+			TargetId:   strconv.FormatInt(user.Id, 10),
+			Detail:     "RESET_MFA marker in the data directory cleared this account's second factor on boot",
+			Metadata:   map[string]any{"marker": mfaResetMarkerFile, "account": deps.Config.LocalAuth.Username},
+		})
+	}
 	return nil
 }
 

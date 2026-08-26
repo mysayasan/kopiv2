@@ -57,6 +57,22 @@ service to myidsan's own database and metric names.
   fails to advance — the sign-in is still allowed (see `services/webauthn.go.md` for why
   that ambiguity is not treated as proof), so this entry is the only durable trace that it
   happened.
+- `ActionMfaEnroll`, `ActionMfaDisable`, `ActionMfaRecovery`, `ActionMfaRegenerate`, and
+  `ActionMfaChallenge` were declared here from the start but, until a live bench
+  (`tools/fleetbench/bench_idsan_mfa.py`) found the gap, nothing ever wrote them — the whole
+  second-factor lifecycle (enrolling, removing, spending break-glass, rotating it) was
+  invisible on the trail, and a failed second-factor attempt was filed as an
+  indistinguishable `login.failure`. All five now have write sites: `ActionMfaEnroll`/
+  `ActionMfaRegenerate`/`ActionMfaDisable` in `apis/mfa.go.md`'s `confirmEnroll`/
+  `regenerateRecovery`/`disable`; `ActionMfaChallenge` (a refused second-factor code, filed
+  separately from a guessed password) in `apis/login.go.md`'s `mfaLogin` and
+  `apis/federated_auth.go.md`'s `mfaPost`; `ActionMfaRecovery` (a recovery code spent)
+  everywhere `IMfaService.VerifyCode`'s `MfaVerifyResult.UsedRecovery` can come back true —
+  `apis/mfa.go.md` (teardown gates), `apis/login.go.md`/`apis/federated_auth.go.md` (sign-in
+  completion), `apis/stepup.go.md` (re-authentication), and `apis/webauthn.go.md`
+  (`reproveIdentity`). `ActionMfaAdminReset` also gained a second write site,
+  `app/firstrun.go.md`'s `consumeMfaResetMarker` — previously the boot-time `RESET_MFA`
+  escape hatch left only an application-log line.
 - Action vocabularies stay per-app by design (see `domain/shared/audit/service.go.md`): the
   verbs are what each app does, and one shared list of every app's actions would be a list
   nobody can read.

@@ -254,7 +254,19 @@ func (h *webAuthnApi) adminResetAll(w http.ResponseWriter, r *http.Request) {
 // credential to prove against.
 func (h *webAuthnApi) reproveIdentity(r *http.Request, claims *models.JwtCustomClaims, password, code string) error {
 	if strings.TrimSpace(code) != "" && h.mfa != nil {
-		if ok, err := h.mfa.VerifyCode(r.Context(), claims.Id, code); err == nil && ok {
+		if res, err := h.mfa.VerifyCode(r.Context(), claims.Id, code); err == nil && res.Ok {
+			if res.UsedRecovery {
+				// A recovery code spent to re-prove identity here is still a break-glass
+				// secret gone, and the security-key change it unlocks is exactly the kind
+				// of change worth being able to date afterwards.
+				h.record(r, services.AuditEntry{
+					Action:     services.ActionMfaRecovery,
+					TargetType: "self",
+					TargetId:   strconv.FormatInt(claims.Id, 10),
+					Detail:     "a single-use recovery code was spent",
+					Metadata:   map[string]any{"method": services.MethodRecovery, "surface": "webauthn"},
+				})
+			}
 			return nil
 		}
 	}

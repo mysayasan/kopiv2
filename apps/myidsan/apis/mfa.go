@@ -147,6 +147,18 @@ func (m *mfaApi) confirmEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.recordChallenge("enroll_confirmed")
+	// Recorded at CONFIRMATION, not at BeginEnroll: staging a secret changes nothing about
+	// how the account authenticates, whereas this is the moment the account starts owing a
+	// second factor. Without it the trail cannot date the control it later shows being
+	// removed — and "when did this account gain MFA" is the first question asked of any
+	// account that mysteriously stops having it.
+	m.record(r, services.AuditEntry{
+		Action:     services.ActionMfaEnroll,
+		TargetType: "self",
+		TargetId:   strconv.FormatInt(claims.Id, 10),
+		Detail:     "confirmed a second factor for this account",
+		Metadata:   map[string]any{"recoveryCodes": len(codes)},
+	})
 	controllers.SendResult(w, map[string]any{"recoveryCodes": codes})
 }
 
@@ -165,15 +177,30 @@ func (m *mfaApi) regenerateRecovery(w http.ResponseWriter, r *http.Request) {
 	}
 	// Re-prove possession before minting a new set — otherwise a hijacked session
 	// could quietly rotate the break-glass codes.
-	if err := m.requireValidCode(r, claims.Id, body.Code); err != nil {
+	usedRecovery, err := m.requireValidCode(r, claims.Id, body.Code)
+	if err != nil {
 		m.writeCodeGateError(w, err)
 		return
+	}
+	if usedRecovery {
+		m.recordRecoveryBurn(r, claims.Id, "recovery-regenerate")
 	}
 	codes, err := m.service.RegenerateRecovery(r.Context(), claims.Id)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
+	// Rotating the set INVALIDATES every code the account holder has written down. Done by
+	// the owner it is routine housekeeping; done by someone who has taken the session over
+	// it is how the real owner is locked out of their own recovery path, and afterwards
+	// there is nothing left to compare against — the old hashes are gone.
+	m.record(r, services.AuditEntry{
+		Action:     services.ActionMfaRegenerate,
+		TargetType: "self",
+		TargetId:   strconv.FormatInt(claims.Id, 10),
+		Detail:     "issued a new recovery-code set, invalidating the previous one",
+		Metadata:   map[string]any{"recoveryCodes": len(codes)},
+	})
 	controllers.SendResult(w, map[string]any{"recoveryCodes": codes})
 }
 
@@ -195,7 +222,8 @@ func (m *mfaApi) disable(w http.ResponseWriter, r *http.Request) {
 	// hijacked session cannot silently strip it. For local accounts we also require
 	// the current password; directory (LDAP) accounts have no local password, so the
 	// code alone stands.
-	if err := m.requireValidCode(r, claims.Id, body.Code); err != nil {
+	usedRecovery, err := m.requireValidCode(r, claims.Id, body.Code)
+	if err != nil {
 		m.writeCodeGateError(w, err)
 		return
 	}
@@ -207,10 +235,24 @@ func (m *mfaApi) disable(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if usedRecovery {
+		m.recordRecoveryBurn(r, claims.Id, "mfa-disable")
+	}
 	if err := m.service.Disable(r.Context(), claims.Id); err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
+	// THE most important line this trail can hold. Disabling the second factor is what a
+	// hijacked session does to make its hold on the account permanent, and the act erases
+	// its own evidence: the factor row and every recovery-code hash are deleted, so
+	// afterwards the account is indistinguishable from one that never enrolled. Without
+	// this entry the operator cannot even establish that a factor once existed.
+	m.record(r, services.AuditEntry{
+		Action:     services.ActionMfaDisable,
+		TargetType: "self",
+		TargetId:   strconv.FormatInt(claims.Id, 10),
+		Detail:     "removed the second factor from this account",
+	})
 	controllers.SendResult(w, map[string]bool{"ok": true})
 }
 
@@ -236,19 +278,34 @@ func (m *mfaApi) adminReset(w http.ResponseWriter, r *http.Request) {
 }
 
 // requireValidCode verifies a TOTP or recovery code for the user, translating the
-// service outcome into the sentinel errors writeCodeGateError understands.
-func (m *mfaApi) requireValidCode(r *http.Request, userId int64, code string) error {
+// service outcome into the sentinel errors writeCodeGateError understands. It reports
+// whether a RECOVERY code was what satisfied the gate, so the caller can record the burn.
+func (m *mfaApi) requireValidCode(r *http.Request, userId int64, code string) (bool, error) {
 	if strings.TrimSpace(code) == "" {
-		return services.ErrMfaBadCode
+		return false, services.ErrMfaBadCode
 	}
-	ok, err := m.service.VerifyCode(r.Context(), userId, code)
+	res, err := m.service.VerifyCode(r.Context(), userId, code)
 	if err != nil {
-		return err
+		return false, err
 	}
-	if !ok {
-		return services.ErrMfaBadCode
+	if !res.Ok {
+		return false, services.ErrMfaBadCode
 	}
-	return nil
+	return res.UsedRecovery, nil
+}
+
+// recordRecoveryBurn notes that one of the account's finite, single-use recovery codes was
+// spent. `surface` says where, because the same burn means different things depending on
+// it: at a login it means the authenticator is gone, while at a teardown gate it means
+// someone is dismantling the second factor without one.
+func (m *mfaApi) recordRecoveryBurn(r *http.Request, userId int64, surface string) {
+	m.record(r, services.AuditEntry{
+		Action:     services.ActionMfaRecovery,
+		TargetType: "self",
+		TargetId:   strconv.FormatInt(userId, 10),
+		Detail:     "a single-use recovery code was spent",
+		Metadata:   map[string]any{"method": services.MethodRecovery, "surface": surface},
+	})
 }
 
 func (m *mfaApi) writeCodeGateError(w http.ResponseWriter, err error) {

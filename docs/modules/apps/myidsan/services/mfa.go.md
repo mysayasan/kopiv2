@@ -30,11 +30,17 @@ has no knowledge of storage or at-rest sealing.
   (`ConfirmedAt`, `LastStep`, `LastUsedAt`), and mints the one-time recovery-code
   set via `replaceRecoveryCodes` (returned in plaintext once — never persisted
   unhashed).
-- `VerifyCode(ctx, userId, code)` — the single verification path used by both the
-  pre-session login challenge (`apis/mfa_challenge.go`) and self-service teardown
-  (`disable`/`regenerateRecovery`). Tries TOTP first (cheapest, common case;
+- `VerifyCode(ctx, userId, code) (MfaVerifyResult, error)` — the single verification path
+  used by both the pre-session login challenge (`apis/mfa_challenge.go`) and self-service
+  teardown (`disable`/`regenerateRecovery`). Tries TOTP first (cheapest, common case;
   advances `LastStep`/`LastUsedAt` on success), then falls back to
-  `consumeRecoveryCode` — a single-use recovery code match.
+  `consumeRecoveryCode` — a single-use recovery code match. Returns `MfaVerifyResult{Ok,
+  UsedRecovery}` rather than a bare bool: `Ok` is whether the code was accepted, and
+  `UsedRecovery` says whether a **recovery** code (rather than TOTP) was what satisfied it —
+  a scarce, single-use break-glass secret, and the only place that knows a burn happened is
+  this call, so every caller (login challenge, step-up, self-service teardown, WebAuthn
+  re-prove) threads the flag onward to record it under `services.ActionMfaRecovery` rather
+  than logging an indistinguishable routine success.
 - `RegenerateRecovery(ctx, userId)` — issues a fresh recovery-code set via
   `replaceRecoveryCodes`, invalidating the old one. Refuses with
   `ErrMfaNotEnrolled` if the account has no confirmed factor.

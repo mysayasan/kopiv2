@@ -868,11 +868,17 @@ Locked out of two-factor authentication instead (lost the authenticator device
 **and** the recovery codes for the stock superadmin — a different lockout from the
 password one above)? Drop a `RESET_MFA` marker file in the data dir and restart —
 only that account's enrolled second factor is cleared (the password is untouched).
+The reset writes an `mfa.admin_reset` entry to the audit log (`ActorEmail: "system"`,
+naming the marker) so this escape hatch — which by nature runs with nobody signing in —
+still leaves a security record instead of only an application-log line.
 Any other user's factor can be cleared without a restart by a signed-in superadmin
 via `DELETE /api/mfa-admin/{id}`. See `docs/MYIDSAN_MFA_PLAN.md` for the full MFA
 design (self-service enrollment on the **Profile** page — reached from the account
 chip in the side rail, not a nav item — alongside change-password and the profile
-picture, gated local + LDAP password logins, Kerberos/OIDC ungated).
+picture, gated local + LDAP password logins, Kerberos/OIDC ungated). The whole
+second-factor lifecycle — enrolling, disabling, regenerating recovery codes, and
+spending a break-glass recovery code, plus a refused login-time code — is audited under
+its own `mfa.*`/`login.mfa_challenge` actions; look for it in the **Audit log** page.
 
 ### Security keys (WebAuthn / FIDO2)
 

@@ -41,12 +41,14 @@ var ErrStepUpRequired = errors.New("recent re-authentication required for this a
 // IStepUpService grants and checks short-lived re-authentication markers.
 type IStepUpService interface {
 	// Verify checks the caller's own credentials and, on success, marks their session as
-	// recently re-authenticated. Returns ErrInvalidCredential or ErrMfaBadCode on failure.
+	// recently re-authenticated. Returns ErrInvalidCredential or ErrMfaBadCode on failure,
+	// and reports whether a RECOVERY code was what satisfied the second factor so the API
+	// layer can record that burn separately from an ordinary re-authentication.
 	//
 	// email and userId come from the SERVER-ISSUED session claims, never from the request
 	// body: taking an identifier from the caller would turn this into a way to test other
 	// accounts' passwords from inside any authenticated session.
-	Verify(ctx context.Context, userId int64, email, sessionId, password, code string) error
+	Verify(ctx context.Context, userId int64, email, sessionId, password, code string) (usedRecovery bool, err error)
 	// IsRecent reports whether this session re-authenticated inside the window.
 	IsRecent(ctx context.Context, sessionId string) bool
 	// Window exposes the configured lifetime so the UI can say how long it lasts.
@@ -65,40 +67,42 @@ func NewStepUpService(users IUserLoginService, mfa IMfaService, store cache.Stor
 
 func (s *stepUpService) Window() time.Duration { return StepUpWindow }
 
-func (s *stepUpService) Verify(ctx context.Context, userId int64, email, sessionId, password, code string) error {
+func (s *stepUpService) Verify(ctx context.Context, userId int64, email, sessionId, password, code string) (bool, error) {
 	if s.store == nil || strings.TrimSpace(sessionId) == "" {
 		// Without a cache there is nowhere to record the grant. Fail closed: silently
 		// treating every caller as re-authenticated would remove the control entirely.
-		return errors.New("step-up is unavailable on this server")
+		return false, errors.New("step-up is unavailable on this server")
 	}
 	if strings.TrimSpace(email) == "" {
-		return ErrInvalidCredential
+		return false, ErrInvalidCredential
 	}
 	// Re-verify the PASSWORD against the session's own identity.
 	if _, err := s.users.AuthenticateDefault(ctx, email, password); err != nil {
-		return ErrInvalidCredential
+		return false, ErrInvalidCredential
 	}
 
 	// A second factor, when enrolled, must also be presented — otherwise step-up would be
 	// satisfied by a password alone, which is precisely what an attacker who phished one
 	// already has.
+	usedRecovery := false
 	if s.mfa != nil {
 		enrolled, err := s.mfa.HasConfirmedFactor(ctx, userId)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if enrolled {
-			ok, err := s.mfa.VerifyCode(ctx, userId, code)
+			res, err := s.mfa.VerifyCode(ctx, userId, code)
 			if err != nil {
-				return err
+				return false, err
 			}
-			if !ok {
-				return ErrMfaBadCode
+			if !res.Ok {
+				return false, ErrMfaBadCode
 			}
+			usedRecovery = res.UsedRecovery
 		}
 	}
 
-	return s.store.Set(ctx, stepUpCachePrefix+sessionId, time.Now().Unix(), StepUpWindow)
+	return usedRecovery, s.store.Set(ctx, stepUpCachePrefix+sessionId, time.Now().Unix(), StepUpWindow)
 }
 
 func (s *stepUpService) IsRecent(ctx context.Context, sessionId string) bool {
