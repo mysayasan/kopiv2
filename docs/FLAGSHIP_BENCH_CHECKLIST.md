@@ -1970,3 +1970,62 @@ have proved the opposite of the feature. It now seeds a camera on any appliance 
   in a headless browser. What is proved is the arrangement, the resolution and the refusals.
 * **No capacity check on the wall.** 32 relayed streams may be more than a browser or a link
   can carry; the limit is a bound, not a measurement, and the screen says so.
+
+---
+
+## The Dependabot backlog (`uicheck_bundle.js`)
+
+34 open advisories cleared across all six npm manifests — **zero Go advisories**, which
+`govulncheck` on CI had already been saying.
+
+### What the fix actually was
+
+| | |
+|---|---|
+| **In-range updates** | `npm audit fix` (no `--force`) cleared nanoid, postcss, fast-uri, serialize-javascript, body-parser, undici, sharp, miniflare and wrangler across six manifests. |
+| **`react-router-dom` 6 → 7** | myidsan, mymatasan. The whole surface in use is `createBrowserRouter`, `RouterProvider` and `Navigate` — all unchanged in v7. |
+| **`webpack-dev-server` 5 → 6** | myidsan, mymatasan. Dev-only, never in a shipped bundle — and **mypintusan was already running 6 with the same config shape**, which is what made the bump evidenced rather than hopeful. |
+| **`copy-webpack-plugin` 12 → 14** | mymatasan. Build-time, and `serialize-javascript`'s output can reach a bundle. myidsan and mypintusan already ran 14. |
+| **`react-router-dom` REMOVED** | mypintusan imported it nowhere. The best fix for a vulnerable dependency is not upgrading it. |
+
+### The trap this hit, and it would have shipped
+
+`npm audit fix --package-lock-only` writes the LOCKFILE and does not touch `node_modules` — and
+`node_modules` is what webpack builds from. Three manifests were rebuilt from the old code with
+a lockfile that said they were fixed: a green `npm audit`, a green build, and a bundle still
+carrying the vulnerable package. Caught by checking the installed version on disk rather than
+the lock. **Always `npm install` after a `--package-lock-only` fix, then rebuild.**
+
+### How the result is verified
+
+The flagships have live screen checks and they were re-run against the final bundles:
+`uicheck_fleet_wall` 25/25, `uicheck_case_feed` 19/19, `uicheck_policy` 29/29 ar. That is what
+proves a react-router major bump did not break the app — mymatasan's entry point is
+`createBrowserRouter`, so a bad upgrade means the app never mounts at all.
+
+myidsan, myiotsan and mypintusan have no live instance (standing them up needs postgres), so
+`uicheck_bundle.js` serves the built static directory over plain HTTP, loads it in a real
+browser, and asserts the three things a broken bundle destroys: nothing threw while the modules
+evaluated, React mounted into `#root`, and every design token the stylesheet declares resolves.
+5/5 on all five apps.
+
+### And one the check found in ITSELF — twice
+
+* It hardcoded `--bg-body`/`--bg-surface`/`--text-primary`, which is mymatasan's and
+  myseliasan's vocabulary; myidsan and mypintusan use the rbac-standard palette and call the
+  same thing `--bg`. Two perfectly good builds were reported broken. It now DISCOVERS the token
+  names from the loaded stylesheets, which is vocabulary-independent and is what the W3-1
+  regression actually looked like (a token block resolving nothing, whatever the names were).
+* The rewrite then found **zero** tokens, because the selector filter was written as a regex
+  through a shell heredoc and `\b` was collapsed into a literal backspace character — a
+  silently broken pattern that matched nothing. `\s` warned; `\b` did not. It is now a plain
+  string comparison with no escaping at all. **Never build a regex through a heredoc.**
+
+### Not claimed
+
+* **`uicheck_bundle.js` proves the bundle loads and the app boots, not that anything works.**
+  There is no backend behind it, so every API call fails and the screen reaches its signed-out
+  state. The live screen checks are what say a feature works.
+* **The advisories were cleared, not audited.** Nothing here reviews what the upgraded packages
+  changed; it establishes that the versions with known advisories are gone and the apps still
+  build, mount and pass their screen checks.
