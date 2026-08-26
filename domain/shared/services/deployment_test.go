@@ -23,6 +23,8 @@ func clusterReadyEnv() DeploymentEnv {
 		AtRestFingerprint: "a1b2c3d4e5f60718",
 		CachePing:         func(context.Context) error { return nil },
 		LockPing:          func(context.Context) error { return nil },
+		LoginGuardEnabled: true,
+		LoginGuardShared:  true,
 	}
 }
 
@@ -179,6 +181,13 @@ func TestPreflightBlockers(t *testing.T) {
 		// other replica holds a different key.
 		{"self-generated jwt secret", CheckJwtSecret, func(e *DeploymentEnv) { e.JwtSecretGenerated = true }},
 		{"encryption on with no key", CheckAtRestKey, func(e *DeploymentEnv) { e.AtRestFingerprint = "" }},
+		// The lockout is the row this list was missing. A guard nobody wired means the
+		// deployment has no brute-force control at all — which is where myseliasan actually
+		// was, with the checklist reporting six healthy rows and saying nothing about it.
+		{"no failed-login lockout", CheckLoginLockout, func(e *DeploymentEnv) { e.LoginGuardEnabled = false }},
+		// Worse than it looks: this one still answers "locked" convincingly on the instance
+		// that counted the failures, while the attacker just moves to the next instance.
+		{"per-process lockout", CheckLoginLockout, func(e *DeploymentEnv) { e.LoginGuardShared = false }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -228,6 +237,37 @@ func TestPreflightWarningsDoNotClearReady(t *testing.T) {
 	}
 	if got := checkById(t, report, "llmMode"); got.Ok {
 		t.Fatal("the app-specific row should still be reported as failed")
+	}
+}
+
+// The lockout row's Detail is the part an operator can act on without reading a manual: it
+// says WHICH of the two ways this can be wrong, and the two have different fixes (turn the
+// guard on vs. give it a shared cache).
+func TestPreflightLoginLockoutDetail(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		enabled bool
+		shared  bool
+		want    string
+		ok      bool
+	}{
+		{"shared", true, true, "shared", true},
+		{"per-process", true, false, "per-process", false},
+		{"disabled", false, false, "disabled", false},
+		// A guard that is off cannot meaningfully be "shared", and reporting it as such would
+		// tell an operator their brute-force control is fine when there is none.
+		{"off but with a store", false, true, "disabled", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := clusterReadyEnv()
+			env.LoginGuardEnabled = tc.enabled
+			env.LoginGuardShared = tc.shared
+			got := checkById(t, Preflight(context.Background(), env, DeploymentState{Mode: ModeClustered}),
+				CheckLoginLockout)
+			if got.Detail != tc.want || got.Ok != tc.ok {
+				t.Fatalf("got %+v, want detail=%q ok=%v", got, tc.want, tc.ok)
+			}
+		})
 	}
 }
 

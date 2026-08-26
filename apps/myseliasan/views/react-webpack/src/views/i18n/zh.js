@@ -150,6 +150,8 @@ export default {
   'auth.signIn': '登录',
   'auth.enterCreds': '请输入用户名和密码。',
   'auth.invalidCreds': '用户名或密码无效。',
+  'auth.lockedSeconds': '失败次数过多，请在 {seconds} 秒后重试。',
+  'auth.lockedMinutes': '失败次数过多，请在 {minutes} 分钟后重试。',
   'auth.setNewPassword': '设置新密码',
   'auth.changeHint': '初始超级管理员必须先更改默认密码才能继续。',
   'auth.currentPassword': '当前密码',

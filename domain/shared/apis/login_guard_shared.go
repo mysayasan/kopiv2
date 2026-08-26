@@ -71,8 +71,15 @@ func (g *LoginGuard) WithSharedStore(store cache.Store, namespace string) *Login
 	return g
 }
 
+// Enabled reports whether this deployment has a failed-login lockout at all. Nil-safe, so an
+// app that wires no guard answers honestly rather than panicking on the checklist.
+func (g *LoginGuard) Enabled() bool {
+	return g != nil && g.cfg.Enabled
+}
+
 // SharesState reports whether lockouts are visible to other instances. The deployment
-// preflight checklist reads this to tell an operator the truth about their cluster.
+// preflight checklist reads this to tell an operator the truth about their cluster —
+// CheckLoginLockout in domain/shared/services/deployment.go.
 func (g *LoginGuard) SharesState() bool {
 	return g != nil && g.cfg.Enabled && g.store != nil
 }

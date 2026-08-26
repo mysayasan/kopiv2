@@ -150,6 +150,8 @@ export default {
   "auth.signIn": "تسجيل الدخول",
   "auth.enterCreds": "أدخل اسم المستخدم وكلمة المرور.",
   "auth.invalidCreds": "اسم المستخدم أو كلمة المرور غير صحيحة.",
+  "auth.lockedSeconds": "محاولات فاشلة كثيرة. أعد المحاولة بعد {seconds} ثانية.",
+  "auth.lockedMinutes": "محاولات فاشلة كثيرة. أعد المحاولة بعد {minutes} دقيقة.",
   "auth.setNewPassword": "تعيين كلمة مرور جديدة",
   "auth.changeHint": "يجب على المشرف الأعلى الافتراضي استبدال كلمة المرور الافتراضية قبل المتابعة.",
   "auth.currentPassword": "كلمة المرور الحالية",

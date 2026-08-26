@@ -258,7 +258,7 @@ self-service-email design and the `docs/HOWTO.md` operator workflow.
 ## Per-IP + Per-Account Login Lockout
 
 `NewLoginApi`'s `guard *sharedapis.LoginGuard` (built by `apps/myidsan/app/app.go`'s
-`loginGuardConfig` from the shared `LoginSecurity` config block — the same one
+`sharedapis.NewLoginGuardFor` from the shared `LoginSecurity` config block — the same one
 `mymatasan`/`myiotsan` use, now optionally spanning a clustered deployment via
 `WithSharedStore` — see `domain/shared/apis/login_guard_shared.go.md`) is applied to **every**
 interactive *credential-guessing*
@@ -280,9 +280,14 @@ no password to guess, and a forged/expired token is rejected by `AcceptSecContex
 itself), so per-IP credential-attempt throttling does not apply the same way it does
 to a password or LDAP bind attempt.
 
-**Two keys, not one (Productization Phase 3).** `loginGuardKey(r)` is the per-source
+**Two keys, not one (Productization Phase 3).** The three helpers below are now thin
+wrappers over `domain/shared/apis/login_guard_keys.go`
+(`LoginGuardSourceKey`/`LoginGuardAccountKey`/`LoginGuardKeys`, plus `WriteLockoutJSON`
+under `writeLockout`) — they moved there when `myseliasan` needed the identical pair, so
+this security decision has one implementation rather than two. Behaviour is unchanged.
+`loginGuardKey(r)` is the per-source
 key (`RemoteAddr`'s host — never a spoofable forwarded header), throttling one machine
-trying many accounts. `loginGuardAccountKey(identifier)` is the new per-account key
+trying many accounts. `loginGuardAccountKey(identifier)` is the per-account key
 (`"user:" + lowercased identifier`, empty for an empty identifier); `loginGuardKeys(r,
 identifier)` returns both (skipping the account key when empty) and is what
 `guardLocked`/`guardSuccess`/`RecordFailure` now key against. Without the account key,

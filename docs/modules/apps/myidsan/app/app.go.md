@@ -20,7 +20,7 @@ Implements the `myidsan` app module for the shared runtime host.
 - Binds the `user_login` table as the `AccessUserResolver` for `deps.Access` (`userLoginResolver` maps `UserRoleId → AccessPrincipal.RoleId`, `!IsActive → Disabled`, `MustChangePassword → MustChangePassword`). The resolver now uses `repo.GetById` (primary key) instead of the previous `GetByUnique(ctx,"","id",id)`, which matched no field and always returned the first user row — a critical auth bug causing every session to resolve as the stock superadmin's role. `deps.Access.SetResolver` is now called **after** `mfaService` is constructed (Productization Phase 3), rather than immediately after the user login service, because the resolver needs it: `userLoginResolver` gained `mfa services.IMfaService` and `mfaPolicy config.EffectiveMfaPolicy` (from `deps.Config.Mfa.Effective()`) fields. `ResolveAccessUser` now also sets `AccessPrincipal.MustEnrollMfa`: when `mfaPolicy.RequiresFactor(u.UserRoleId, isDirectory)` is true (`isDirectory := u.SsoProvider != ""` — a directory/social account's factor policy usually belongs to its upstream provider, so it is only in scope when `mfa.applyToDirectory` says so), it calls `mfa.HasConfirmedFactor` and sets the flag to the inverse. A lookup error here **fails open** (logged, `MustEnrollMfa` left `false`) rather than locking every admin out of the product because one query failed — the login itself already succeeded; the worst case is a required factor not enforced for that one request. See `domain/shared/services/access_rbac.go.md`, `domain/utils/middlewares/access_rbac.go.md`, and `infra/config/config_models.go.md`'s `mfa` block.
 - Resolves the password-strength policy once (`deps.Config.PasswordPolicy.Effective()`, Productization Phase 3 — see `infra/config/config_models.go.md`) and threads it into `services.NewUserLoginService` (new trailing `policy` parameter) and `apis.NewUserLoginApi` (new trailing `policy` parameter, inserted before `trustedProxies`), so admin-provisioned account creation (`POST /api/user-credential`) and every service-layer password-setting method enforce the same configured rules — see `services/password_policy.go.md`, `services/user_login.go.md`, `apis/user_login.go.md`.
 - Registers myidsan-local login (including the authenticated change-password endpoint), LDAP/Active Directory login, Kerberos SPNEGO SSO, user, group, SSO fallback (introspect only), browser federated-auth, app-auth-config, app-redirect-uri, directory-config + federated-group-mapping, SSO certificate-authority, and identity-status handlers. `apis.NewLoginApi` now returns the `*login.Registry` it builds from `deps.Config.Login`, which is threaded straight into `apis.NewFederatedAuthApi` so the server-rendered login page, the SPA's `/api/login/providers` list, and the `/api/login/{provider}` routes all read from the same provider set (see `apis/login.go.md`, `infra/login/provider.go.md`).
-- Wires up LDAP/AD login (`docs/MYIDSAN_ENTERPRISE_SSO_PLAN.md` Phase 1): resolves the at-rest secret cipher via the new `openSecretCipher` (below), builds `services.NewDirectoryService` over the `DirectoryConfig`/`FederatedGroupMapping` repos, and threads it — together with a new shared `sharedapis.LoginGuard` (built by `loginGuardConfig`, below) — into `apis.NewLoginApi`, `apis.NewFederatedAuthApi`, and the new `apis.NewDirectoryConfigApi`. Registers `deps.Metrics.Describe(apis.MetricFederatedLoginTotal, ...)` for the LDAP (and, as of Phase 2, Kerberos) outcome counter.
+- Wires up LDAP/AD login (`docs/MYIDSAN_ENTERPRISE_SSO_PLAN.md` Phase 1): resolves the at-rest secret cipher via the new `openSecretCipher` (below), builds `services.NewDirectoryService` over the `DirectoryConfig`/`FederatedGroupMapping` repos, and threads it — together with a new shared `sharedapis.LoginGuard` (built by `sharedapis.NewLoginGuardFor`, below) — into `apis.NewLoginApi`, `apis.NewFederatedAuthApi`, and the new `apis.NewDirectoryConfigApi`. Registers `deps.Metrics.Describe(apis.MetricFederatedLoginTotal, ...)` for the LDAP (and, as of Phase 2, Kerberos) outcome counter.
 - Wires up Kerberos SPNEGO SSO (`docs/MYIDSAN_ENTERPRISE_SSO_PLAN.md` Phase 2), gated on `deps.Config.Kerberos.Enabled`: builds a `logininfra.KerberosAuthenticator` from `deps.Config.Kerberos.{KeytabPath, ServicePrincipal, OnlyRealms}`. **A bad or missing keytab logs a `WARNING` and leaves `kerberosAuth` nil** (Kerberos degrades to "not offered") rather than failing boot — mirroring how a half-configured OAuth provider is silently skipped. `deps.Config.Kerberos.DisplayLabel` (defaulting to `"Windows (SSO)"` when blank) is threaded into both `apis.NewLoginApi` (via the new `apis.LoginApiOptions{Kerberos, KerberosLabel, ...}`) and `apis.NewFederatedAuthApi`'s new `kerberosLabel` parameter, so the SSO button's label is consistent across both login surfaces — and absent from both when Kerberos isn't configured or fails to load.
 - Wires up TOTP second-factor authentication (`docs/MYIDSAN_MFA_PLAN.md`, now shipped): builds `services.NewMfaService(mfaFactorRepo, mfaRecoveryRepo, secretCipher, "myidsan")` — reusing the same `openSecretCipher` at-rest cipher as the directory bind password — **before** `apis.NewLoginApi` so the two password login paths can gate on it. Describes `MetricMfaChallengeTotal` via `deps.Metrics.Describe`. Threads `mfaService` into `apis.NewLoginApi` (`LoginApiOptions{Mfa, Store: deps.Cache}`), `apis.NewFederatedAuthApi` (new trailing `mfaService` parameter), and mounts the self-service/admin surface via `apis.NewMfaApi(api, *deps.Auth, deps.Access, mfaService, userLoginService, deps.Metrics)` (`/api/mfa/*`, `/api/mfa-admin/{id}` — see `apis/mfa.go.md`). `consumeMfaResetMarker` (the `RESET_MFA` boot-marker escape hatch for a sole-superadmin lost-device lockout — see `app/firstrun.go.md`) is **not** called here any more; it is now sequenced after `auditService` is constructed, below, so the reset it performs can be written to the trail (see the Phase 2 bullet).
 - Wires up account recovery ("forgot password"): builds a `mailer.New(mailer.Config{...})` from the new `deps.Config.Smtp` block (see `infra/config/config_models.go.md`) — `Enabled` defaults false, so an air-gapped install never reaches for a network — and `services.NewPasswordResetService(resetRequestRepo, userLoginService, resetMailer, deps.Cache)` (see `services/password_reset.go.md`). Logs a one-line startup notice when the mailer is actually enabled. Threads `passwordResetService` into `apis.NewLoginApi` (`LoginApiOptions.Reset`, the public `POST /api/login/forgot`) and `apis.NewFederatedAuthApi`'s new trailing `resetService` parameter (the server-rendered `/api/auth/forgot`/`/api/auth/reset`), and mounts the superadmin operator queue via `apis.NewPasswordResetApi(api, *deps.Auth, deps.Access, passwordResetService)` (`/api/password-reset`, see `apis/password_reset.go.md`). Seeds a menu row (`Id: "resetRequests"`, group `Identity`, `SeedRbac: true`) so the queue is matrix-gated like any other admin page.
@@ -45,7 +45,7 @@ Implements the `myidsan` app module for the shared runtime host.
   `apis.NewPasswordResetApi` (each gaining trailing `audit`/`stepUp`/`trustedProxies`
   parameters where applicable; `apis.NewMfaApi` and `apis.NewWebAuthnApi` also gained a
   trailing `loginGuard` parameter, ahead of `trustedProxies`, for the self-throttled
-  password re-checks - see the `loginGuardConfig` section below and
+  password re-checks - see "The login guard" below and
   `apis/mfa.go.md`/`apis/webauthn.go.md`), plus two new mounts: `apis.NewStepUpApi` (`/api/step-up`,
   auth-only) and `apis.NewSessionApi` (`/api/session` self-service auth-only, `/api/session-admin`
   superadmin) — see `apis/audit.go.md`, `apis/session.go.md`, `apis/stepup.go.md`,
@@ -179,11 +179,14 @@ call `KeyStore.Destroy()`. Destroying the key also removes its init marker, so t
 boot after a reset reads as a clean first run and mints a fresh key instead of hitting
 the `ModeRecoveryPending` fail-closed path described above.
 
-## `loginGuardConfig`
+## The login guard
 
-Maps the shared `deps.Config.LoginSecurity.Effective()` config block (`enabled`, `maxAttempts`,
-`windowSeconds`, `lockoutSeconds`, `lockoutMaxSeconds`, `failedDelayMs` — the same
-block `mymatasan`/`myiotsan` already used) onto `sharedapis.LoginGuardConfig`. Reading
+`sharedapis.NewLoginGuardFor(deps.Config.LoginSecurity.Effective())` maps the shared
+`loginSecurity` config block (`enabled`, `maxAttempts`, `windowSeconds`, `lockoutSeconds`,
+`lockoutMaxSeconds`, `failedDelayMs` — the same block `mymatasan`/`myiotsan` already used)
+onto a guard. That mapping used to be a private `loginGuardConfig` helper in this package; it
+moved to `domain/shared/apis` when `myseliasan` needed the identical one, so there is a single
+implementation rather than two that can drift. Reading
 through `.Effective()` rather than the struct fields directly is what makes an absent
 `loginSecurity` block resolve to the guard being ON by default (see
 `infra/config/config_models.go.md`) — previously an absent block silently decoded to
@@ -206,9 +209,18 @@ and one shared Redis (the shipped configuration) locked an account on instance A
 wrong passwords while instance B evaluated a ninth normally and then accepted the CORRECT
 password with `200` — an attacker's budget was `MaxAttempts × instance count`, and this was
 invisible on the `GET /api/deployment/preflight` checklist, which says nothing about the
-lockout. `myseliasan`, the suite's other Tier A clusterable app, does not yet call
-`WithSharedStore` — no bench covers its login surfaces — so its lockout stays per-process; see
-`docs/HOWTO.md`'s "Which apps can actually be clustered" section.
+lockout. It is also **no longer invisible on the checklist**: `GET /api/deployment/preflight` now
+carries a `loginLockout` blocker row fed from `loginGuard.Enabled()`/`SharesState()` — the
+accessor added with the fix above, which nothing read until the next bench went looking. The
+guard is declared before `NewDeploymentApi` and assigned further down, because the checklist
+closure is evaluated per REQUEST; the alternative was moving the guard's construction away
+from the login APIs it exists for.
+
+`myseliasan`, the suite's other Tier A clusterable app, was recorded here as "does not yet
+call `WithSharedStore`". The bench that followed found it had no lockout **at all**, on any
+surface; it now runs the same guard with the same shared store. See
+`apps/myseliasan/apis/auth.go.md` and `docs/HOWTO.md`'s "Which apps can actually be clustered"
+section.
 
 ## Removed (accessrbac migration)
 

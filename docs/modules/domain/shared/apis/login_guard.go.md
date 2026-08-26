@@ -2,10 +2,10 @@
 
 ## Purpose
 
-The failed-login lockout, shared by every appliance app (`mymatasan`, `myiotsan`) and, since
-the clustering fix below, by `myidsan` too (`myseliasan` still builds its own instance without
-a shared store — see the Notes on `apps/myidsan/app/app.go.md`'s `loginGuardConfig`). Moved
-here from `apps/mymatasan/apis/login_guard.go` (behavior-preserving: mymatasan binds it via
+The failed-login lockout, shared by every appliance app (`mymatasan`, `myiotsan`), by
+`myidsan`, and — since it turned out to have none at all — by `myseliasan`. Both Tier A
+clusterable apps now attach the shared store. Moved here from
+`apps/mymatasan/apis/login_guard.go` (behavior-preserving: mymatasan binds it via
 `apps/mymatasan/apis/local_auth.go`'s `NewLoginGuard`/`LoginGuard`/`LoginGuardConfig`
 re-exports).
 
@@ -15,7 +15,16 @@ re-exports).
   `FailedDelay`. Zero values are filled with safe defaults by `NewLoginGuard`
   (`withDefaults`), so a partially-specified config still works. Each app maps its own
   `loginSecurity` config block onto this (e.g. `apps/myiotsan/app/app.go`'s
-  `loginGuardConfig`).
+  `loginGuardConfig`); the two Tier A apps share one mapping, `NewLoginGuardFor(
+  config.EffectiveLoginSecurity)`, because an app that grows a lockout second should not have
+  to re-derive it. Note that `Effective()` resolves an **absent** `loginSecurity` block to
+  enabled-with-defaults, so an app whose config never mentions the block still promises a
+  lockout — which is how myseliasan's configuration came to advertise one the code did not
+  implement.
+- `Enabled()` / `SharesState()` — the two questions the clustering preflight's `loginLockout`
+  row asks (`domain/shared/services/deployment.go`, `CheckLoginLockout`). Both are nil-safe, so
+  an app that wires no guard reports honestly rather than panicking. `SharesState` was added
+  for that row one change before anything read it; the row now exists.
 - `LoginGuard` — a thread-safe, in-memory failed-login tracker, keyed by arbitrary strings.
   The middleware keys by source IP only (`loginGuardKeys`): it throttles a host hammering
   credentials without letting an attacker lock a real user out of their account by spamming

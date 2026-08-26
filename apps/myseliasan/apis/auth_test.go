@@ -35,7 +35,9 @@ func TestStartUsesConfiguredRedirectBaseURL(t *testing.T) {
 		SessionCache: cache.NewMemoryStore(time.Minute, time.Minute),
 		SessionTTL:   time.Hour,
 	})
-	NewAuthApi(router, cfg, auth, cache.NewMemoryStore(time.Minute, time.Minute), nil)
+	// No guard and no audit service: this test covers the SSO redirect surface, and both
+	// are nil-safe by design so a deployment that wires neither behaves as it always did.
+	NewAuthApi(router, cfg, auth, cache.NewMemoryStore(time.Minute, time.Minute), nil, nil, nil)
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:3002/auth/start?returnTo=/", nil)

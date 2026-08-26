@@ -39,6 +39,24 @@ const (
 //
 // Convention: "<subject>.<verb>", lower_snake for multi-word verbs.
 const (
+	// Authentication. The trail recorded node adoptions, policy edits, key rotations and
+	// failover takeovers, and never once recorded somebody signing in — so a complete
+	// brute-force run against the fleet console left nothing in the product's own record of
+	// who did what, which is the half an investigation actually reads. The names match
+	// myidsan's deliberately: an operator correlating the identity server's trail with the
+	// control plane's should not have to learn two vocabularies for the same event.
+	//
+	// The attempted PASSWORD is never recorded on any of these. A trail that keeps what
+	// people typed into a password box is a credential store, and the ones worth having are
+	// the near-misses of a real password.
+	ActionLoginSuccess = "login.success"
+	ActionLoginFailure = "login.failure"
+	// ActionLoginLockout is written once per lockout, on the attempt that trips it — not on
+	// every refusal afterwards, which would bury the event that matters under the noise of
+	// an attacker who kept going.
+	ActionLoginLockout   = "login.lockout"
+	ActionPasswordChange = "password.change"
+
 	ActionNodeAdopt      = "node.adopt"
 	ActionNodeRelease    = "node.release"
 	ActionNodeBlock      = "node.block"

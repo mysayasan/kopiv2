@@ -57,6 +57,12 @@ const (
 	CheckAtRestKey   = "atrestKey"
 	CheckJwtSecret   = "jwtSecret"
 	CheckDbPool      = "dbPool"
+	// CheckLoginLockout reports whether the failed-login lockout spans the deployment.
+	// It is here rather than in an app's ExtraChecks because it is the same question for
+	// every clusterable app, and because it was the one piece of per-process state this
+	// list did NOT name — which is exactly how a lockout that multiplied an attacker's
+	// budget by the instance count survived a checklist written to catch that.
+	CheckLoginLockout = "loginLockout"
 )
 
 // DeploymentState is the operator's declared intent, persisted as a single
@@ -235,6 +241,16 @@ type DeploymentEnv struct {
 	CachePing func(context.Context) error
 	LockPing  func(context.Context) error
 
+	// LoginGuardEnabled / LoginGuardShared describe the failed-login lockout. Supply
+	// LoginGuard.SharesState() for the second — it reports both that a guard is switched
+	// on and that its counters live somewhere every instance can see.
+	//
+	// An app that wires no guard leaves both false and gets a failed BLOCKER row, which is
+	// the honest answer: it has no brute-force control to share. That was myseliasan's
+	// actual state, and the checklist said nothing.
+	LoginGuardEnabled bool
+	LoginGuardShared  bool
+
 	// ExtraChecks contributes app-specific rows (myseliasan's LLM sidecar). Run
 	// after the shared rows so app concerns read as an addendum.
 	ExtraChecks func(context.Context) []PreflightCheck
@@ -304,6 +320,7 @@ func Preflight(ctx context.Context, env DeploymentEnv, state DeploymentState) Pr
 		checkAtRestKey(env),
 		checkJwtSecret(env.JwtSecret, env.JwtSecretGenerated),
 		checkDbPool(env.MaxOpenConns),
+		checkLoginLockout(env),
 	}
 	if env.ExtraChecks != nil {
 		checks = append(checks, env.ExtraChecks(ctx)...)
@@ -321,6 +338,37 @@ func Preflight(ctx context.Context, env DeploymentEnv, state DeploymentState) Pr
 		Acknowledged: state.Acknowledged,
 		Checks:       checks,
 		Ready:        ready,
+	}
+}
+
+// checkLoginLockout reports whether the brute-force control holds across the cluster.
+//
+// A BLOCKER, not a warning, and on both halves of the question:
+//
+//   - a guard that is switched off means the deployment has no failed-login lockout at all,
+//     which on a clusterable app is a decision worth making deliberately rather than
+//     discovering;
+//   - a guard whose counters are per-process is worse than it looks, because it still
+//     answers "locked" convincingly on the instance that counted the failures. An attacker
+//     simply gets MaxAttempts per instance per window, and the user it locked out lands on
+//     another instance and signs in — so the control is not even reliably ON. A live
+//     two-instance bench on myidsan measured exactly that before the shared store existed.
+//
+// Detail carries a value the operator can compare between instances rather than advice; the
+// UI owns the wording because it has to translate it.
+func checkLoginLockout(env DeploymentEnv) PreflightCheck {
+	detail := "shared"
+	switch {
+	case !env.LoginGuardEnabled:
+		detail = "disabled"
+	case !env.LoginGuardShared:
+		detail = "per-process"
+	}
+	return PreflightCheck{
+		Id:       CheckLoginLockout,
+		Severity: SeverityBlocker,
+		Ok:       env.LoginGuardEnabled && env.LoginGuardShared,
+		Detail:   detail,
 	}
 }
 

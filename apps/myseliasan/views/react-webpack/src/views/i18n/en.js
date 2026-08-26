@@ -151,6 +151,8 @@ export default {
   'auth.signIn': 'Sign in',
   'auth.enterCreds': 'Enter your username and password.',
   'auth.invalidCreds': 'Invalid username or password.',
+  'auth.lockedSeconds': 'Too many failed attempts. Try again in {seconds} seconds.',
+  'auth.lockedMinutes': 'Too many failed attempts. Try again in {minutes} minutes.',
   'auth.setNewPassword': 'Set a new password',
   'auth.changeHint': 'The stock superadmin must replace the default password before continuing.',
   'auth.currentPassword': 'Current password',

@@ -150,6 +150,8 @@ export default {
   'auth.signIn': 'Log masuk',
   'auth.enterCreds': 'Masukkan nama pengguna dan kata laluan anda.',
   'auth.invalidCreds': 'Nama pengguna atau kata laluan tidak sah.',
+  'auth.lockedSeconds': 'Terlalu banyak percubaan gagal. Cuba lagi dalam {seconds} saat.',
+  'auth.lockedMinutes': 'Terlalu banyak percubaan gagal. Cuba lagi dalam {minutes} minit.',
   'auth.setNewPassword': 'Tetapkan kata laluan baharu',
   'auth.changeHint': 'Superadmin lalai mesti menggantikan kata laluan lalai sebelum meneruskan.',
   'auth.currentPassword': 'Kata laluan semasa',

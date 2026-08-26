@@ -563,12 +563,12 @@ func guardSuccess(guard *sharedapis.LoginGuard, r *http.Request, identifier stri
 
 // loginGuardKey is the per-SOURCE key: the connecting peer's IP from RemoteAddr, never a
 // spoofable forwarded header. It throttles one machine trying many accounts.
+//
+// The rule itself now lives in domain/shared/apis alongside the guard, because myseliasan
+// needed the identical pair and a second copy of a security decision is how two of them end
+// up disagreeing. These stay as named wrappers so the call sites below read the same.
 func loginGuardKey(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return "ip:" + strings.TrimSpace(r.RemoteAddr)
-	}
-	return "ip:" + host
+	return sharedapis.LoginGuardSourceKey(r)
 }
 
 // loginGuardAccountKey is the per-ACCOUNT key. Without it, the lockout only ever saw one
@@ -585,20 +585,12 @@ func loginGuardKey(r *http.Request) string {
 // Returns "" for an empty identifier, and callers skip empty keys — a failure with no
 // username attached (a malformed body) must not be attributed to some arbitrary account.
 func loginGuardAccountKey(identifier string) string {
-	id := strings.ToLower(strings.TrimSpace(identifier))
-	if id == "" {
-		return ""
-	}
-	return "user:" + id
+	return sharedapis.LoginGuardAccountKey(identifier)
 }
 
 // loginGuardKeys is the pair every credential surface should throttle on.
 func loginGuardKeys(r *http.Request, identifier string) []string {
-	keys := []string{loginGuardKey(r)}
-	if accountKey := loginGuardAccountKey(identifier); accountKey != "" {
-		keys = append(keys, accountKey)
-	}
-	return keys
+	return sharedapis.LoginGuardKeys(r, identifier)
 }
 
 func writeLoginLockout(w http.ResponseWriter, retry time.Duration) {
@@ -653,17 +645,7 @@ func selfThrottleFailure(guard *sharedapis.LoginGuard, r *http.Request, email st
 // describes something they did not do, and sends them to check whether their account is
 // under attack at the front door instead of waiting the minute out.
 func writeLockout(w http.ResponseWriter, retry time.Duration, message string) {
-	secs := int(math.Ceil(retry.Seconds()))
-	if secs < 1 {
-		secs = 1
-	}
-	w.Header().Set("Retry-After", strconv.Itoa(secs))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusTooManyRequests)
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"message":           message,
-		"retryAfterSeconds": secs,
-	})
+	sharedapis.WriteLockoutJSON(w, retry, message)
 }
 
 func ldapResultLabel(err error) string {
