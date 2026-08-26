@@ -11,7 +11,10 @@ import { createCredential, describeCeremonyError, webauthnSupported } from '../.
 // listed rather than shown as a single on/off state (the way TOTP is) because registering a
 // second key and storing it elsewhere is the whole recovery story for a lost one.
 
-export function WebAuthnKeys({ onToast }) {
+// onCountChange lets the sibling two-factor card know whether this account holds a key. It
+// used to say "protected by a password only" whenever TOTP was off, regardless — a false
+// statement about an account's protection, on the page whose whole job is reporting it.
+export function WebAuthnKeys({ onToast, onCountChange }) {
   const t = useT()
   const [enabled, setEnabled] = useState(true)
   const [keys, setKeys] = useState([])
@@ -28,14 +31,16 @@ export function WebAuthnKeys({ onToast }) {
     try {
       const res = resultOf(await apiRequest('/api/mfa/webauthn')) || {}
       setEnabled(res.enabled !== false)
-      setKeys(Array.isArray(res.keys) ? res.keys : [])
+      const list = Array.isArray(res.keys) ? res.keys : []
+      setKeys(list)
+      onCountChange?.(list.length)
       setError('')
     } catch (err) {
       setError(err.message)
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [onCountChange])
   useEffect(() => { load() }, [load])
 
   // add runs the two-leg registration ceremony: fetch options, let the authenticator sign

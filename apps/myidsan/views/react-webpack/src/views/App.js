@@ -3242,6 +3242,14 @@ function ProfilePage({ currentEmail, roleLabel, onToast }) {
   const [code, setCode] = useState('')
   const [recoveryCodes, setRecoveryCodes] = useState(null) // shown ONCE after confirm/regenerate
   const [disarm, setDisarm] = useState({ open: false, password: '', code: '' })
+  // Whether this account holds a SECURITY KEY. The two-factor card below used to announce
+  // "your account is protected by a password only" whenever TOTP was off, knowing nothing
+  // about keys — so a user who had just enrolled a FIDO2 key was told, on the security page,
+  // that they had no second factor. That is a false statement about an account's protection,
+  // and the kind an operator auditing accounts would act on. A live WebAuthn bench (a real
+  // ceremony against a virtual authenticator) put the enrolled key and that sentence in the
+  // same screenshot.
+  const [keyCount, setKeyCount] = useState(0)
   // Self-service change-password (distinct from the forced must-change screen).
   const [pw, setPw] = useState({ current: '', next: '', confirm: '' })
   const [pwBusy, setPwBusy] = useState(false)
@@ -3477,7 +3485,7 @@ function ProfilePage({ currentEmail, roleLabel, onToast }) {
           </div>
         ) : (
           <div className="record-form">
-            <div className="message warning">{t('mfa.notEnrolled')}</div>
+            <div className="message warning">{t(keyCount > 0 ? 'mfa.notEnrolledHasKey' : 'mfa.notEnrolled')}</div>
             <label>
               {t('mfa.deviceLabel')}
               <input value={label} placeholder={t('mfa.deviceLabelHint')} onChange={event => setLabel(event.target.value)} />
@@ -3489,7 +3497,7 @@ function ProfilePage({ currentEmail, roleLabel, onToast }) {
         )}
         </section>
 
-        <WebAuthnKeys onToast={onToast} />
+        <WebAuthnKeys onToast={onToast} onCountChange={setKeyCount} />
 
         <SessionList onToast={onToast} />
       </div>

@@ -70,6 +70,7 @@ export default {
   'mfa.title': 'Pengesahan Dua Faktor',
   'mfa.subtitle': 'Tambah faktor kedua kepada akaun anda. Ia diperlukan hanya untuk kelayakan yang disahkan sendiri oleh pelayan identiti ini.',
   'mfa.notEnrolled': 'Akaun anda dilindungi oleh kata laluan sahaja. Tambah apl pengesah untuk faktor kedua.',
+  'mfa.notEnrolledHasKey': 'Akaun anda dilindungi oleh kata laluan dan kunci keselamatan. Anda juga boleh menambah aplikasi pengesah, supaya kunci yang hilang tidak mengunci anda di luar.',
   'mfa.enable': 'Dayakan dua faktor',
   'mfa.deviceLabel': 'Nama peranti (pilihan)',
   'mfa.deviceLabelHint': 'cth. Pixel 8',
