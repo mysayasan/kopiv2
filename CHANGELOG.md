@@ -115,6 +115,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-26 — myidsan 1.46.0, myiotsan 0.30.0, mymatasan 1.143.0, myseliasan 1.78.0 (fc6b5cc)
+
+### Security
+
+- **myidsan,myiotsan,mymatasan,myseliasan**: Cleared every outstanding security advisory in the web interface dependencies — 34 of them across all five apps and the product website, fourteen rated high. Most were build-time tooling rather than anything a user's browser ever runs, but a few (the routing library, an image-processing library, an HTTP client) do end up in shipped code, and leaving known advisories open is not a position worth defending. Three libraries needed a major version step and one was simply deleted: the door-controller app carried a routing library it never once imported, and the best fix for a vulnerable dependency is not upgrading it. Nothing about how any app looks or behaves changes.
 ## 2026-08-25 — mymatasan 1.142.0, myseliasan 1.77.0 (58a25f6)
 
 ### Added
