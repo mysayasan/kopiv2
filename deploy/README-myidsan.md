@@ -234,6 +234,31 @@ Everyone is signed out, including you: the restore drops every live session, bec
 session issued a moment earlier would still carry pre-restore authority. Sign in again with
 an account from the backup — its password, role and second factor are exactly as they were.
 
+**"Keep both"** (merge mode) adds the backup's records alongside whatever is already on
+this server, for pulling accounts, apps or a directory config out of an old file onto a
+server that is still running — not for rebuilding one. Every role name, account email, app
+code/audience, directory name and CA name is unique, and a real target almost always
+already holds some of them (every install seeds the same stock role names and bootstrap
+admin email), so a colliding record is **skipped and counted**, never overwritten — the
+copy already on this server always wins, and anything that hangs off a skipped record
+(a second factor, a redirect URI) skips with it rather than attaching to the account or
+app that is already here. The restore result reports how many rows were skipped per
+section; a merge that reports mostly skips against an already-populated server is expected,
+not a sign anything went wrong.
+
+**Restoring a single section (e.g. just "MFA", or just "Federation") on a server that is
+still running now lands on the accounts and roles already here** — an mfa-only restore
+matches the backup's factors onto accounts already on this server by email, and a
+federation-only restore matches its group→role mappings onto roles already here by name,
+rather than treating the section as parentless. **This used to be dangerous and is worth
+knowing if you are running an older build:** selecting only "MFA" with "Replace what is
+here" used to wipe every second factor on the server (the section's own tables), find no
+matching account for any of the backup's factors, restore none, and report success —
+silently disabling everyone's second factor, a fleet-wide lockout under a required-MFA
+policy. Selecting only "Federation" lost every directory group→role mapping the same way.
+Current builds resolve the parent against this host instead; a factor/mapping whose
+account/role is in neither the backup nor this host still skips, same as before.
+
 `config.json` is not restored, so re-apply any host settings by hand: listener ports, TLS
 paths, SMTP, Kerberos and any `login.oidc[]` providers. The **Settings** page (superadmin
 only, `System` group in the nav) covers a safe subset of that file — `localAuth`, `sso`,

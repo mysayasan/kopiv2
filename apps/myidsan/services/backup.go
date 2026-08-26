@@ -531,6 +531,33 @@ func (s *backupService) Restore(ctx context.Context, data []byte, req RestoreReq
 	appIDs := map[int64]int64{}
 	authIDs := map[int64]int64{}
 
+	// A section can be restored WITHOUT the section it depends on — the UI lets the
+	// operator tick "mfa" and nothing else, and "restore the second factors onto the
+	// accounts already here" is a perfectly reasonable thing to ask for.
+	//
+	// The id maps above are filled only by the restore of the parent section, so when that
+	// parent was not selected every child row found no mapping and was skipped. In REPLACE
+	// mode that was destructive and silent: selecting only "mfa" wiped user_mfa_factor and
+	// every recovery code, restored nothing (there was no user mapping to place them on),
+	// and reported success with a skipped count. Every account on the server lost its
+	// second factor — a fleet-wide lockout under a required-MFA policy, and a silent
+	// security downgrade of every account otherwise.
+	//
+	// So an unselected parent is resolved against what is ALREADY on this host, by the same
+	// natural key the restore uses everywhere else: an account is its email, a role is its
+	// name. A child whose parent is absent from the backup AND from this host still skips,
+	// which is the case the skipping was written for.
+	if !containsString(sections, BackupSectionAccess) {
+		if err := s.matchExistingRoles(ctx, file, roleIDs); err != nil {
+			return res, err
+		}
+	}
+	if !containsString(sections, BackupSectionIdentity) {
+		if err := s.matchExistingUsers(ctx, file, userIDs); err != nil {
+			return res, err
+		}
+	}
+
 	if containsString(sections, BackupSectionAccess) {
 		if err := s.restoreAccess(ctx, file, mode, roleIDs, &res); err != nil {
 			return res, err
@@ -596,31 +623,58 @@ func (s *backupService) restoreAccess(ctx context.Context, file *backupFile, mod
 		}
 	}
 
+	roleKeys, err := newKeyIndex(ctx, s.roles, func(r *sharedentities.AccessRole) string {
+		return normKey(r.Name)
+	})
+	if err != nil {
+		return err
+	}
 	for _, role := range file.Roles {
 		oldID := role.Id
 		row := role
 		row.Id = 0
+		if !roleKeys.claim(normKey(row.Name)) {
+			// A role of this name is already here. Keeping the target's is the safe half of
+			// the choice: overwriting it would silently redefine what a live role GRANTS,
+			// and every account already carrying it would change privilege without anybody
+			// asking for that.
+			res.Skipped[BackupSectionAccess]++
+			continue
+		}
 		newID, err := s.roles.Create(ctx, "", row)
 		if err != nil {
-			return err
+			return restoreFailure(BackupSectionAccess, res, err)
 		}
 		roleIDs[oldID] = int64(newID)
 		res.Restored[BackupSectionAccess]++
 	}
 
+	permKeys, err := newKeyIndex(ctx, s.permissions, func(p *sharedentities.AccessRolePermission) string {
+		return normKey(fmt.Sprint(p.RoleId), p.Path)
+	})
+	if err != nil {
+		return err
+	}
 	for _, perm := range file.Permissions {
 		newRoleID, ok := roleIDs[perm.RoleId]
 		if !ok {
-			// The permission's role was not in this backup; a dangling grant would be
-			// worse than a missing one.
+			// The permission's role was not in this backup, or was skipped as already
+			// present; a dangling grant would be worse than a missing one.
 			res.Skipped[BackupSectionAccess]++
 			continue
 		}
 		row := perm
 		row.Id = 0
 		row.RoleId = newRoleID
+		// (role, path) carries no database constraint, so a repeated merge would quietly
+		// stack duplicate grants for the same endpoint — two rows that disagree about
+		// `managed` are then indistinguishable to the permission matrix.
+		if !permKeys.claim(normKey(fmt.Sprint(row.RoleId), row.Path)) {
+			res.Skipped[BackupSectionAccess]++
+			continue
+		}
 		if _, err := s.permissions.Create(ctx, "", row); err != nil {
-			return err
+			return restoreFailure(BackupSectionAccess, res, err)
 		}
 	}
 	return nil
@@ -639,11 +693,24 @@ func (s *backupService) restoreIdentity(ctx context.Context, file *backupFile, m
 		}
 	}
 
+	// user_group carries no unique constraint, so a merge genuinely can hold both — but
+	// re-running the same merge would otherwise stack identical groups forever, so the
+	// name is treated as the natural key here too.
+	groupKeys, err := newKeyIndex(ctx, s.groups, func(g *sharedentities.UserGroup) string {
+		return normKey(g.Title, fmt.Sprint(g.ParentId))
+	})
+	if err != nil {
+		return err
+	}
 	for _, group := range file.Groups {
 		row := group
 		row.Id = 0
+		if !groupKeys.claim(normKey(row.Title, fmt.Sprint(row.ParentId))) {
+			res.Skipped[BackupSectionIdentity]++
+			continue
+		}
 		if _, err := s.groups.Create(ctx, "", row); err != nil {
-			return err
+			return restoreFailure(BackupSectionIdentity, res, err)
 		}
 	}
 
@@ -652,10 +719,26 @@ func (s *backupService) restoreIdentity(ctx context.Context, file *backupFile, m
 		avatarByUser[a.UserLoginId] = a
 	}
 
+	userKeys, err := newKeyIndex(ctx, s.users, func(u *sharedentities.UserLogin) string {
+		return normKey(u.Email)
+	})
+	if err != nil {
+		return err
+	}
 	for _, bu := range file.Users {
 		oldID := bu.UserLogin.Id
 		row := bu.UserLogin
 		row.Id = 0
+		if !userKeys.claim(normKey(row.Email)) {
+			// An account with this email is already here. The target's password, role and
+			// second factor stand: overwriting a live account from a backup is how a stale
+			// file silently rolls someone's credentials back, and merge is the mode that
+			// exists precisely to NOT do that. Nothing keys off this user afterwards
+			// either — it is absent from userIDs, so its factors and avatar skip too,
+			// rather than attaching to the account that is already here.
+			res.Skipped[BackupSectionIdentity]++
+			continue
+		}
 		// Remap the role reference. A user whose role is absent lands role-less rather
 		// than inheriting whatever role happens to occupy that id on the new host —
 		// silently granting someone another role is the worse failure.
@@ -669,7 +752,7 @@ func (s *backupService) restoreIdentity(ctx context.Context, file *backupFile, m
 		}
 		newID, err := s.users.Create(ctx, "", row)
 		if err != nil {
-			return err
+			return restoreFailure(BackupSectionIdentity, res, err)
 		}
 		userIDs[oldID] = int64(newID)
 		res.Restored[BackupSectionIdentity]++
@@ -702,10 +785,27 @@ func (s *backupService) restoreMfa(ctx context.Context, file *backupFile, mode s
 		}
 	}
 
+	// One confirmed factor per (account, kind) — loadFactor takes the first row it finds,
+	// so a second would make which factor gates a login depend on insert order.
+	factorKeys, err := newKeyIndex(ctx, s.mfaFactors, func(f *myidsanentities.UserMfaFactor) string {
+		return normKey(fmt.Sprint(f.UserLoginId), f.Kind)
+	})
+	if err != nil {
+		return err
+	}
+	codeKeys, err := newKeyIndex(ctx, s.mfaCodes, func(c *myidsanentities.UserMfaRecoveryCode) string {
+		return normKey(fmt.Sprint(c.UserLoginId), c.CodeHash)
+	})
+	if err != nil {
+		return err
+	}
 	for _, bf := range file.MfaFactors {
 		newUserID, ok := userIDs[bf.UserLoginId]
 		if !ok {
-			// An orphaned factor would gate a login for a user that no longer exists.
+			// An orphaned factor would gate a login for a user that no longer exists — and
+			// in merge mode this is also the path a factor takes when its account was
+			// already present and therefore skipped, which is right: the account that is
+			// here keeps the second factor it already has.
 			res.Skipped[BackupSectionMfa]++
 			continue
 		}
@@ -718,8 +818,16 @@ func (s *backupService) restoreMfa(ctx context.Context, file *backupFile, mode s
 			return err
 		}
 		row.SecretEnc = sealed
+		if !factorKeys.claim(normKey(fmt.Sprint(row.UserLoginId), row.Kind)) {
+			// This account already holds a factor of this kind — reached when the accounts
+			// were matched rather than restored (a merge, or an mfa-only restore). Leaving
+			// the live one in place is the safe half: it is the one the person actually has
+			// on their phone.
+			res.Skipped[BackupSectionMfa]++
+			continue
+		}
 		if _, err := s.mfaFactors.Create(ctx, "", row); err != nil {
-			return err
+			return restoreFailure(BackupSectionMfa, res, err)
 		}
 		res.Restored[BackupSectionMfa]++
 	}
@@ -734,14 +842,24 @@ func (s *backupService) restoreMfa(ctx context.Context, file *backupFile, mode s
 		row.Id = 0
 		row.UserLoginId = newUserID
 		row.CodeHash = bc.CodeHash
+		if !codeKeys.claim(normKey(fmt.Sprint(row.UserLoginId), row.CodeHash)) {
+			res.Skipped[BackupSectionMfa]++
+			continue
+		}
 		if _, err := s.mfaCodes.Create(ctx, "", row); err != nil {
-			return err
+			return restoreFailure(BackupSectionMfa, res, err)
 		}
 	}
 
 	// Security keys. Restored verbatim apart from the foreign-key remap — no re-sealing,
 	// because the stored public key is not sealed to begin with.
 	if s.webauthn != nil {
+		credKeys, err := newKeyIndex(ctx, s.webauthn, func(c *myidsanentities.UserWebauthnCredential) string {
+			return normKey(c.CredentialId)
+		})
+		if err != nil {
+			return err
+		}
 		for _, cred := range file.WebAuthnCreds {
 			newUserID, ok := userIDs[cred.UserLoginId]
 			if !ok {
@@ -757,8 +875,14 @@ func (s *backupService) restoreMfa(ctx context.Context, file *backupFile, mode s
 			// entity leaves PublicKey empty (json:"-"), and a credential without its key
 			// verifies nothing.
 			row.PublicKey = cred.PublicKey
+			// CredentialId is what the browser presents to say which key it is using, and it
+			// is globally unique — two rows for one physical key is not a state to create.
+			if !credKeys.claim(normKey(row.CredentialId)) {
+				res.Skipped[BackupSectionMfa]++
+				continue
+			}
 			if _, err := s.webauthn.Create(ctx, "", row); err != nil {
-				return err
+				return restoreFailure(BackupSectionMfa, res, err)
 			}
 			res.Restored[BackupSectionMfa]++
 		}
@@ -779,18 +903,53 @@ func (s *backupService) restoreApps(ctx context.Context, file *backupFile, mode 
 		}
 	}
 
+	// app_registry carries TWO separate unique constraints — code and audience — so a
+	// record can collide on either one alone. Both are claimed, and either collision skips.
+	appCodeKeys, err := newKeyIndex(ctx, s.appRegistry, func(a *sharedentities.AppRegistry) string {
+		return normKey(a.Code)
+	})
+	if err != nil {
+		return err
+	}
+	appAudKeys, err := newKeyIndex(ctx, s.appRegistry, func(a *sharedentities.AppRegistry) string {
+		return normKey(a.Audience)
+	})
+	if err != nil {
+		return err
+	}
 	for _, app := range file.AppRegistry {
 		oldID := app.Id
 		row := app
 		row.Id = 0
+		if !appCodeKeys.claim(normKey(row.Code)) || !appAudKeys.claim(normKey(row.Audience)) {
+			// This relying app is already registered here. Its client secret and redirect
+			// allow-list are live configuration that other running apps depend on; a backup
+			// must not silently redefine them, and the ids below never map, so its auth
+			// config and redirect URIs skip with it rather than attaching to the app that
+			// is already registered.
+			res.Skipped[BackupSectionApps]++
+			continue
+		}
 		newID, err := s.appRegistry.Create(ctx, "", row)
 		if err != nil {
-			return err
+			return restoreFailure(BackupSectionApps, res, err)
 		}
 		appIDs[oldID] = int64(newID)
 		res.Restored[BackupSectionApps]++
 	}
 
+	authKeys, err := newKeyIndex(ctx, s.appAuth, func(a *sharedentities.AppAuthConfig) string {
+		return normKey(fmt.Sprint(a.AppRegistryId), a.ClientId)
+	})
+	if err != nil {
+		return err
+	}
+	uriKeys, err := newKeyIndex(ctx, s.appRedirect, func(u *sharedentities.AppRedirectUri) string {
+		return normKey(fmt.Sprint(u.AppAuthConfigId), u.RedirectUri)
+	})
+	if err != nil {
+		return err
+	}
 	for _, auth := range file.AppAuth {
 		newAppID, ok := appIDs[auth.AppRegistryId]
 		if !ok {
@@ -801,9 +960,13 @@ func (s *backupService) restoreApps(ctx context.Context, file *backupFile, mode 
 		row := auth
 		row.Id = 0
 		row.AppRegistryId = newAppID
+		if !authKeys.claim(normKey(fmt.Sprint(row.AppRegistryId), row.ClientId)) {
+			res.Skipped[BackupSectionApps]++
+			continue
+		}
 		newID, err := s.appAuth.Create(ctx, "", row)
 		if err != nil {
-			return err
+			return restoreFailure(BackupSectionApps, res, err)
 		}
 		authIDs[oldID] = int64(newID)
 	}
@@ -820,8 +983,12 @@ func (s *backupService) restoreApps(ctx context.Context, file *backupFile, mode 
 		row := uri
 		row.Id = 0
 		row.AppAuthConfigId = newAuthID
+		if !uriKeys.claim(normKey(fmt.Sprint(row.AppAuthConfigId), row.RedirectUri)) {
+			res.Skipped[BackupSectionApps]++
+			continue
+		}
 		if _, err := s.appRedirect.Create(ctx, "", row); err != nil {
-			return err
+			return restoreFailure(BackupSectionApps, res, err)
 		}
 	}
 	return nil
@@ -837,6 +1004,18 @@ func (s *backupService) restoreFederation(ctx context.Context, file *backupFile,
 		}
 	}
 
+	dirKeys, err := newKeyIndex(ctx, s.directory, func(d *myidsanentities.DirectoryConfig) string {
+		return normKey(d.Name)
+	})
+	if err != nil {
+		return err
+	}
+	mapKeys, err := newKeyIndex(ctx, s.groupMaps, func(m *myidsanentities.FederatedGroupMapping) string {
+		return normKey(m.Provider, m.GroupName)
+	})
+	if err != nil {
+		return err
+	}
 	for _, bd := range file.Directory {
 		row := bd.DirectoryConfig
 		row.Id = 0
@@ -845,8 +1024,12 @@ func (s *backupService) restoreFederation(ctx context.Context, file *backupFile,
 			return err
 		}
 		row.BindPassword = sealed
+		if !dirKeys.claim(normKey(row.Name)) {
+			res.Skipped[BackupSectionFederation]++
+			continue
+		}
 		if _, err := s.directory.Create(ctx, "", row); err != nil {
-			return err
+			return restoreFailure(BackupSectionFederation, res, err)
 		}
 		res.Restored[BackupSectionFederation]++
 	}
@@ -862,8 +1045,15 @@ func (s *backupService) restoreFederation(ctx context.Context, file *backupFile,
 		row := m
 		row.Id = 0
 		row.RoleId = newRoleID
+		// (provider, group) is the natural key — matching is case-insensitive on the group
+		// name, so two mappings differing only in case would both match one login and the
+		// tie-break would decide someone's role by row id.
+		if !mapKeys.claim(normKey(row.Provider, row.GroupName)) {
+			res.Skipped[BackupSectionFederation]++
+			continue
+		}
 		if _, err := s.groupMaps.Create(ctx, "", row); err != nil {
-			return err
+			return restoreFailure(BackupSectionFederation, res, err)
 		}
 		res.Restored[BackupSectionFederation]++
 	}
@@ -876,11 +1066,24 @@ func (s *backupService) restoreSsoCa(ctx context.Context, file *backupFile, mode
 			return err
 		}
 	}
+	caKeys, err := newKeyIndex(ctx, s.ssoCa, func(c *myidsanentities.SsoCa) string {
+		return normKey(c.Name)
+	})
+	if err != nil {
+		return err
+	}
 	for _, ca := range file.SsoCa {
 		row := ca
 		row.Id = 0
+		if !caKeys.claim(normKey(row.Name)) {
+			// The target already has a CA under this name. Replacing it would invalidate
+			// every node certificate this server has already issued, which is a far more
+			// destructive outcome than declining to import a second one.
+			res.Skipped[BackupSectionSsoCa]++
+			continue
+		}
 		if _, err := s.ssoCa.Create(ctx, "", row); err != nil {
-			return err
+			return restoreFailure(BackupSectionSsoCa, res, err)
 		}
 		res.Restored[BackupSectionSsoCa]++
 	}
@@ -925,6 +1128,139 @@ func wipeAll[T any](ctx context.Context, repo dbsql.IGenericRepo[T], id func(*T)
 		}
 	}
 	return nil
+}
+
+// --- collision guards ------------------------------------------------------
+//
+// MERGE mode adds a backup's records alongside whatever the target already holds. Every
+// table below carries a UNIQUE constraint on a natural key — a role name, an account
+// email, an app code — and every myidsan install seeds the same stock role names and the
+// same bootstrap admin. So a merge restore of any backup containing the access or identity
+// section into any live server used to hit that constraint on its very first row and abort,
+// surfacing the driver's own text ("UNIQUE constraint failed: access_role.name (2067)" on
+// sqlite, something else entirely on postgres) to an operator mid-recovery.
+//
+// Two things were wrong with that. The mode the UI offers as "Keep both" could not work
+// against a real target at all. And because the restore walks tables row by row with no
+// enclosing transaction, a collision partway through leaves everything before it written —
+// a half-restored identity store, reported as a constraint error that says nothing about
+// what landed.
+//
+// keyIndex fixes the first by letting each section ask "is this record already here?"
+// BEFORE inserting. Deciding in Go rather than by parsing a driver error keeps the answer
+// portable, and lets the skip be COUNTED and reported like every other skip.
+
+// matchExistingRoles maps the backup's role ids onto roles ALREADY on this host, by name,
+// for a restore that did not select the access section.
+func (s *backupService) matchExistingRoles(ctx context.Context, file *backupFile, roleIDs map[int64]int64) error {
+	if len(file.Roles) == 0 {
+		return nil
+	}
+	existing, err := allRows(ctx, s.roles)
+	if err != nil {
+		return err
+	}
+	byName := map[string]int64{}
+	for _, r := range existing {
+		byName[normKey(r.Name)] = r.Id
+	}
+	for _, r := range file.Roles {
+		if id, ok := byName[normKey(r.Name)]; ok {
+			roleIDs[r.Id] = id
+		}
+	}
+	return nil
+}
+
+// matchExistingUsers is the same for accounts, keyed on email — the column that is unique
+// and the identifier people actually sign in with.
+func (s *backupService) matchExistingUsers(ctx context.Context, file *backupFile, userIDs map[int64]int64) error {
+	if len(file.Users) == 0 {
+		return nil
+	}
+	existing, err := allRows(ctx, s.users)
+	if err != nil {
+		return err
+	}
+	byEmail := map[string]int64{}
+	for _, u := range existing {
+		byEmail[normKey(u.Email)] = u.Id
+	}
+	for _, u := range file.Users {
+		if id, ok := byEmail[normKey(u.Email)]; ok {
+			userIDs[u.UserLogin.Id] = id
+		}
+	}
+	return nil
+}
+
+// keyIndex is the set of natural keys already present in a table.
+type keyIndex map[string]bool
+
+// newKeyIndex reads a table once and indexes its rows by a natural-key function. Built
+// AFTER any replace-mode wipe, so in replace mode it starts empty and nothing is skipped.
+func newKeyIndex[T any](ctx context.Context, repo dbsql.IGenericRepo[T], key func(*T) string) (keyIndex, error) {
+	rows, _, err := repo.Get(ctx, "", backupPageLimit, 0, nil, nil)
+	if err != nil {
+		if isNotFoundErr(err) {
+			return keyIndex{}, nil
+		}
+		return nil, err
+	}
+	idx := keyIndex{}
+	for _, row := range rows {
+		if row != nil {
+			idx[key(row)] = true
+		}
+	}
+	return idx, nil
+}
+
+// claim reports whether k is new, and records it. Rows are claimed as they are inserted, so
+// the guard also catches a backup that carries two records with the same key — which would
+// otherwise fail the same way even in replace mode, against an empty table.
+func (k keyIndex) claim(key string) bool {
+	if k[key] {
+		return false
+	}
+	k[key] = true
+	return true
+}
+
+// normKey lower-cases and trims the parts of a natural key. Case folding matters because
+// the constraints these guards stand in for are on identifiers people type — an account
+// email, a role name — and "Admin" colliding with "admin" is a collision the operator
+// means, whatever the database's own collation happens to do with it.
+func normKey(parts ...string) string {
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		out = append(out, strings.ToLower(strings.TrimSpace(p)))
+	}
+	return strings.Join(out, "\x00")
+}
+
+// restoreFailure wraps a mid-restore error with what had already been applied.
+//
+// The restore is not atomic — the repo layer exposes no transaction that spans these
+// tables — so an operator whose recovery stops halfway needs to know that it DID stop
+// halfway, and where. The bare driver message told them neither, which on a disaster
+// recovery is the difference between "re-run it" and "this server is now in a state
+// nobody has described".
+func restoreFailure(section string, res *RestoreResult, err error) error {
+	applied := make([]string, 0, len(res.Restored))
+	for _, s := range backupAllSections {
+		if n := res.Restored[s]; n > 0 {
+			applied = append(applied, fmt.Sprintf("%s=%d", s, n))
+		}
+	}
+	summary := "nothing"
+	if len(applied) > 0 {
+		summary = strings.Join(applied, ", ")
+	}
+	return fmt.Errorf(
+		"restore stopped while applying the %q section; this server is now PARTIALLY restored "+
+			"(already applied: %s). Re-run the restore from the same file in \"replace\" mode to "+
+			"reach a known state. Underlying error: %w", section, summary, err)
 }
 
 // normalizeSections lower-cases, de-dupes, and reorders the requested sections into the

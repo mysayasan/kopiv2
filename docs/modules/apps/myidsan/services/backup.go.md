@@ -75,7 +75,7 @@ original hostname.
   `restoreAccess` → `restoreIdentity` → `restoreMfa` → `restoreApps` →
   `restoreFederation` → `restoreSsoCa`. `Mode` is `"replace"` (wipes each selected
   section's own tables first — the default and the one to use when rebuilding a host) or
-  `"merge"` (appends without clearing).
+  `"merge"` (appends without clearing — "Keep both" in the UI, `RestoreModeMerge`).
   - Every restored row gets a fresh id (`row.Id = 0`, `Create`); foreign keys are
     remapped through per-run `map[oldID]newID` tables built as each parent section is
     restored (`roleIDs`, `userIDs`, `appIDs`, `authIDs`).
@@ -85,7 +85,66 @@ original hostname.
     user whose role wasn't restored (lands role-less rather than silently inheriting
     whatever role now occupies that id on the new host), an MFA factor (or a WebAuthn
     credential) whose user wasn't restored, a redirect URI whose auth config wasn't
-    restored, a group mapping whose role wasn't restored.
+    restored, a group mapping whose role wasn't restored. A row whose parent was itself
+    **skipped as a merge collision** (below) takes the same path — it is absent from the
+    same remap table either way, so nothing re-parents onto the record that was already
+    there.
+  - **Restoring a child section without its parent section resolves the parent against
+    this host instead of leaving it unmapped (`matchExistingRoles`,
+    `matchExistingUsers`).** The UI lets an operator tick only `mfa` (or only
+    `federation`) — "restore the second factors onto the accounts already here" is a
+    reasonable request on its own. But `roleIDs`/`userIDs` were filled **only** by
+    restoring the parent section, so an unselected parent left every child row unmapped
+    and therefore skipped. In `replace` mode that was silently destructive: selecting
+    only `mfa` wiped `user_mfa_factor` and every recovery code first (the section's own
+    wipe), found no user mapping to place the backup's factors on, skipped every one,
+    and returned `err=nil` — every account on the server lost its second factor, with
+    the response reporting success. `federation` alone had the identical shape one
+    level along (group mappings, which decide what role a directory login lands on,
+    wiped and none restored, because `roleIDs` is only filled by restoring `access`).
+    Confirmed against a live server before the fix. Now, in `Restore` before any
+    section is dispatched: if `access` was **not** selected, `matchExistingRoles` reads
+    every role already on this host and fills `roleIDs` by `AccessRole.Name`; if
+    `identity` was **not** selected, `matchExistingUsers` does the same for `userIDs` by
+    `UserLogin.Email` — the same natural keys the collision guard below uses. A child
+    whose parent is absent from **both** the backup's selected sections and this host
+    still skips — that is the case the skip was written for, unchanged.
+  - **Merge-mode collision guard (`keyIndex`, `newKeyIndex`, `claim`, `normKey`).** Every
+    table a section writes to carries a UNIQUE constraint on a natural key, and every
+    myidsan install seeds the same stock role names and the same bootstrap admin email —
+    so an unguarded merge restore of `access` or `identity` used to hit that constraint on
+    its very first row and abort, surfacing the driver's own text
+    (`UNIQUE constraint failed: access_role.name (2067)`) to the operator mid-recovery,
+    with everything before the collision already written (the restore has no enclosing
+    transaction). Each `restore*` function now builds a `keyIndex` per table **after** any
+    replace-mode wipe (so replace mode is unaffected — the index starts empty and nothing
+    is skipped) and calls `claim(normKey(...))` before every insert; a key already claimed
+    is **skipped and counted** (`RestoreResult.Skipped`) rather than aborting, and the
+    target's own row is left untouched — a backup must not overwrite a live account's
+    password/role or an app's live client secret and redirect allow-list. Keys are claimed
+    as rows are inserted (not just read once up front), so an archive carrying two records
+    with the same key no longer aborts even in replace mode. `normKey` lower-cases and
+    trims each part before joining, so `"Admin"` and `"admin"` collide the way an operator
+    means them to, regardless of the database's own collation. Natural keys, one `keyIndex`
+    per table: `AccessRole.Name`; `AccessRolePermission(RoleId, Path)`; `UserLogin.Email`;
+    `UserGroup(Title, ParentId)`; `AppRegistry.Code` **and** `AppRegistry.Audience` as two
+    separate indexes (either collision skips the row — the table carries two independent
+    UNIQUE constraints); `AppAuthConfig(AppRegistryId, ClientId)`;
+    `AppRedirectUri(AppAuthConfigId, RedirectUri)`; `DirectoryConfig.Name`;
+    `FederatedGroupMapping(Provider, GroupName)`; `SsoCa.Name`; and, in `restoreMfa`,
+    `UserMfaFactor(UserLoginId, Kind)`, `UserMfaRecoveryCode(UserLoginId, CodeHash)`, and
+    `UserWebauthnCredential.CredentialId`. Those three exist for the case the parent-match
+    above creates: the target account may already have its own factor of that kind, and
+    `loadFactor` takes the first row it finds for `(UserLoginId, Kind)`, so a second would
+    make which factor gates a login depend on insert order; `CredentialId` is globally
+    unique and is what the browser presents to say which physical security key it is
+    using. On a collision the live factor stands — it is the one actually on the
+    account holder's phone or in their key — and the skip is counted.
+  - A mid-restore insert error (any table, either mode) is wrapped by `restoreFailure`,
+    which names the section that failed, lists every section already applied with its
+    restored count, states plainly that the server is now **partially restored**, and
+    tells the operator to re-run in `"replace"` mode to reach a known state — the
+    underlying driver error is still wrapped (`%w`) for a bug report.
   - After every section is applied, every live session is dropped
     (`cache.Store.DeleteByPrefix("sso:session:")`) — a session token issued a moment
     earlier would still resolve to ids/roles that may no longer mean what they did,
