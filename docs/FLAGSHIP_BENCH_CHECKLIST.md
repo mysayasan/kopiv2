@@ -2093,4 +2093,79 @@ boundary between the two apps.
 * **No screen.** myidsan's SPA is only proved to mount (`uicheck_bundle.js`); nothing here
   drives its administration screens.
 * **The lockout is not exercised.** The bench turns the rate limiter off so its own refusal
-  checks reach the handler, and the per-account lockout guard was not driven.
+  checks reach the handler, and the per-account lockout guard was not driven. See
+  `bench_idsan_lockout.py` below — a separate bench, because this one is single-instance and
+  the lockout's real failure mode only shows up on a cluster.
+
+---
+
+## myidsan — the lockout, against a real two-node CLUSTER (`bench_idsan_lockout.py`)
+
+36/36 after the fixes; **27/36 against the unfixed code.** Two real defects, both shipped, both
+in the code the earlier myidsan benches above had already exercised and passed.
+
+### What is stood up
+
+Not one instance — two. A Postgres container plus two myidsan instances sharing that database
+AND the base harness's Redis, standing up on top of `idsan_harness.py` (reuses its docker
+network, bench certificate and built image, but not its running instance). This is the point:
+`LoginGuard` is in-memory, and a single-instance bench cannot see it stop being one. It runs
+with the SHIPPED configuration — generic rate limiter on, `loginSecurity` at its defaults —
+because "under real attack" means the configuration customers actually run, not a
+bench-friendly relaxation of it.
+
+### What is measured
+
+Both instances evaluating the SAME account and the SAME source IP: a lockout tripped on
+instance A checked against instance B; the escalating backoff checked across a hop; a success
+on one instance clearing the counters visible to the other; and, separately, three authenticated
+endpoints that re-check the caller's own password — `change-password`, removing a security key,
+and disabling MFA — probed with a stolen-but-valid session and no credential of their own.
+
+### What it found
+
+**1. The lockout was per-process, so on a cluster it did not lock.** Instance A locked an
+account after eight wrong passwords; instance B then evaluated a ninth normally (`401`) and —
+the sharpest finding — accepted the CORRECT password with `200`, signing in the very account
+that was supposed to be locked out. An attacker's effective budget was `maxAttempts × instance
+count`, and the escalating backoff restarted at its base on every instance instead of
+continuing to double. None of it was visible: the `GET /api/deployment/preflight` checklist
+(`dbEngine`/`sharedCache`/`sharedLock`/`atrestKey`/`jwtSecret`/`dbPool`) says nothing about the
+lockout at all. Fixed by `LoginGuard.WithSharedStore` (`domain/shared/apis/login_guard_shared.go`)
+mirroring state into the shared cache alongside the in-memory map — OR'd, so the shared half can
+only ever lock more, never less, and a Redis outage degrades to today's per-process behaviour
+rather than turning brute-force protection off.
+
+**2. Several authenticated endpoints re-check the account password with no throttle at all** —
+password oracles for whoever holds a stolen session cookie, no credential of their own needed.
+Worst: `change-password`, where a correct guess REPLACES the password and takes the account
+permanently. Also `DELETE /api/mfa/webauthn/{id}`, whose identity re-proof accepts the password
+alone with no second factor required. Fixed with `selfThrottleLocked`/`selfThrottleFailure`
+(`apps/myidsan/apis/login.go`), keyed on the SESSION's own account rather than a submitted
+identifier — unlike the login door, a stranger cannot aim this counter at somebody else.
+
+### A trap in the bench itself, twice
+
+The generic rate limiter and the lockout both answer `429` + `Retry-After`, so "got a 429"
+proves nothing about which one fired — an early run of this bench passed two throttle checks
+purely on rate-limit refusals while the lockout being measured did not exist. `is_lockout()`
+tells them apart on body shape. Separately, the off-by-one between the two counting schemes
+(the in-memory guard trips when the total REACHES `maxAttempts`; the shared sliding window
+refuses when the count is already `>=` a limit, checked BEFORE the current attempt) meant a
+straight `MaxAttempts` pass-through gave every instance one free extra guess before the shared
+half ever locked — caught by the bench watching the shared counter directly, not just the HTTP
+verdict.
+
+### Also fixed, found in the process
+
+`infra/cache.MemoryStore.Delete` did not clear sliding-window state (a separate map from the
+value cache), so `Delete(key)` meant something different there than on Redis, where the window
+IS the key. Found because the lockout clears a key exactly that way on a successful sign-in.
+
+### Not claimed
+
+* **myseliasan is the suite's other Tier A clusterable app and still has no shared lockout.**
+  Its `LoginGuard` is built without `WithSharedStore`. Not changed here — no bench covers its
+  login surfaces yet.
+* **Escalation across a *third* instance, and a cache failover mid-attack, are unbenched.**
+  Two instances and a stable Redis are what stood up.

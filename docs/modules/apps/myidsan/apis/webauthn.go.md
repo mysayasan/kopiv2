@@ -33,6 +33,11 @@ route acts on the caller's own account, identified from the JWT claims):
   `IUserLoginService.AuthenticateDefault`) or a valid TOTP code, when one is enrolled; a
   third-party-only account with no local password has nothing to prove and is let through
   (`services.ErrThirdPartyOnlyAccount` tolerated). Records `services.ActionWebAuthnRemove`.
+  Checks `selfThrottleLocked` before calling `reproveIdentity`, and `selfThrottleFailure` on
+  its failure (`apis/login.go.md`'s "Self-Throttled Password Re-checks") — this is the sharper
+  of the two self-throttled surfaces, since `reproveIdentity` accepts the password as one way
+  to authorise the removal with no second factor required, so before this fix a hijacked
+  session could grind it unthrottled.
 
 Admin, `auth.Middleware` + `access.Middleware` + `access.RequireSuperadmin`:
 
@@ -60,10 +65,14 @@ Admin, `auth.Middleware` + `access.Middleware` + `access.RequireSuperadmin`:
   always echo the library's own message verbatim — precise in a log, needlessly
   instructive in a response.
 - `webAuthnApi` embeds `auditRecorder` (`apis/audit.go.md`), same pattern as `mfaApi`.
+- `webAuthnApi` gained a `guard *sharedapis.LoginGuard` field; `NewWebAuthnApi` gained a
+  trailing `guard` parameter (same instance `apis.NewLoginApi`/`apis.NewMfaApi` share) so
+  `remove` can throttle the password half of `reproveIdentity` — see `apis/login.go.md`'s
+  "Self-Throttled Password Re-checks".
 - Mounted in `apps/myidsan/app/app.go`'s `RegisterAppRoutes` via
   `apis.NewWebAuthnApi(api, *deps.Auth, deps.Access, webauthnService, userLoginService,
-  mfaService, auditService, stepUpService, deps.Config.RateLimit.TrustedProxies)` — see
-  `apps/myidsan/app/app.go.md`.
+  mfaService, auditService, stepUpService, loginGuard, deps.Config.RateLimit.TrustedProxies)` —
+  see `apps/myidsan/app/app.go.md`.
 - Frontend: the Profile page's "Security keys" card
   (`views/react-webpack/src/views/components/webauthn_keys.js`), driven by
   `views/react-webpack/src/lib/webauthn.js`'s ceremony helpers (unpadded base64url ↔

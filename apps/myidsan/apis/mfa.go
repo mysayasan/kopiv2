@@ -10,6 +10,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/apps/myidsan/services"
 	enumauth "github.com/mysayasan/kopiv2/domain/enums/auth"
+	sharedapis "github.com/mysayasan/kopiv2/domain/shared/apis"
 	"github.com/mysayasan/kopiv2/domain/models"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
@@ -31,6 +32,9 @@ type mfaApi struct {
 	service services.IMfaService
 	users   services.IUserLoginService
 	metrics telemetry.Metrics
+	// guard throttles the ONE password check on this surface (disable). Without it a
+	// hijacked session could grind the account password here as fast as the network allowed.
+	guard *sharedapis.LoginGuard
 }
 
 // NewMfaApi wires the self-service MFA routes (auth-only: every route acts on the
@@ -44,9 +48,10 @@ func NewMfaApi(
 	metrics telemetry.Metrics,
 	audit services.IAuditService,
 	stepUp services.IStepUpService,
+	guard *sharedapis.LoginGuard,
 	trustedProxies []string,
 ) {
-	handler := &mfaApi{auth: auth, service: service, users: users, metrics: metrics, auditRecorder: newAuditRecorder(audit, trustedProxies)}
+	handler := &mfaApi{auth: auth, service: service, users: users, metrics: metrics, guard: guard, auditRecorder: newAuditRecorder(audit, trustedProxies)}
 
 	// Self-service: any authenticated user, acting on their own account. No RBAC
 	// matrix — mirrors /api/login/default/change-password.
@@ -210,6 +215,9 @@ func (m *mfaApi) disable(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrPermission, "not authenticated")
 		return
 	}
+	if selfThrottleLocked(w, r, m.guard, claims.Email) {
+		return
+	}
 	var body struct {
 		Password string `json:"password"`
 		Code     string `json:"code"`
@@ -231,6 +239,7 @@ func (m *mfaApi) disable(w http.ResponseWriter, r *http.Request) {
 		// A third-party-only (directory/SSO) account has no local password to check;
 		// the code gate above is sufficient. Any other failure is a real refusal.
 		if !errors.Is(err, services.ErrThirdPartyOnlyAccount) {
+			selfThrottleFailure(m.guard, r, claims.Email)
 			controllers.SendError(w, controllers.ErrAuthFailed, "current password is incorrect")
 			return
 		}

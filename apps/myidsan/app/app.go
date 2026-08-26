@@ -346,7 +346,16 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// One LoginGuard covers every interactive credential surface (local JSON login,
 	// LDAP login, the server-rendered federated login page): to a password sprayer
 	// they are the same door, so they share the per-IP counters.
+	// The lockout is shared through the cache, so it spans every instance of a clustered
+	// deployment. Without this it is a per-process map: a live two-instance bench on one
+	// shared database and one shared cache locked the account on instance A after eight
+	// wrong passwords, and instance B then evaluated a ninth normally and allowed a fresh
+	// eight — an attacker's budget multiplied by the instance count, and a lockout a
+	// legitimate user could walk around by landing on another instance.
 	loginGuard := sharedapis.NewLoginGuard(loginGuardConfig(deps))
+	if sharedservices.IsSharedCacheProvider(deps.Config.Cache.Provider) {
+		loginGuard = loginGuard.WithSharedStore(deps.Cache, "myidsan")
+	}
 	deps.Metrics.Describe(apis.MetricFederatedLoginTotal, "Federated login outcomes by provider and result (LDAP/Kerberos failures are otherwise invisible in aggregate).")
 
 	// Kerberos SPNEGO: a bad keytab degrades to "not offered" with a warning
@@ -494,11 +503,11 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	apis.NewSessionApi(api, *deps.Auth, deps.Access, sessionService, auditService, deps.Config.RateLimit.TrustedProxies)
 	// Self-service + admin MFA management surface. The login-time challenge is wired
 	// into the login/federated-auth APIs above via the same mfaService.
-	apis.NewMfaApi(api, *deps.Auth, deps.Access, mfaService, userLoginService, deps.Metrics, auditService, stepUpService, deps.Config.RateLimit.TrustedProxies)
+	apis.NewMfaApi(api, *deps.Auth, deps.Access, mfaService, userLoginService, deps.Metrics, auditService, stepUpService, loginGuard, deps.Config.RateLimit.TrustedProxies)
 	// Security-key management: self-service on your own keys, plus a superadmin
 	// lost-device reset behind step-up (same gate as clearing a TOTP factor). The
 	// pre-session login legs are on the login API above, not here.
-	apis.NewWebAuthnApi(api, *deps.Auth, deps.Access, webauthnService, userLoginService, mfaService, auditService, stepUpService, deps.Config.RateLimit.TrustedProxies)
+	apis.NewWebAuthnApi(api, *deps.Auth, deps.Access, webauthnService, userLoginService, mfaService, auditService, stepUpService, loginGuard, deps.Config.RateLimit.TrustedProxies)
 	// Superadmin account-recovery queue (the public request endpoint is on the login
 	// API; the self-service email flow is on the federated-auth API).
 	apis.NewPasswordResetApi(api, *deps.Auth, deps.Access, passwordResetService, auditService, stepUpService, deps.Config.RateLimit.TrustedProxies)

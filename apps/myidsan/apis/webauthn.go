@@ -10,6 +10,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/apps/myidsan/services"
+	sharedapis "github.com/mysayasan/kopiv2/domain/shared/apis"
 	enumauth "github.com/mysayasan/kopiv2/domain/enums/auth"
 	"github.com/mysayasan/kopiv2/domain/models"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
@@ -32,6 +33,8 @@ type webAuthnApi struct {
 	service services.IWebAuthnService
 	users   services.IUserLoginService
 	mfa     services.IMfaService
+	// guard throttles the password half of reproveIdentity — see selfThrottleLocked.
+	guard *sharedapis.LoginGuard
 }
 
 // NewWebAuthnApi wires the self-service and admin security-key routes.
@@ -44,12 +47,14 @@ func NewWebAuthnApi(
 	mfa services.IMfaService,
 	audit services.IAuditService,
 	stepUp services.IStepUpService,
+	guard *sharedapis.LoginGuard,
 	trustedProxies []string,
 ) {
 	h := &webAuthnApi{
 		service:       service,
 		users:         users,
 		mfa:           mfa,
+		guard:         guard,
 		auditRecorder: newAuditRecorder(audit, trustedProxies),
 	}
 
@@ -213,7 +218,14 @@ func (h *webAuthnApi) remove(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 65536)).Decode(&body)
 
+	if selfThrottleLocked(w, r, h.guard, claims.Email) {
+		return
+	}
 	if err := h.reproveIdentity(r, claims, body.Password, body.Code); err != nil {
+		// Removing a security key takes a control off the account, and reproveIdentity
+		// accepts the PASSWORD as one way to authorise it — so this is another place a
+		// hijacked session could grind for it.
+		selfThrottleFailure(h.guard, r, claims.Email)
 		controllers.SendError(w, controllers.ErrAuthFailed, err.Error())
 		return
 	}
