@@ -78,6 +78,8 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o .artifacts/fleetbench/bin/myid
 python tools/fleetbench/idsan_harness.py       # myidsan + a real relying app + redis
 python tools/fleetbench/bench_idsan_sso.py     # the sign-in every other app depends on
 python tools/fleetbench/bench_idsan_mfa.py     # the second factor + step-up (FRESH stand-up)
+python tools/fleetbench/idsan_harness.py       # RE-STAND between them (see below)
+python tools/fleetbench/bench_idsan_backup.py  # disaster recovery across two hosts
 ```
 
 `bench_idsan_mfa.py` needs a **freshly stood-up harness**: it enrols a second factor on the
@@ -103,6 +105,31 @@ stock superadmin, and its first check is that the account starts without one. Ru
   client is turned away by the CSRF check first, which proves nothing about authorization,
   so the escape-hatch checks plant a matching CSRF pair and the challenge token as the
   access cookie — leaving the auth check as the only thing left that can say no.
+
+**Re-stand the harness between these two.** `bench_idsan_backup.py` enrols a second factor
+on the stock superadmin and leaves it enrolled, so a following `bench_idsan_sso.py` cannot
+sign in with a password alone — its whole flow then fails, for a reason that has nothing to
+do with SSO. Every myidsan bench assumes a fresh stand-up.
+
+`bench_idsan_backup.py` stands up **its own second myidsan** (`idsan-dr`, port 18453, redis
+DB 1) and removes it in a `finally`. That second host is the entire point: TOTP secrets and
+the LDAP bind password are sealed with the **host's** at-rest key, which is minted per data
+directory, so only a restore onto a genuinely different key proves the unseal-on-export /
+re-seal-on-restore design works. The bench asserts the two keys differ before it trusts any
+cross-host result — if they ever matched, every claim in it would pass for the wrong reason.
+
+Traps in it, all of which cost real time:
+
+- **The TOTP replay guard rides along in the backup.** A first draft spent a code for step
+  N+1, restored, waited 31s and presented step N — correctly refused as a replay, which
+  reads *exactly* like the at-rest re-sealing having failed. That is the headline defect
+  this bench exists to detect, and it would have been reported as one. Never spend a future
+  step; the `Totp` helper only ever hands out a step beyond the last one consumed.
+- A restore **invalidates the caller's own session**, so re-authenticate after every one.
+- Export and restore are **step-up gated**, and once MFA is enrolled step-up needs a code
+  too — which means another fresh time-step each time.
+- If a previous run left `idsan-dr` attached, `idsan_harness.py` fails at
+  `docker network create`. `docker rm -f idsan-dr` first.
 
 `bench_w37_failover.py` (W3-7, N+1 failover) needs the **ffmpeg node image on BOTH nodes** —
 the SPARE is the one that has to record, so patching only the protected node's ffmpeg path
