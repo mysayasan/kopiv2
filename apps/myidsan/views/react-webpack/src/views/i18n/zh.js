@@ -569,6 +569,7 @@ export default {
   'session.confirmOthers': '登出其他所有设备？您将继续保持在此登录。',
   'user.endSessions': '结束所有会话',
   'user.endSessionsConfirm': '结束该账户的所有会话？他们需要重新登录。',
+  'user.endSessionsConfirmSelf': '结束你自己账户的所有会话？这包括你当前正在使用的会话，因此你会立即在此处被登出。',
   'user.sessionsEnded': '已结束 {n} 个会话。',
   'stepup.title': '确认是您本人',
   'stepup.body': '此操作会影响此服务器上的所有人，因此需要再次输入密码。本次确认有效期为五分钟。',

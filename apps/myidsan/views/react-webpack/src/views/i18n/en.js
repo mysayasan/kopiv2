@@ -588,6 +588,7 @@ export default {
   'session.confirmOthers': 'Sign out of every other device? You will stay signed in here.',
   'user.endSessions': 'End all sessions',
   'user.endSessionsConfirm': 'End every session for this account? They will have to sign in again.',
+  'user.endSessionsConfirmSelf': 'End every session for YOUR account? This includes the one you are using now, so you will be signed out here immediately.',
   'user.sessionsEnded': 'Ended {n} session(s).',
   'stepup.title': 'Confirm it is you',
   'stepup.body': 'This action affects everyone on this server, so it needs your password again. This confirmation lasts five minutes.',

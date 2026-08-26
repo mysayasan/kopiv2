@@ -569,6 +569,7 @@ export default {
   'session.confirmOthers': 'Log keluar daripada setiap peranti lain? Anda akan kekal log masuk di sini.',
   'user.endSessions': 'Tamatkan semua sesi',
   'user.endSessionsConfirm': 'Tamatkan setiap sesi untuk akaun ini? Mereka perlu log masuk semula.',
+  'user.endSessionsConfirmSelf': 'Tamatkan setiap sesi untuk akaun ANDA? Ini termasuk sesi yang sedang anda gunakan, jadi anda akan dilog keluar di sini serta-merta.',
   'user.sessionsEnded': 'Menamatkan {n} sesi.',
   'stepup.title': 'Sahkan diri anda',
   'stepup.body': 'Tindakan ini menjejaskan semua orang pada pelayan ini, jadi kata laluan anda diperlukan sekali lagi. Pengesahan ini sah selama lima minit.',

@@ -37,6 +37,30 @@ export function csrfToken() {
   return getCookie('__Host-kopiv2_csrf') || getCookie('kopiv2_csrf')
 }
 
+// Session-lost subscribers. The app registers one that returns the SPA to the sign-in screen;
+// this module owns no UI, so it only announces. Fired at most once per lost session so a page
+// that fans out several parallel requests does not bounce the user several times.
+let sessionLostHandlers = []
+let sessionLostAnnounced = false
+
+export function onSessionLost(handler) {
+  sessionLostHandlers.push(handler)
+  return () => { sessionLostHandlers = sessionLostHandlers.filter(h => h !== handler) }
+}
+
+// Called by the app once a fresh session is established, so a later loss is announced again.
+export function resetSessionLost() {
+  sessionLostAnnounced = false
+}
+
+function notifySessionLost() {
+  if (sessionLostAnnounced) return
+  sessionLostAnnounced = true
+  for (const handler of sessionLostHandlers) {
+    try { handler() } catch (_) { /* a broken subscriber must not swallow the original error */ }
+  }
+}
+
 export async function apiRequest(path, options = {}) {
   const method = (options.method || 'GET').toUpperCase()
   const headers = {
@@ -78,6 +102,18 @@ export async function apiRequest(path, options = {}) {
     // callers can open the re-authentication prompt instead of surfacing a dead-end
     // "forbidden" for an action that IS theirs to take.
     err.stepUpRequired = message === STEP_UP_REQUIRED
+    // 401 means the SESSION IS GONE — expired, revoked here, or ended by an administrator.
+    // Every page used to catch this like any other error and render its own empty state, so
+    // the operator was left sitting in a fully drawn admin console with a small red "session
+    // not active" and every screen reporting no data. The first screen check this app ever
+    // had caught it on the Audit log, which cheerfully said "No events match these filters"
+    // when the truth was that nobody was signed in.
+    //
+    // 403 is deliberately NOT included: that is "you are signed in and may not do this",
+    // which belongs inline on the page — and it is how the step-up sentinel above arrives.
+    if (response.status === 401) {
+      notifySessionLost()
+    }
     throw err
   }
 
