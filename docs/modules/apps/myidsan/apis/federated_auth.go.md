@@ -248,3 +248,37 @@ now exercised through `login.BuildRegistry`) and `TestLoginPageHasNoExternalRefe
   `services/metrics.go.md` for the outcome constants and rationale.
 - Kerberos does not gate on MFA either — same rationale as the SPA login path (upstream IdP owns factor policy, see `docs/MYIDSAN_MFA_PLAN.md` §5).
 - The self-service password-reset flow never issues a session and never distinguishes "unknown account" from "account matched, email sent/admin notified" in any response — see "Account Recovery (Forgot Password)" above.
+
+## The federation trail
+
+**What was missing, and it was the whole of the interesting half.** The trail recorded that an
+account signed in (`login.success`, from the credential step). It recorded nothing about what
+that sign-in OPENED. On an identity server those are different facts: the credential check
+happens once, and the access it is traded for happens **per relying app**. So
+"this account was compromised — which applications did it reach?" was a question only myidsan
+could answer, and the one party that did not write it down. Every relying app simply saw a
+federated session appear.
+
+Three actions now cover it (`services/audit.go`):
+
+| Action | Written when |
+|---|---|
+| `sso.authorize` | An authorization code is issued for a client. |
+| `sso.token_issue` | That code is exchanged for an access token. |
+| `sso.refused` | An unknown client, an unregistered redirect URI, a bad audience, or a code that is expired, unknown or **already used**. |
+
+Every entry names the **client and the account together**, because neither half answers the
+question alone.
+
+**The refusals are the more useful half.** An unregistered redirect URI is what an attempt to
+have somebody's authorization code delivered elsewhere looks like; a replayed code is what
+using a stolen one looks like. A trail holding only successes cannot show either.
+
+`recordSso` is nil-safe and never fails the request: an identity server that refuses to sign
+somebody in because it could not write a log line has turned an observability problem into an
+outage.
+
+**Why the unit tests did not catch this.** `login_federated_audit_test.go` exists and passes —
+it covers the credential step, which was always audited. Nothing crossed the boundary between
+the two apps, which is where the gap was. Found by `tools/fleetbench/bench_idsan_sso.py`, the
+first live exercise this app has ever had.

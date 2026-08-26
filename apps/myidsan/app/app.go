@@ -265,16 +265,16 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	apis.NewDeploymentApi(api, *deps.Auth, deps.Access, deploymentModeService,
 		func() sharedservices.DeploymentEnv {
 			return sharedservices.DeploymentEnv{
-				DbEngine:          deps.Config.Db.Engine,
-				CacheProvider:     deps.Config.Cache.Provider,
-				LockProvider:      deps.Config.Transaction.LockProvider,
+				DbEngine:           deps.Config.Db.Engine,
+				CacheProvider:      deps.Config.Cache.Provider,
+				LockProvider:       deps.Config.Transaction.LockProvider,
 				JwtSecret:          deps.Config.Jwt.Secret,
 				JwtSecretGenerated: deps.JwtSecretGenerated,
 				MaxOpenConns:       deps.Config.Db.Pool.MaxOpenConns,
-				AtRestEnabled:     secretKeyStore.Enabled(),
-				AtRestFingerprint: secretKeyStore.Fingerprint(),
-				CachePing:         sharedservices.PingFunc(deps.Cache),
-				LockPing:          sharedservices.PingFunc(deps.Locker),
+				AtRestEnabled:      secretKeyStore.Enabled(),
+				AtRestFingerprint:  secretKeyStore.Fingerprint(),
+				CachePing:          sharedservices.PingFunc(deps.Cache),
+				LockPing:           sharedservices.PingFunc(deps.Locker),
 			}
 		})
 
@@ -411,16 +411,16 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	startSessionGauge(deps, sessionService)
 
 	providerRegistry := apis.NewLoginApi(api, deps.Config.Login, *deps.Auth, userLoginService, apis.LoginApiOptions{
-		Directory:     directoryService,
-		Kerberos:      kerberosAuth,
-		KerberosLabel: kerberosLabel,
-		Guard:         loginGuard,
-		Metrics:       deps.Metrics,
-		Mfa:           mfaService,
-		Store:         deps.Cache,
-		Reset:         passwordResetService,
-		Audit:         auditService,
-		Sessions:      sessionService,
+		Directory:      directoryService,
+		Kerberos:       kerberosAuth,
+		KerberosLabel:  kerberosLabel,
+		Guard:          loginGuard,
+		Metrics:        deps.Metrics,
+		Mfa:            mfaService,
+		Store:          deps.Cache,
+		Reset:          passwordResetService,
+		Audit:          auditService,
+		Sessions:       sessionService,
 		PasswordPolicy: deps.Config.PasswordPolicy.Effective(),
 		WebAuthn:       webauthnService,
 		// Only a configured reverse proxy may declare the client address recorded
@@ -440,7 +440,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// Without it an account whose only second factor is a key would clear this page's gate
 	// with no factor checked — and this is the page a relying app's SSO hop lands on, so the
 	// bypass would have been reachable from every app in the suite.
-	apis.NewFederatedAuthApi(api, deps.Config, deps.Auth, providerRegistry, directoryService, kerberosLabel, loginGuard, userLoginService, appRegistryRepo, appAuthConfigRepo, appRedirectUriRepo, deps.Cache, mfaService, passwordResetService, deps.Metrics, webauthnService)
+	apis.NewFederatedAuthApi(api, deps.Config, deps.Auth, providerRegistry, directoryService, kerberosLabel, loginGuard, userLoginService, appRegistryRepo, appAuthConfigRepo, appRedirectUriRepo, deps.Cache, mfaService, passwordResetService, deps.Metrics, webauthnService, auditService, deps.Config.RateLimit.TrustedProxies)
 	apis.NewDirectoryConfigApi(api, *deps.Auth, deps.Access, directoryService, groupMappingRepo, auditService, deps.Config.RateLimit.TrustedProxies)
 	apis.NewAppAuthConfigApi(api, *deps.Auth, deps.Access, appAuthConfigRepo)
 	apis.NewAppRedirectUriApi(api, *deps.Auth, deps.Access, appRedirectUriRepo)

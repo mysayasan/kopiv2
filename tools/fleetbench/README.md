@@ -74,6 +74,9 @@ python tools/fleetbench/bench_w33d_fleet_wall.py  # W3-3d: fleet video wall acro
 node   tools/fleetbench/uicheck_fleet_wall.js .artifacts/fleetbench en
 node   tools/fleetbench/uicheck_fleet_wall.js .artifacts/fleetbench ar
 node   tools/fleetbench/uicheck_bundle.js apps/myidsan/static myidsan   # does the SPA MOUNT?
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o .artifacts/fleetbench/bin/myidsan ./cmd/myidsan
+python tools/fleetbench/idsan_harness.py       # myidsan + a real relying app + redis
+python tools/fleetbench/bench_idsan_sso.py     # the sign-in every other app depends on
 ```
 
 `bench_w37_failover.py` (W3-7, N+1 failover) needs the **ffmpeg node image on BOTH nodes** —
@@ -352,3 +355,17 @@ resolves. It exists for myidsan, myiotsan and mypintusan, which have no live ins
 It proves the bundle loads and the app boots. It proves nothing about whether a feature works:
 there is no backend behind the page, so every API call fails and the screen reaches its
 signed-out state. That is expected.
+`idsan_harness.py` is a SECOND harness, not an extension of the fleet one: myidsan has no
+`pairing` block (so `base_config` would fail on it) and the fleet harness force-disables SSO,
+which is the one thing this benches. It stands up myidsan, a real relying app (myseliasan) and
+a real redis — myidsan's shipped config names redis as the cache provider and the cache is the
+SESSION AUTHORITY there, so the in-process cache would bench a deployment nobody ships.
+
+**It uses the host's LAN address**, discovered at runtime. An authorization-code flow has three
+parties that must agree on one URL per app: the browser follows a redirect to myidsan, then the
+relying app calls myidsan server-to-server. `127.0.0.1` means "myself" inside a container and
+`host.docker.internal` does not resolve on the host — only the LAN address works from both, and
+the harness mints one certificate naming it.
+
+It WIPES the data dirs on every run. The first version did not, and the second run tripped over
+its own registrations.
