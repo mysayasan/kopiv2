@@ -23,18 +23,32 @@ account, identified from the JWT claims):
 - `POST /api/mfa/enroll/verify` (`confirmEnroll`) — body `{code}`; confirms the
   pending factor and returns `{recoveryCodes: [...]}` (shown once). Maps
   `ErrMfaBadCode` → `401` (and records the `enroll_failed` metric),
-  `ErrMfaNotEnrolling` → `400`, `ErrMfaAlreadyEnrolled` → `409`.
+  `ErrMfaNotEnrolling` → `400`, `ErrMfaAlreadyEnrolled` → `409`. On success, records
+  `services.ActionMfaEnroll` (`Metadata: {recoveryCodes: <count>}`) — recorded at
+  **confirmation**, not at `beginEnroll`: staging a secret changes nothing about how the
+  account authenticates, whereas this is the moment the account starts owing a second
+  factor, and the trail needs to be able to date it against a later removal.
 - `POST /api/mfa/recovery` (`regenerateRecovery`) — body `{code}`; re-proves
   possession of the factor (`requireValidCode`) before minting a fresh recovery-
   code set — otherwise a hijacked session could quietly rotate the break-glass
-  codes.
+  codes. Records `services.ActionMfaRegenerate` (`Metadata: {recoveryCodes: <count>}`) on
+  success — rotating the set invalidates every code the account holder has written down, and
+  the old hashes are gone afterwards, so there is nothing else to compare against. If the
+  code that re-proved possession was itself a recovery code, also records
+  `services.ActionMfaRecovery` (`surface: "recovery-regenerate"`, via `recordRecoveryBurn`).
 - `DELETE /api/mfa` (`disable`) — body `{password, code}`; removes the caller's own
   factor. Requires both a valid current code (`requireValidCode`) **and**, for
   local accounts, the current password (`AuthenticateDefault`) — re-proving
   possession so a hijacked session cannot silently strip the second factor. A
   third-party-only (directory/SSO) account has no local password, so
   `ErrThirdPartyOnlyAccount` from `AuthenticateDefault` is tolerated and the code
-  gate alone stands.
+  gate alone stands. On success, records `services.ActionMfaDisable` — the single most
+  important line this trail can hold: `Disable` deletes the factor row and every
+  recovery-code hash, so the act erases its own evidence and afterwards the account is
+  indistinguishable from one that never enrolled. If the code that authorized the removal
+  was a recovery code, also records `services.ActionMfaRecovery` (`surface: "mfa-disable"`)
+  — someone dismantling the second factor without the authenticator itself is a materially
+  different event from the routine case.
 
 Admin, `auth.Middleware` + `access.Middleware` + `access.RequireSuperadmin`:
 
@@ -69,3 +83,14 @@ online guessing attempt against a known password. Described once via
   `services.IAuditService` and `services.IStepUpService` parameters (Phase 2).
 - `writeCodeGateError` centralizes the `ErrMfaBadCode`/`ErrMfaNotEnrolled`/other
   mapping used by both `regenerateRecovery` and `disable`.
+- `requireValidCode(r, userId, code) (usedRecovery bool, err error)` now reports whether a
+  **recovery** code (vs. TOTP) satisfied the gate, sourced from `IMfaService.VerifyCode`'s
+  `MfaVerifyResult.UsedRecovery` — the caller then decides whether to record a burn.
+  `recordRecoveryBurn(r, userId, surface)` writes the `services.ActionMfaRecovery` entry;
+  `surface` (`"recovery-regenerate"` / `"mfa-disable"`) distinguishes what the same burn
+  means depending on where it happened.
+- Covered by `apis/mfa_audit_test.go.md` — a live bench found five declared audit actions
+  (`mfa.enroll`, `mfa.disable`, `mfa.recovery_used`, `mfa.recovery_regenerate`,
+  `login.mfa_challenge`) never written by anything; this file, `apis/login.go.md`,
+  `apis/mfa_challenge.go.md`, `apis/federated_auth.go.md`, and `apis/webauthn.go.md` now
+  emit all five.

@@ -20,13 +20,16 @@ especially sensitive actions.
 - `StepUpWindow = 5 * time.Minute` — long enough to complete a batch of admin work without
   re-typing a password per click, short enough that a walk-away laptop is not still
   elevated. Same order as the MFA challenge TTL.
-- `Verify(ctx, userId, email, sessionId, password, code)` re-checks the password
-  (`IUserLoginService.AuthenticateDefault`) against the **session's own** identity — `email`
-  and `userId` come from the server-issued session claims, never the request body, so this
-  cannot be used to test other accounts' passwords from inside any authenticated session.
-  When a confirmed MFA factor exists, the TOTP code is also required
-  (`IMfaService.VerifyCode`) — otherwise step-up would be satisfied by a password alone,
-  exactly what a phishing attacker already has. On success, sets the cache marker.
+- `Verify(ctx, userId, email, sessionId, password, code) (usedRecovery bool, err error)`
+  re-checks the password (`IUserLoginService.AuthenticateDefault`) against the **session's
+  own** identity — `email` and `userId` come from the server-issued session claims, never
+  the request body, so this cannot be used to test other accounts' passwords from inside any
+  authenticated session. When a confirmed MFA factor exists, a code is also required
+  (`IMfaService.VerifyCode`, TOTP or a recovery code) — otherwise step-up would be satisfied
+  by a password alone, exactly what a phishing attacker already has. On success, sets the
+  cache marker and returns whether the code that cleared it was a `MfaVerifyResult.UsedRecovery`
+  recovery code, so the API layer can record that burn separately from a routine
+  re-authentication.
 - `IsRecent(ctx, sessionId)` reports whether the session re-authenticated inside the
   window. **Fails closed**: a cache error or a missing store returns `false` (asking the
   operator to re-authenticate is an inconvenience; silently elevating every session on a

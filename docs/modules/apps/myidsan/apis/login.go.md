@@ -28,10 +28,21 @@ Every credential surface in this file now records to `services.IAuditService` (n
   `TargetId` set to the ATTEMPTED identifier (not resolved to a real account — resolving it
   would turn the trail into its own account-existence oracle) and `Metadata: {method}`.
   When the failure trips the lockout, also records `services.ActionLoginLockout`. Called
-  from `defaultLogin` (attempted username, `MethodLocal`), `ldapLogin` (attempted username,
-  `MethodDirectory`), and `mfaLogin` on a bad second-factor code (empty identifier — the
-  password already verified to reach this point, so only the challenge token, not a
-  username, was presented).
+  from `defaultLogin` (attempted username, `MethodLocal`) and `ldapLogin` (attempted
+  username, `MethodDirectory`). Both `recordLoginFailure` and the sibling below now share a
+  `recordCredentialFailure(r, action, attempted, method, reason)` helper that writes the
+  entry, delays the response, and advances the shared lockout.
+- `recordMfaChallengeFailure(r, reason)` — a bad second-factor code (`mfaLogin`) is now
+  audited under its **own** action, `services.ActionMfaChallenge`, not
+  `services.ActionLoginFailure` — filed as a plain login failure, a code being ground is
+  indistinguishable from a password being guessed, and the two are not the same incident:
+  whoever is here has already cleared the password, a later and more urgent stage of an
+  intrusion. No identifier is attached — this step presents a challenge token, not a
+  username. Still advances the same `LoginGuard` lockout a bad password does. A separate,
+  unauthenticated-token failure (unknown/expired/rebound) records `services.ActionMfaChallenge`
+  directly (not through `recordMfaChallengeFailure`, since it does not count against the
+  lockout) with `Detail: "second-factor challenge expired, exhausted, or presented from a
+  different client"`.
 - `recordLoginSuccess(r, user, method)` — called once a session has actually been issued
   (`issueLocalSession`, `kerberosLogin`, `providerCallback`, `mfaLogin`'s completion), never
   when a password merely verified — a password-correct login that stops at the MFA
@@ -159,18 +170,24 @@ credential check — `defaultLogin` and `ldapLogin` — routes through
 
 `POST /api/login/mfa` (`mfaLogin`, public — there is no session yet, the token
 itself is the short-lived, single-use, client-bound authorization to complete this
-login) redeems `{mfaToken, code}` via `mfaChallenger.redeem`:
+login) redeems `{mfaToken, code}` via `mfaChallenger.redeem`, which now also returns
+`usedRecovery`:
 
 - `services.ErrMfaBadCode` → `401` "invalid verification code", the `failed`
   metric is recorded, and the attempt counts toward the per-IP `LoginGuard` lockout
-  exactly like a bad password would (`recordLoginFailure`).
+  exactly like a bad password would — via `recordMfaChallengeFailure` (above), which
+  records `services.ActionMfaChallenge` rather than `services.ActionLoginFailure`.
 - Any other failure (unknown/expired/rebound token, or an internal error) → `401`
-  "your verification session expired — sign in again", metric `expired`. The two
-  cases are **not** distinguished in the response, to avoid an oracle that would
-  tell an attacker whether a guessed token exists.
+  "your verification session expired — sign in again", metric `expired`, and now also
+  records `services.ActionMfaChallenge` / `OutcomeDenied` directly. The two cases are
+  **not** distinguished in the response, to avoid an oracle that would tell an attacker
+  whether a guessed token exists.
 - Success reloads the resolved account (`loadActiveUser`, re-checking `IsActive` in
-  case it was disabled during the challenge window), records `success`, and calls
-  `issueLocalSession` — the session `completeLoginOrChallenge` withheld.
+  case it was disabled during the challenge window), records `success`, calls
+  `recordRecoveryLogin(r, user, usedRecovery)` — when the second factor that cleared was a
+  recovery code, records `services.ActionMfaRecovery` (`surface: "login"`), since a sign-in
+  completed with break-glass looks completely ordinary otherwise, and the codes are finite —
+  then calls `issueLocalSession` — the session `completeLoginOrChallenge` withheld.
 
 `mfaLogin` checks `guardLocked` before doing any work, same as `defaultLogin`/
 `ldapLogin`. Kerberos SPNEGO SSO and OAuth/OIDC callbacks deliberately do **not**
@@ -248,7 +265,10 @@ doing any credential work and respond `429` + `Retry-After` (`writeLoginLockout`
 locked; only a genuine credential failure (`services.ErrInvalidCredential` /
 `login.ErrLdapInvalidCredential`, never a payload or server error) sleeps the
 configured `FailedDelay` and calls `guard.RecordFailure` (`recordLoginFailure`); a
-success calls `guard.RecordSuccess` (`guardSuccess`). **This closes a real gap**:
+success calls `guard.RecordSuccess` (`guardSuccess`). `writeLoginLockout` is a thin wrapper
+over `writeLockout(w, retry, message)`, which carries the message as a parameter because the
+SPA surfaces it verbatim and `apis/stepup.go` needs different wording for the same throttle
+(see `apis/stepup.go.md`). **This closes a real gap**:
 before this, myidsan had no failed-login lockout at all on either credential
 surface. `apps/myidsan/apis/federated_auth.go`'s server-rendered `loginPost` shares
 the identical guard instance, so the counters are shared across both login

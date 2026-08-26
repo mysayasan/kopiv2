@@ -156,34 +156,37 @@ func (c *mfaChallenger) issue(ctx context.Context, r *http.Request, userId int64
 }
 
 // redeem verifies (token, code) from this request. On success it deletes the token
-// (single-use) and returns the resolved user id. Every failure path is explicit:
-// unknown/expired token, client rebinding, exhausted attempts, or a bad code. A bad
-// code increments the per-token counter and deletes the token once exhausted, so a
-// captured token cannot be ground against 10^6 codes.
-func (c *mfaChallenger) redeem(ctx context.Context, r *http.Request, token, code string) (int64, error) {
+// (single-use) and returns the resolved user id, plus whether a RECOVERY code rather than
+// a TOTP code is what cleared the challenge — the caller records that separately, because
+// break-glass being spent is a different event from a routine sign-in and this is the only
+// layer that can still tell them apart. Every failure path is explicit: unknown/expired
+// token, client rebinding, exhausted attempts, or a bad code. A bad code increments the
+// per-token counter and deletes the token once exhausted, so a captured token cannot be
+// ground against 10^6 codes.
+func (c *mfaChallenger) redeem(ctx context.Context, r *http.Request, token, code string) (int64, bool, error) {
 	if c == nil || c.mfa == nil || c.store == nil {
-		return 0, errMfaChallengeInvalid
+		return 0, false, errMfaChallengeInvalid
 	}
 	key := mfaChallengePrefix + token
 	var entry mfaPendingEntry
 	found, err := c.store.Get(ctx, key, &entry)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	if !found || entry.UserId == 0 {
-		return 0, errMfaChallengeInvalid
+		return 0, false, errMfaChallengeInvalid
 	}
 	// Reject if the token is replayed from a different client than it was issued to.
 	if subtle.ConstantTimeCompare([]byte(entry.Fingerprint), []byte(mfaFingerprint(r))) != 1 {
 		_ = c.store.Delete(ctx, key)
-		return 0, errMfaChallengeInvalid
+		return 0, false, errMfaChallengeInvalid
 	}
 
-	ok, err := c.mfa.VerifyCode(ctx, entry.UserId, code)
+	res, err := c.mfa.VerifyCode(ctx, entry.UserId, code)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
-	if !ok {
+	if !res.Ok {
 		entry.Attempts++
 		if entry.Attempts >= mfaChallengeMaxTry {
 			_ = c.store.Delete(ctx, key)
@@ -192,11 +195,11 @@ func (c *mfaChallenger) redeem(ctx context.Context, r *http.Request, token, code
 			// window; a short over-extension is harmless versus losing the counter.
 			_ = c.store.Set(ctx, key, entry, mfaChallengeTTL)
 		}
-		return 0, services.ErrMfaBadCode
+		return 0, false, services.ErrMfaBadCode
 	}
 
 	_ = c.store.Delete(ctx, key)
-	return entry.UserId, nil
+	return entry.UserId, res.UsedRecovery, nil
 }
 
 // mfaFingerprint binds a challenge to the client that requested it: the connecting

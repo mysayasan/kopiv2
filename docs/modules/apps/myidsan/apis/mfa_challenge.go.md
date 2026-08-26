@@ -49,8 +49,8 @@ have cleared the gate with none checked at all.
   itself — see `consume`.
 - `consume(ctx, token)` — deletes the token, making it single-use like the TOTP path's
   `redeem`. Called by `webauthnLoginFinish` only after the assertion verifies.
-- `redeem(ctx, r, token, code)` — verifies `(token, code)` from a follow-up
-  request (unchanged, TOTP-only path):
+- `redeem(ctx, r, token, code) (userId int64, usedRecovery bool, err error)` — verifies
+  `(token, code)` from a follow-up request:
   1. Unknown/expired token → `errMfaChallengeInvalid`.
   2. Client fingerprint mismatch (replayed from a different IP/User-Agent than the
      token was issued to) → the token is deleted and `errMfaChallengeInvalid` is
@@ -61,7 +61,10 @@ have cleared the gate with none checked at all.
      mfaChallengeMaxTry` (5) the token is deleted outright, so a captured token
      cannot be ground against 10^6 codes.
   4. Success deletes the token (**single-use**) and returns the resolved
-     `userId`.
+     `userId`, plus `MfaVerifyResult.UsedRecovery` — whether a recovery code rather than
+     TOTP is what cleared it. This is the only layer that still knows which kind was spent;
+     both callers (`login.go.md`'s `mfaLogin`, `federated_auth.go.md`'s `mfaPost`) use it to
+     record `services.ActionMfaRecovery` separately from an ordinary sign-in.
 - `mfaFingerprint(r)` — SHA-256 of `loginGuardKey(r) + "\x00" + r.UserAgent()`,
   base64-encoded; binds a challenge to the client that requested it using the
   connecting IP (never a spoofable forwarded header — reuses the same key

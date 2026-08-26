@@ -66,16 +66,24 @@ section for the twin PUBLIC JSON endpoints this page's inline JS calls.
   token (re-rendering the challenge with "that form expired" on a mismatch), checks
   `guardLocked` — source-IP key only, since this step presents a challenge token rather
   than a username (rendering the challenge again with a `429` "too many failed
-  attempts" message if locked) — then calls `m.mfa.redeem(ctx, r, token, code)`:
+  attempts" message if locked) — then calls `m.mfa.redeem(ctx, r, token, code)`, which now
+  also returns `usedRecovery`:
   - `services.ErrMfaBadCode` → sleeps the guard's failure delay, records the
     failure, and re-renders the challenge (`401`) with "That code did not match" —
-    the token survives so the user can retry until it hits its attempt cap or TTL.
+    the token survives so the user can retry until it hits its attempt cap or TTL. Also
+    records `services.ActionMfaChallenge` / `OutcomeDenied` via the new `recordAuth`
+    helper (below) — under its own action rather than `login.failure`, since whoever is
+    grinding codes here has already cleared the password, a different and later incident.
   - Any other error (expired/exhausted/rebound token) → redirects to
     `/api/auth/login?error=sso_failed` (preserving `continue`) — the whole login
     restarts, mirroring a failed Kerberos attempt.
   - Success records the guard success, reloads the account (`loadActiveUserById`,
-    re-checking `IsActive`), and calls `issueProviderSession` + redirects to
-    `continueTo` — the session `loginPost` withheld.
+    re-checking `IsActive`); if `usedRecovery` is true, also records
+    `services.ActionMfaRecovery` (`Metadata: {method: recovery_code, surface: "browser"}`,
+    via `recordAuth`) — the browser-leg twin of `login.go.md`'s `recordRecoveryLogin`, since
+    without it a break-glass sign-in on this surface looks exactly like any other — then
+    calls `issueProviderSession` + redirects to `continueTo` — the session `loginPost`
+    withheld.
 - `continueQuery(continueTo)` is a small helper that renders `&continue=<escaped>`
   for the `sso_failed` redirect, omitted for the root path.
 - `jsString(value string) string` renders a Go string as a JSON literal safe to embed in
@@ -277,6 +285,12 @@ using a stolen one looks like. A trail holding only successes cannot show either
 `recordSso` is nil-safe and never fails the request: an identity server that refuses to sign
 somebody in because it could not write a log line has turned an observability problem into an
 outage.
+
+`recordAuth(r, e services.AuditEntry)` is the newer, narrower sibling used by `mfaPost`
+(above) for the two second-factor events (a refused code, a recovery-code burn): separate
+from `recordSso` because those entries are **federation** events targeting a client id,
+whereas these target the account and would be unreadable filed under an `sso_client` field
+with no client to name. Same nil-safety and client-context resolution as `recordSso`.
 
 **Why the unit tests did not catch this.** `login_federated_audit_test.go` exists and passes —
 it covers the credential step, which was always audited. Nothing crossed the boundary between

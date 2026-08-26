@@ -38,6 +38,17 @@ type MfaStatus struct {
 	RecoveryRemaining int    `json:"recoveryRemaining"`
 }
 
+// MfaVerifyResult is the outcome of checking one second-factor code. It reports not just
+// whether the code was accepted but WHICH KIND was spent, because the two are different
+// events to whoever reads the trail: a TOTP code is the routine case, while a recovery code
+// is break-glass — a scarce, single-use secret that is gone once burned, and whose use is
+// the strongest available signal that someone has lost (or taken over) an authenticator.
+// Collapsed into a bare bool, the two are indistinguishable after the fact.
+type MfaVerifyResult struct {
+	Ok           bool
+	UsedRecovery bool
+}
+
 // MfaEnrollChallenge is handed back once, at the start of enrollment: the base32
 // secret for manual entry, the otpauth URI, and a rendered QR PNG (base64). The
 // factor it describes is UNCONFIRMED until the user proves a code.
@@ -62,8 +73,10 @@ type IMfaService interface {
 	ConfirmEnroll(ctx context.Context, userId int64, code string) ([]string, error)
 	// VerifyCode checks a code against a CONFIRMED factor: first TOTP (advancing the
 	// replay guard), then an unused recovery code (consuming it). This is the single
-	// verification path used by the login challenge and by self-service teardown.
-	VerifyCode(ctx context.Context, userId int64, code string) (bool, error)
+	// verification path used by the login challenge and by self-service teardown, so it
+	// is also the only place that knows a recovery code was burned — hence the result
+	// carries the kind rather than a bare bool.
+	VerifyCode(ctx context.Context, userId int64, code string) (MfaVerifyResult, error)
 	// RegenerateRecovery issues a fresh recovery-code set, invalidating the old one.
 	RegenerateRecovery(ctx context.Context, userId int64) ([]string, error)
 	// Disable removes the user's factor and all recovery codes (self-service teardown
@@ -229,13 +242,13 @@ func (m *mfaService) ConfirmEnroll(ctx context.Context, userId int64, code strin
 	return m.replaceRecoveryCodes(ctx, userId)
 }
 
-func (m *mfaService) VerifyCode(ctx context.Context, userId int64, code string) (bool, error) {
+func (m *mfaService) VerifyCode(ctx context.Context, userId int64, code string) (MfaVerifyResult, error) {
 	factor, err := m.loadFactor(ctx, userId)
 	if err != nil {
-		return false, err
+		return MfaVerifyResult{}, err
 	}
 	if factor == nil || factor.ConfirmedAt == 0 {
-		return false, ErrMfaNotEnrolled
+		return MfaVerifyResult{}, ErrMfaNotEnrolled
 	}
 
 	// TOTP first: cheapest, and the common case.
@@ -246,13 +259,17 @@ func (m *mfaService) VerifyCode(ctx context.Context, userId int64, code string) 
 		factor.LastUsedAt = now
 		factor.UpdatedAt = now
 		if _, err := m.factors.UpdateById(ctx, "", *factor); err != nil {
-			return false, err
+			return MfaVerifyResult{}, err
 		}
-		return true, nil
+		return MfaVerifyResult{Ok: true}, nil
 	}
 
 	// Fall back to a single-use recovery code.
-	return m.consumeRecoveryCode(ctx, userId, code)
+	ok, err := m.consumeRecoveryCode(ctx, userId, code)
+	if err != nil {
+		return MfaVerifyResult{}, err
+	}
+	return MfaVerifyResult{Ok: ok, UsedRecovery: ok}, nil
 }
 
 func (m *mfaService) RegenerateRecovery(ctx context.Context, userId int64) ([]string, error) {
