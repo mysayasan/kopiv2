@@ -36,3 +36,12 @@ The `validateSession` function no longer checks whether the session-stored `Role
 - `ClaimsFromToken(ctx, rawToken)` validates a raw bearer/cookie token for service-to-service introspection.
 - `IssueAuthCookies(w, r, claims)` writes the auth and CSRF cookies.
 - `ClearAuthCookies(w, r)` expires both secure and local-development cookie names.
+
+## Relying-app revocation (`SetRevocationChecker`)
+
+`validateSession` answers entirely from THIS app's session cache, which is exactly the problem
+when this app is a relying party: the identity server can end a session and this cache never hears
+about it. An optional `RevocationChecker` (`revocation.go.md`) re-asks on a TTL as the last step of
+`validateSession`, and is attached after construction with `SetRevocationChecker` because apphost
+builds this middleware for every app before any app wires its own services. An app that wires none
+is bit-for-bit unchanged.

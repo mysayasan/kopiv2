@@ -63,7 +63,12 @@ type federatedAuthApi struct {
 	metrics          telemetry.Metrics
 	// audit records WHICH APP an account was let into, and every refusal along the way. May
 	// be nil (tests), and every call site is nil-safe through recordSso.
-	audit          services.IAuditService
+	audit services.IAuditService
+	// sessions indexes the sessions this page issues. Without it the SERVER-RENDERED login
+	// page — where every relying app's SSO redirect lands, so the way almost everybody
+	// actually signs in — produced sessions that no administrator could list or revoke.
+	// See session_index.go.
+	sessions       services.ISessionService
 	trustedProxies []*net.IPNet
 }
 
@@ -139,6 +144,7 @@ func NewFederatedAuthApi(
 	metrics telemetry.Metrics,
 	webauthnService services.IWebAuthnService,
 	audit services.IAuditService,
+	sessions services.ISessionService,
 	trustedProxies []string,
 ) {
 	// The challenger must see BOTH factor kinds. Wiring only TOTP here was an MFA bypass:
@@ -167,6 +173,7 @@ func NewFederatedAuthApi(
 		accessTokenTTL:   secondsDuration(configInt(cfg, "accessToken"), defaultAccessTokenTTLSeconds),
 		defaultSessionTL: secondsDuration(configInt(cfg, "session"), defaultFederatedSessionTTL),
 		metrics:          metrics,
+		sessions:         sessions,
 		audit:            audit,
 		trustedProxies:   middlewares.ParseTrustedProxies(trustedProxies),
 	}
@@ -185,6 +192,9 @@ func NewFederatedAuthApi(
 	group.HandleFunc("/reset", handler.resetPage).Methods("GET")
 	group.HandleFunc("/reset", handler.resetPost).Methods("POST")
 	group.HandleFunc("/token", handler.token).Methods("POST")
+	// How a relying app learns that a session it is serving has been revoked here. See
+	// sessionStatus for why this exists alongside /api/sso/introspect rather than reusing it.
+	group.HandleFunc("/session-status", handler.sessionStatus).Methods("POST")
 }
 
 // recordSso writes one federation event. Nil-safe, and deliberately never fails the request:
@@ -1228,7 +1238,8 @@ func (m *federatedAuthApi) issueProviderSession(w http.ResponseWriter, r *http.R
 	if name == "" {
 		name = user.Email
 	}
-	return m.auth.IssueAuthCookies(w, r, models.JwtCustomClaims{
+	expiresAt := time.Now().Add(m.defaultSessionTL)
+	claims := models.JwtCustomClaims{
 		Id:            user.Id,
 		Name:          name,
 		GivenName:     user.FirstName,
@@ -1238,9 +1249,23 @@ func (m *federatedAuthApi) issueProviderSession(w http.ResponseWriter, r *http.R
 		Picture:       user.PicUrl,
 		RoleId:        user.UserRoleId,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(m.defaultSessionTL)),
+			ExpiresAt: jwt.NewNumericDate(expiresAt),
 		},
-	})
+	}
+	// THE ONE THAT MATTERED. This page is where a relying app's SSO hop lands, so nearly
+	// every real session in the estate is issued here — and none of them were indexed. A
+	// live bench signed a user in through the whole authorization-code flow and then found
+	// both the user's own session list and the administrator's listing for that account
+	// EMPTY, while the user was demonstrably signed in at the relying app. Revoking answered
+	// {"ok":true,"revoked":0}: success, having done nothing.
+	if err := mintSessionId(&claims, m.sessions); err != nil {
+		return err
+	}
+	if err := m.auth.IssueAuthCookies(w, r, claims); err != nil {
+		return err
+	}
+	indexIssuedSession(r, m.sessions, user.Id, claims.SessionId, expiresAt, m.trustedProxies)
+	return nil
 }
 
 func decodeTokenRequest(w http.ResponseWriter, r *http.Request) (tokenRequest, error) {

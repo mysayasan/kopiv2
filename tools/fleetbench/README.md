@@ -82,6 +82,7 @@ python tools/fleetbench/idsan_harness.py       # RE-STAND between them (see belo
 python tools/fleetbench/bench_idsan_backup.py  # disaster recovery across two hosts
 python tools/fleetbench/bench_idsan_lockout.py # the lockout, against a real 2-node CLUSTER
 python tools/fleetbench/bench_myseliasan_lockout.py  # myseliasan's lockout — it had NONE
+python tools/fleetbench/bench_idsan_session_revoke.py # does a revoke reach the RELYING app?
 ```
 
 `bench_idsan_lockout.py` is the only myidsan bench that stands up a **cluster**: a Postgres
@@ -194,6 +195,40 @@ rebuilding a binary under a running container):
 - myseliasan's local sign-in is `POST /api/auth/local-login` and its change-password is
   `POST /api/auth/change-password` — **not** myidsan's `/api/login/default`. Its password
   minimum is **8** characters, not myidsan's 12.
+
+`bench_idsan_session_revoke.py` runs on the ordinary `idsan_harness.py` stand-up and drives
+**two real processes**: it signs a real account in through the whole authorization-code flow,
+then asks whether revoking at myidsan reaches the app the user is actually holding open. It
+scored **18/27 against main and 27/27 against the fix**.
+
+Traps, each of which cost a wrong answer first:
+
+- **Cookies ignore ports.** myidsan and the relying app are the same host IP on two ports and
+  both set a session cookie under the same name, so ONE `requests.Session` driving the flow
+  keeps whichever was written last and every later assertion silently measures the wrong app.
+  `sign_in_through_sso()` returns TWO jars, captured from the two responses that set them.
+  Without that split, "dead at myidsan" and "dead at the relying app" are one confused
+  question.
+- **`/api/sso/introspect` cannot answer about the relying app's cookie.** It validates a token
+  with *myidsan's* key, and the relying app mints its own under its own key — so it replies
+  `{"active":false,"reason":"token signature is invalid"}`, which is correct and reads exactly
+  like a revoked session. The first run of this bench believed it. Decode the relying app's JWT
+  locally for the session id (unverified, purely to know what to ask the SERVER about) and let
+  every verdict come from a real request.
+- **Use a REAL second account.** An earlier draft ran everything as the stock admin, so
+  "revoke every session for this user" also signed the OPERATOR out; the audit read that
+  followed came back empty and looked like a missing trail. Create the victim via
+  `POST /api/user-credential` with `userRoleId` set — a new account with **no** role lands in
+  pending-clearance and cannot complete the flow.
+- **Revocation is bounded, not instant, and the bench must say which.** The relying app
+  re-asks on `sso.policyCacheTtlSeconds` (30s) rather than per request. Asserting an instant
+  fails against correct behaviour; this bench MEASURES the window instead and asserts it is
+  within the configured one (30.7s observed). Hiding it behind a `sleep` would have documented
+  nothing, and the delay is exactly what an operator revoking access in an emergency needs to
+  know.
+- The first defect masks the second. Until sessions are indexed, `revoke` reports
+  `{"revoked":0}` and every downstream check fails for that reason instead of its own — fix
+  the indexing, re-run, and only then read the relying-app result.
 
 `bench_idsan_mfa.py` needs a **freshly stood-up harness**: it enrols a second factor on the
 stock superadmin, and its first check is that the account starts without one. Run

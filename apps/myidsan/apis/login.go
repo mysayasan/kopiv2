@@ -1227,6 +1227,7 @@ func (m *loginApi) setOAuthSession(w http.ResponseWriter, r *http.Request, user 
 		name = user.Email
 	}
 
+	expiresAt := time.Now().Add(time.Hour * 72)
 	claims := &models.JwtCustomClaims{
 		Id:            user.Id,
 		Name:          name,
@@ -1237,11 +1238,20 @@ func (m *loginApi) setOAuthSession(w http.ResponseWriter, r *http.Request, user 
 		Picture:       identity.Picture,
 		RoleId:        user.UserRoleId,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour * 72)),
+			ExpiresAt: jwt.NewNumericDate(expiresAt),
 		},
 	}
 
-	return m.auth.IssueAuthCookies(w, r, *claims)
+	// A social sign-in is a session like any other, and was not indexed — so an account that
+	// signs in with Google could not be signed out by an administrator at all.
+	if err := mintSessionId(claims, m.sessions); err != nil {
+		return err
+	}
+	if err := m.auth.IssueAuthCookies(w, r, *claims); err != nil {
+		return err
+	}
+	m.recordSession(r, user, claims.SessionId, expiresAt)
+	return nil
 }
 
 func oauthContinueCookieName(provider string) string {
@@ -1336,15 +1346,9 @@ func (m *loginApi) issueSessionCookies(w http.ResponseWriter, r *http.Request, u
 	}
 
 	// Pre-generate the session id so this app can index the session it is about to issue.
-	// IssueAuthCookies mints one only when the field is empty and never reports it back,
-	// so without this the caller cannot know which session it just created — and an
-	// unindexed session is one no administrator can list or revoke.
-	if m.sessions != nil {
-		sessionId, err := newFederatedOpaqueToken()
-		if err != nil {
-			return err
-		}
-		claims.SessionId = sessionId
+	// See session_index.go for why, and for the two paths that were missing this entirely.
+	if err := mintSessionId(claims, m.sessions); err != nil {
+		return err
 	}
 
 	if err := m.auth.IssueAuthCookies(w, r, *claims); err != nil {
@@ -1354,20 +1358,10 @@ func (m *loginApi) issueSessionCookies(w http.ResponseWriter, r *http.Request, u
 	return nil
 }
 
-// recordSession indexes an issued session so it can later be listed and revoked. The
-// session is already live at this point, so a failure here must not undo it — the service
-// swallows and logs its own write errors for that reason.
+// recordSession indexes an issued session so it can later be listed and revoked.
 func (m *loginApi) recordSession(r *http.Request, user *entities.UserLogin, sessionId string, expiresAt time.Time) {
-	if m.sessions == nil || user == nil || strings.TrimSpace(sessionId) == "" {
+	if user == nil {
 		return
 	}
-	ip, ua := auditContext(r, m.trustedProxies)
-	m.sessions.Record(r.Context(), entities.UserSession{
-		SessionId:   sessionId,
-		UserLoginId: user.Id,
-		ExpiresAt:   expiresAt.Unix(),
-		IpAddress:   ip,
-		UserAgent:   ua,
-		CreatedBy:   user.Id,
-	})
+	indexIssuedSession(r, m.sessions, user.Id, strings.TrimSpace(sessionId), expiresAt, m.trustedProxies)
 }

@@ -296,3 +296,22 @@ with no client to name. Same nil-safety and client-context resolution as `record
 it covers the credential step, which was always audited. Nothing crossed the boundary between
 the two apps, which is where the gap was. Found by `tools/fleetbench/bench_idsan_sso.py`, the
 first live exercise this app has ever had.
+
+## Session indexing (`issueProviderSession`)
+
+This page is where a relying app's SSO hop lands, so nearly every real session in the estate is
+issued here — and until a live bench went looking, **none of them were indexed**. `issueProviderSession`
+called `IssueAuthCookies` and returned, so the session had no `user_session` row: it could not be
+listed by its owner, could not be seen by an administrator, and could not be revoked. Revoking
+answered `{"ok":true,"revoked":0}` — success, having done nothing.
+
+It now pre-mints the session id and indexes it through the shared helper in
+`apps/myidsan/apis/session_index.go.md`. The constructor gained a `sessions services.ISessionService`
+parameter for it; passing nil leaves the behaviour exactly as it was, which is what the tests do.
+
+## `POST /api/auth/session-status`
+
+Mounted on this router (`sessionStatus`, implemented in `session_status.go`): how a relying app
+learns that a session it is still serving has been revoked at this server. Authenticated with the
+same `client_id`/`client_secret` pair `/api/auth/token` accepts. See
+`apps/myidsan/apis/session_status.go.md`.
