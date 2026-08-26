@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"html"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -59,6 +60,10 @@ type federatedAuthApi struct {
 	accessTokenTTL   time.Duration
 	defaultSessionTL time.Duration
 	metrics          telemetry.Metrics
+	// audit records WHICH APP an account was let into, and every refusal along the way. May
+	// be nil (tests), and every call site is nil-safe through recordSso.
+	audit          services.IAuditService
+	trustedProxies []*net.IPNet
 }
 
 // recordTokenExchange counts one authorization-code redemption by outcome.
@@ -132,6 +137,8 @@ func NewFederatedAuthApi(
 	resetService services.IPasswordResetService,
 	metrics telemetry.Metrics,
 	webauthnService services.IWebAuthnService,
+	audit services.IAuditService,
+	trustedProxies []string,
 ) {
 	// The challenger must see BOTH factor kinds. Wiring only TOTP here was an MFA bypass:
 	// this server-rendered page is where a relying app's SSO hop lands, and an account whose
@@ -159,6 +166,8 @@ func NewFederatedAuthApi(
 		accessTokenTTL:   secondsDuration(configInt(cfg, "accessToken"), defaultAccessTokenTTLSeconds),
 		defaultSessionTL: secondsDuration(configInt(cfg, "session"), defaultFederatedSessionTTL),
 		metrics:          metrics,
+		audit:            audit,
+		trustedProxies:   middlewares.ParseTrustedProxies(trustedProxies),
 	}
 
 	group := router.PathPrefix("/auth").Subrouter()
@@ -177,6 +186,28 @@ func NewFederatedAuthApi(
 	group.HandleFunc("/token", handler.token).Methods("POST")
 }
 
+// recordSso writes one federation event. Nil-safe, and deliberately never fails the request:
+// an identity server that refuses to sign somebody in because it could not write a log line
+// has turned an observability problem into an outage.
+func (m *federatedAuthApi) recordSso(r *http.Request, action, clientID, outcome, detail string, user *entities.UserLogin) {
+	if m.audit == nil {
+		return
+	}
+	entry := services.AuditEntry{
+		Action:     action,
+		TargetType: "sso_client",
+		TargetId:   strings.TrimSpace(clientID),
+		Outcome:    outcome,
+		Detail:     detail,
+		Metadata:   map[string]any{"clientId": strings.TrimSpace(clientID)},
+	}
+	if user != nil {
+		entry.ActorId, entry.ActorEmail, entry.ActorRole = user.Id, user.Email, user.UserRoleId
+	}
+	entry.ClientIp, entry.UserAgent = auditContext(r, m.trustedProxies)
+	m.audit.Record(r.Context(), entry)
+}
+
 func (m *federatedAuthApi) authorize(w http.ResponseWriter, r *http.Request) {
 	req, err := m.parseAuthorizeRequest(r)
 	if err != nil {
@@ -186,14 +217,23 @@ func (m *federatedAuthApi) authorize(w http.ResponseWriter, r *http.Request) {
 
 	client, app, err := m.loadClient(r.Context(), req.clientID)
 	if err != nil {
+		// An unknown client is either a misconfigured app or somebody probing. Both are
+		// worth a line, and neither is visible anywhere else.
+		m.recordSso(r, services.ActionSsoRefused, req.clientID, services.OutcomeDenied, err.Error(), nil)
 		controllers.SendError(w, controllers.ErrLimitedAccess, err.Error())
 		return
 	}
 	if err := m.validateRedirectURI(r.Context(), client.Id, req.redirectURI); err != nil {
+		// THE ONE MOST WORTH RECORDING. An unregistered redirect URI is what an attempt to
+		// have somebody's authorization code delivered elsewhere looks like.
+		m.recordSso(r, services.ActionSsoRefused, req.clientID, services.OutcomeDenied,
+			err.Error()+": "+req.redirectURI, nil)
 		controllers.SendError(w, controllers.ErrLimitedAccess, err.Error())
 		return
 	}
 	if req.audience != "" && !strings.EqualFold(req.audience, app.Audience) {
+		m.recordSso(r, services.ActionSsoRefused, req.clientID, services.OutcomeDenied,
+			"audience not registered for client: "+req.audience, nil)
 		controllers.SendError(w, controllers.ErrLimitedAccess, "audience not registered for client")
 		return
 	}
@@ -242,6 +282,14 @@ func (m *federatedAuthApi) authorize(w http.ResponseWriter, r *http.Request) {
 		q.Set("state", req.state)
 	}
 	redirectURL.RawQuery = q.Encode()
+	// THE LINE THE TRAIL WAS MISSING. Until now the trail said an account signed in and
+	// stopped there; it never said what that sign-in opened. Recorded with the ACCOUNT and
+	// the APP together, because the question this has to answer later is "which applications
+	// did this account reach", and neither half answers it alone.
+	m.recordSso(r, services.ActionSsoAuthorize, client.ClientId, services.OutcomeSuccess,
+		"authorization code issued for "+app.Code, &entities.UserLogin{
+			Id: claims.Id, Email: claims.Email, UserRoleId: claims.RoleId,
+		})
 	http.Redirect(w, r, redirectURL.String(), http.StatusFound)
 }
 
@@ -1001,6 +1049,11 @@ func (m *federatedAuthApi) token(w http.ResponseWriter, r *http.Request) {
 	}
 	if !found || entry.Code == "" || time.Now().UTC().After(entry.ExpiresAt) {
 		m.recordTokenExchange(services.TokenExchangeCodeInvalid)
+		// A code that is expired, unknown, or ALREADY SPENT. The last of those is a replay,
+		// and a replay is the whole reason a code is single-use — so it is written down
+		// rather than only counted in a metric nobody reads at 3am.
+		m.recordSso(r, services.ActionSsoRefused, body.ClientID, services.OutcomeDenied,
+			"authorization code not valid (expired, unknown, or already used)", nil)
 		controllers.SendError(w, controllers.ErrLimitedAccess, "authorization code not valid")
 		return
 	}
@@ -1048,6 +1101,10 @@ func (m *federatedAuthApi) token(w http.ResponseWriter, r *http.Request) {
 	}
 
 	m.recordTokenExchange(services.TokenExchangeSuccess)
+	m.recordSso(r, services.ActionSsoTokenIssue, client.ClientId, services.OutcomeSuccess,
+		"access token issued for "+entry.AppCode, &entities.UserLogin{
+			Id: entry.UserID, Email: entry.Email,
+		})
 	controllers.SendResult(w, tokenResponse{
 		AccessToken:   token,
 		TokenType:     "Bearer",

@@ -27,6 +27,23 @@ const (
 	ActionLoginLockout  = "login.lockout"
 	ActionLogout        = "login.logout"
 	ActionMfaChallenge  = "login.mfa_challenge"
+
+	// FEDERATION — who was let INTO WHICH APP.
+	//
+	// The trail already said an account signed in. It did not say what that sign-in opened,
+	// and on an identity server those are different facts: a credential check happens once,
+	// and the access it is then traded for happens per relying app. In an incident — "this
+	// account was compromised, what did it reach?" — the identity server is the only party
+	// that knows, and until these existed it was the only party that did not write it down.
+	// Every relying app saw a session appear from nowhere.
+	//
+	// The refusals are recorded for the same reason and are arguably the more useful half:
+	// an unregistered redirect URI, an unknown client and a replayed authorization code are
+	// what an attack against this flow LOOKS like, and a trail that only holds successes
+	// cannot show one.
+	ActionSsoAuthorize  = "sso.authorize"
+	ActionSsoTokenIssue = "sso.token_issue"
+	ActionSsoRefused    = "sso.refused"
 	ActionPasswordReset = "password.reset"
 
 	// Second factor.

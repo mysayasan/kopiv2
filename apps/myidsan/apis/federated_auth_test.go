@@ -243,6 +243,8 @@ func TestAuthorizeRedirectsRegisteredClientWithoutSessionToLogin(t *testing.T) {
 		nil, // no password-reset service: the forgot/reset paths are nil-safe in tests
 		nil, // no metrics recorder: token-exchange counting is nil-safe in tests
 		nil, // no security-key service: the challenge path is nil-safe and off in these tests
+		nil, // no audit service: the federation trail is nil-safe in tests
+		nil, // no trusted proxies: the client address is taken straight off the connection
 	)
 
 	rr := httptest.NewRecorder()

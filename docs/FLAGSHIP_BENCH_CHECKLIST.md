@@ -2029,3 +2029,68 @@ evaluated, React mounted into `#root`, and every design token the stylesheet dec
 * **The advisories were cleared, not audited.** Nothing here reviews what the upgraded packages
   changed; it establishes that the versions with known advisories are gone and the apps still
   build, mount and pass their screen checks.
+---
+
+## myidsan — the sign-in every other app depends on (`idsan_harness.py`, `bench_idsan_sso.py`)
+
+19/19. **The first live exercise myidsan has ever had.** It is the SSO server: if it is wrong,
+every app is wrong — and it had a third of the flagships' unit coverage and no bench at all.
+
+### What is stood up
+
+myidsan AND a real relying app (myseliasan), plus a real redis, because myidsan's shipped
+config names redis as its cache provider and **the cache is the session authority here** — the
+table is only an index. Swapping in the in-process cache would bench a deployment nobody ships.
+
+**The awkward part is addressing.** An authorization-code flow has three parties who must agree
+on one URL per app: the browser follows a redirect to myidsan, then the relying app calls
+myidsan *server to server* to exchange the code. `127.0.0.1` means "myself" inside a container;
+`host.docker.internal` does not resolve on the host. The harness uses the host's **LAN address**,
+discovered at runtime, with a certificate that names it.
+
+### What is measured
+
+The whole flow across two processes, ending in a session the relying app itself accepts and
+reports as federated. Then **identity is not authorization**: a user arriving through SSO for
+the first time must get NO role and NO permissions and be held pending. Then every refusal —
+an unregistered redirect URI (a trailing slash is a different place to send somebody's
+credentials), an unknown client, an audience the client is not registered for, the wrong client
+secret, a **replayed** authorization code, introspection without the shared token, a wrong
+password, and a password below the policy.
+
+### What it found
+
+**The trail said an account signed in. It never said what that sign-in OPENED.** On an identity
+server those are different facts: the credential check happens once, and the access it is traded
+for happens per relying app. `apis/federated_auth.go` — the entire authorize/token path — made
+no audit calls at all, so "this account was compromised, which applications did it reach?" was a
+question only myidsan could answer and the one party that did not write it down. Every relying
+app just saw a session appear.
+
+Fixed with `sso.authorize`, `sso.token_issue` and `sso.refused`, recording the client and the
+account **together** (neither half answers the question alone). The refusals are arguably the
+more useful half: an unregistered redirect URI, an unknown client and a replayed code are what
+an attack on this flow looks like, and a trail holding only successes cannot show one.
+
+Its own unit tests for federated login audit exist and pass — they cover the *credential* step,
+which was always audited. Nothing noticed the *authorization* step because no test crossed the
+boundary between the two apps.
+
+### And two the bench found in ITSELF
+
+* **The envelope trap, for the fourth time in this programme.** `/api/audit` answers
+  `{data:{result:[…]}}`; reading `{result:{items:[…]}}` returned zero entries for a trail that
+  was working perfectly. `result_list` exists for exactly this.
+* **The harness behaved differently on its second run** — the data dirs survived and it tripped
+  over its own registrations. It now wipes them, because a harness that behaves differently on
+  a re-run is one whose failures people start explaining away.
+
+### Not claimed
+
+* **One relying app, one flow.** LDAP, Kerberos, the social providers, WebAuthn, MFA enrolment,
+  step-up and backup/restore are all untouched here. See [[myidsan-sso-bench-recipe]] and
+  [[myidsan-ldap-bench-openldap]] for the directory-server side.
+* **No screen.** myidsan's SPA is only proved to mount (`uicheck_bundle.js`); nothing here
+  drives its administration screens.
+* **The lockout is not exercised.** The bench turns the rate limiter off so its own refusal
+  checks reach the handler, and the per-account lockout guard was not driven.
