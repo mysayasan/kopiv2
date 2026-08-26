@@ -905,7 +905,27 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		deps.Logger.Warnf("myseliasan.audit", format, args...)
 	})
 
-	apis.NewAuthApi(api, deps.Config, deps.Auth, deps.Cache, userService)
+	// The failed-login lockout. This app shipped without one: /api/auth/local-login checked
+	// the password and returned, so the only brute-force control on the console that owns
+	// every camera in the estate was the generic rate limiter — 30 attempts a minute, per
+	// source, per instance, refilling forever. A live two-instance bench served thirteen
+	// consecutive guesses and then accepted the correct password as though nothing had
+	// happened, and left not one line in the audit trail about any of it.
+	//
+	// Shared through the cache so it spans a clustered deployment. myseliasan is Tier A
+	// clusterable with a Settings panel for declaring it, and a per-process map would mean an
+	// attacker's budget multiplies by the instance count while a locked-out user simply lands
+	// on another instance and signs in — which is the defect this same guard was given a
+	// shared store to fix on myidsan (#206).
+	loginGuard := sharedapis.NewLoginGuardFor(deps.Config.LoginSecurity.Effective())
+	if sharedservices.IsSharedCacheProvider(deps.Config.Cache.Provider) {
+		// Namespaced per app: a lockout on the identity server is not a lockout on the fleet
+		// console. They are different credentials against different stores, and the two apps
+		// are routinely pointed at one redis.
+		loginGuard = loginGuard.WithSharedStore(deps.Cache, "myseliasan")
+	}
+
+	apis.NewAuthApi(api, deps.Config, deps.Auth, deps.Cache, userService, loginGuard, auditService)
 	apis.NewSessionApi(api, *deps.Auth, userService, roleService, deps.AccessPerms)
 	apis.NewRbacAdminApi(api, *deps.Auth, controlSession, roleService, userService, auditService)
 	apis.NewAuditApi(api, *deps.Auth, controlSession, auditService)
@@ -1199,6 +1219,11 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 				AtRestFingerprint: secretKeyStore.Fingerprint(),
 				CachePing:         sharedservices.PingFunc(deps.Cache),
 				LockPing:          sharedservices.PingFunc(deps.Locker),
+				// The failed-login lockout: on, and shared across the cluster. Before this
+				// app had a guard at all these both read false, and the checklist would have
+				// told the operator so — which is the point of putting it on the list.
+				LoginGuardEnabled: loginGuard.Enabled(),
+				LoginGuardShared:  loginGuard.SharesState(),
 				ExtraChecks:       llmSidecarDeploymentCheck(deps),
 			}
 		})

@@ -4,6 +4,20 @@ import { BrandLogo, LoginHelpLink } from './layout';
 import { FormBusyOverlay, Message } from './ui';
 import { api } from '../lib/helpers';
 
+// A lockout answers 429 with the remaining wait in the body (retryAfterSeconds) as well as
+// in Retry-After, because a browser cannot read the header without an explicit
+// Access-Control-Expose-Headers and a countdown that shows nothing reads as a broken app.
+//
+// Translated HERE rather than shown as the server's sentence: this app ships in four
+// languages and the server sends one. Falling back to the server's message keeps a future
+// refusal we do not know about readable instead of blank.
+function lockoutMessage(t, r, fallback) {
+  const secs = Number(r?.body?.retryAfterSeconds);
+  if (r?.status !== 429 || !Number.isFinite(secs) || secs < 1) return fallback;
+  if (secs >= 90) return t('auth.lockedMinutes', { minutes: Math.ceil(secs / 60) });
+  return t('auth.lockedSeconds', { seconds: secs });
+}
+
 // The three pre-app screens (sign-in, forced password change, pending clearance) all
 // wear the same chrome as mymatasan's login: a centered .login-panel card under the
 // large brand mark, with the language switcher pinned to the top corner so a user can
@@ -65,7 +79,7 @@ export function LoginScreen({ onLoggedIn, lang, onLangChange }) {
     }).catch(() => ({ ok: false }));
     setBusy(false);
     if (r.ok) onLoggedIn();
-    else setErr(r.message || t('auth.invalidCreds'));
+    else setErr(lockoutMessage(t, r, r.message || t('auth.invalidCreds')));
   }
 
   return (
@@ -123,7 +137,7 @@ export function ChangePasswordScreen({ onDone, onToast, onLogout, lang, onLangCh
     }).catch(() => ({ ok: false }));
     setBusy(false);
     if (r.ok) { if (onToast) onToast(t('auth.passwordUpdated')); onDone(); }
-    else setErr(r.message || t('auth.couldNotChange'));
+    else setErr(lockoutMessage(t, r, r.message || t('auth.couldNotChange')));
   }
 
   return (

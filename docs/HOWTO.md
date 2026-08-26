@@ -476,7 +476,8 @@ gap to be worked around:
 Every app exposes `GET /api/deployment/preflight`, a readiness checklist (db engine, shared
 cache/lock — pinged, not just name-checked, so an unreachable Redis fails the check rather than
 passing on the provider name alone — the at-rest encryption key's fingerprint, the JWT secret's
-provenance, and the per-instance DB connection pool budget). Tier A apps also expose `GET`/`POST
+provenance, the per-instance DB connection pool budget, and whether the failed-login lockout is on
+and shared). Tier A apps also expose `GET`/`POST
 /api/deployment/mode` to DECLARE the deployment as `standalone` (default) or `clustered`; declaring
 it changes the boot-time shared-state warning from an inference to a stated fact (a declared
 `clustered` install with a per-process cache or lock is now a hard `WARNING`, not a maybe). The
@@ -502,9 +503,31 @@ instance A locked an account after eight wrong passwords, and instance B then ev
 normally and went on to accept the CORRECT password — signing in a user the deployment was
 supposed to have locked out. Pointing `cache.provider` at Redis (the same setting the sessions
 guidance above already requires) is what enables the shared half; nothing further needs
-configuring, and a `memory` cache leaves the lockout exactly as per-process as it always was. This
-is not yet a row on the `GET /api/deployment/preflight` checklist. `myseliasan`, the other Tier A
-clusterable app, does not share its lockout state yet either.
+configuring, and a `memory` cache leaves the lockout exactly as per-process as it always was. It is
+now a **blocker row** on the `GET /api/deployment/preflight` checklist (`loginLockout`), reporting
+`shared` / `per-process` / `disabled` — which it was not when the fix above landed, even though the
+guard had been given a `SharesState()` accessor written for exactly that purpose. A checklist that
+exists to name per-process state stayed silent about the one it had just been taught, which is worth
+remembering the next time something is added "for the checklist to read".
+
+**`myseliasan` had no failed-login lockout at all** — not a per-process one, none. `POST
+/api/auth/local-login` checked the password and returned, so the only brute-force control on the
+console that owns every camera in the estate was the generic rate limiter: 30 requests a minute, per
+source, per path, per instance, refilling forever, never escalating, and blind to one account being
+attacked from many addresses. A live two-instance bench served **13 consecutive guesses** and then
+signed in with the correct password as though nothing had happened; `POST /api/auth/change-password`
+served **11 current-password guesses** to a stolen session cookie. It now runs the same guard on the
+same `loginSecurity` block, keyed on source *and* account, sharing state through `cache.provider`
+exactly as myidsan does. Note what this means on upgrade: an install that never had a lockout now
+enforces one with no configuration change, because an **absent** `loginSecurity` block resolves to
+enabled with the suite defaults. An operator who genuinely wants none must now say
+`"loginSecurity": {"enabled": false}` deliberately.
+
+**Terminate TLS at the app, or the lockout keys everyone together.** The guard reads the peer
+address from `RemoteAddr` and never `X-Forwarded-For`, because a forwarded header is
+attacker-controlled and believing it would let anyone step around their own lockout by changing a
+string. Behind a reverse proxy that does not terminate here, every user shares one source key; the
+per-account key still separates them, but the source half becomes useless.
 
 ### Leader election and the migration lock
 

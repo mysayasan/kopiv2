@@ -262,6 +262,11 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// because the checklist reports its key fingerprint — the value an operator compares
 	// between instances to confirm they can read each other's sealed columns.
 	deploymentModeService := sharedservices.NewDeploymentModeService(runtimeSettingRepo)
+	// Declared here, built further down where every credential surface it covers is in
+	// scope. The checklist closure below runs per REQUEST, so it reads whatever this holds
+	// by then; the alternative — moving the guard's construction up here — would separate it
+	// from the login APIs it exists for.
+	var loginGuard *sharedapis.LoginGuard
 	apis.NewDeploymentApi(api, *deps.Auth, deps.Access, deploymentModeService,
 		func() sharedservices.DeploymentEnv {
 			return sharedservices.DeploymentEnv{
@@ -275,6 +280,12 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 				AtRestFingerprint:  secretKeyStore.Fingerprint(),
 				CachePing:          sharedservices.PingFunc(deps.Cache),
 				LockPing:           sharedservices.PingFunc(deps.Locker),
+				// SharesState answers both halves at once: the guard is on AND its counters
+				// are somewhere every instance can see. It was written for this row in #206
+				// and, until now, nothing read it — so the checklist that exists to name
+				// per-process state stayed silent about the one it had just been taught.
+				LoginGuardEnabled: loginGuard.Enabled(),
+				LoginGuardShared:  loginGuard.SharesState(),
 			}
 		})
 
@@ -352,7 +363,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// wrong passwords, and instance B then evaluated a ninth normally and allowed a fresh
 	// eight — an attacker's budget multiplied by the instance count, and a lockout a
 	// legitimate user could walk around by landing on another instance.
-	loginGuard := sharedapis.NewLoginGuard(loginGuardConfig(deps))
+	loginGuard = sharedapis.NewLoginGuardFor(deps.Config.LoginSecurity.Effective())
 	if sharedservices.IsSharedCacheProvider(deps.Config.Cache.Provider) {
 		loginGuard = loginGuard.WithSharedStore(deps.Cache, "myidsan")
 	}
@@ -607,19 +618,6 @@ func openSecretCipher(deps apphost.Dependencies) (*atrest.Cipher, *atrest.KeySto
 	}
 	log.Printf("myidsan secret encryption enabled (key %s, mode %s, id %s)", keyPath, outcome.Mode, outcome.KeyId)
 	return outcome.KeyStore.Cipher(), outcome.KeyStore, nil
-}
-
-// loginGuardConfig maps the shared LoginSecurity config block onto the login guard.
-func loginGuardConfig(deps apphost.Dependencies) sharedapis.LoginGuardConfig {
-	ls := deps.Config.LoginSecurity.Effective()
-	return sharedapis.LoginGuardConfig{
-		Enabled:     ls.Enabled,
-		MaxAttempts: ls.MaxAttempts,
-		Window:      time.Duration(ls.WindowSeconds) * time.Second,
-		BaseLockout: time.Duration(ls.LockoutSeconds) * time.Second,
-		MaxLockout:  time.Duration(ls.LockoutMaxSeconds) * time.Second,
-		FailedDelay: time.Duration(ls.FailedDelayMs) * time.Millisecond,
-	}
 }
 
 // userLoginResolver adapts the myidsan user_login store to an accessrbac principal:

@@ -45,7 +45,8 @@ stays narrow enough that `infra/apphost` can import it without risking a cycle.
   - `env.Appliance` short-circuits to `PreflightReport{Clusterable: false, ApplianceReason: ...}`
     with an empty checklist — there is nothing to be ready FOR.
   - Otherwise runs, in order: `checkDbEngine`, `pingCheck` for `sharedCache`, `pingCheck` for
-    `sharedLock`, `checkAtRestKey`, `checkJwtSecret`, `checkDbPool`, then `env.ExtraChecks` (app-specific
+    `sharedLock`, `checkAtRestKey`, `checkJwtSecret`, `checkDbPool`, `checkLoginLockout`, then
+    `env.ExtraChecks` (app-specific
     addenda, e.g. myseliasan's LLM-sidecar-memory-multiplication warning). `Ready` is true only when
     no BLOCKER-severity check failed; a failed WARNING (e.g. the per-instance DB pool budget) does
     not clear it, since the deployment still works, just wastefully.
@@ -53,9 +54,9 @@ stays narrow enough that `infra/apphost` can import it without risking a cycle.
   a fingerprint, a connection count), never advice; the UI (four languages) owns the wording, and a
   value an operator can compare between two instances is exactly what a translation cannot supply.
   `Id` constants (`CheckDbEngine`, `CheckSharedCache`, `CheckSharedLock`, `CheckAtRestKey`,
-  `CheckJwtSecret`, `CheckDbPool`) are exported because the UI maps them to translated labels and
+  `CheckJwtSecret`, `CheckDbPool`, `CheckLoginLockout`) are exported because the UI maps them to translated labels and
   the manual anchors them — a typo'd id silently renders an untranslated row.
-- The six checks:
+- The seven checks:
   - `checkDbEngine` — BLOCKER. `sqlite` can never be clustered (pinned to one connection; the file
     is local to one host) — the one check no configuration can fix, so it is evaluated first.
   - `pingCheck` (used for both cache and lock) — BLOCKER. Combines "is this provider shared at
@@ -72,6 +73,16 @@ stays narrow enough that `infra/apphost` can import it without risking a cycle.
     instance invented its own. Deliberately reports no fingerprint, unlike the at-rest key — an
     operator-chosen JWT secret only clears a 16-character floor, so publishing even a fingerprint of
     a possibly-weak one would be an offline brute-force oracle for forging tokens.
+  - `checkLoginLockout` — BLOCKER, on both halves of the question, reading
+    `env.LoginGuardEnabled` / `env.LoginGuardShared` (supply `LoginGuard.Enabled()` /
+    `LoginGuard.SharesState()`). `Detail` is `shared` / `per-process` / `disabled`, because the
+    two failures have different fixes. A guard that is **off** means the deployment has no
+    brute-force control at all; a guard whose counters are **per-process** is worse than it looks,
+    because it still answers "locked" convincingly on the instance that counted the failures while
+    the attacker simply moves to the next one and the locked-out user does too. This row is the one
+    piece of per-process state the list did not name, which is how a lockout that multiplied an
+    attacker's budget by the instance count survived a checklist written to catch exactly that —
+    and how `myseliasan` ran with no lockout at all while reporting six healthy rows.
   - `checkDbPool` — WARNING only. Each instance opens its own connection pool against the same
     database server, so N instances claim N× the budget; the default of 25 is considerate for one
     process and inconsiderate for six.

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/mysayasan/kopiv2/infra/cache"
+	"github.com/mysayasan/kopiv2/infra/config"
 )
 
 // LoginGuardConfig tunes the failed-login lockout. Zero values are filled with
@@ -71,6 +72,27 @@ type LoginGuard struct {
 	// back to if the cache is unreachable.
 	store     cache.Store
 	namespace string
+}
+
+// NewLoginGuardFor builds a guard straight from the app's resolved loginSecurity block.
+//
+// Here rather than in each app's wiring because it is the same mapping every time and the
+// two apps that need it are the two whose lockouts have to agree. myseliasan grew a lockout
+// second (it had none at all) and the first thing it needed was this function, already
+// written once inside myidsan's app package.
+//
+// Note that Effective() resolves an ABSENT loginSecurity block to ON with defaults, so an app
+// that never mentions the block still gets a lockout — which is why myseliasan's config, which
+// has no such block, nonetheless already promised one.
+func NewLoginGuardFor(ls config.EffectiveLoginSecurity) *LoginGuard {
+	return NewLoginGuard(LoginGuardConfig{
+		Enabled:     ls.Enabled,
+		MaxAttempts: ls.MaxAttempts,
+		Window:      time.Duration(ls.WindowSeconds) * time.Second,
+		BaseLockout: time.Duration(ls.LockoutSeconds) * time.Second,
+		MaxLockout:  time.Duration(ls.LockoutMaxSeconds) * time.Second,
+		FailedDelay: time.Duration(ls.FailedDelayMs) * time.Millisecond,
+	})
 }
 
 // NewLoginGuard builds a guard from cfg. A nil result is never returned; callers

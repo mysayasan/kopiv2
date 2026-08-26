@@ -81,6 +81,7 @@ python tools/fleetbench/bench_idsan_mfa.py     # the second factor + step-up (FR
 python tools/fleetbench/idsan_harness.py       # RE-STAND between them (see below)
 python tools/fleetbench/bench_idsan_backup.py  # disaster recovery across two hosts
 python tools/fleetbench/bench_idsan_lockout.py # the lockout, against a real 2-node CLUSTER
+python tools/fleetbench/bench_myseliasan_lockout.py  # myseliasan's lockout — it had NONE
 ```
 
 `bench_idsan_lockout.py` is the only myidsan bench that stands up a **cluster**: a Postgres
@@ -121,6 +122,78 @@ Traps, all of which cost real time:
 - **Never rebuild the binary while containers are running from it.** The bind-mounted
   executable is overwritten under a running process and every instance dies with exit 139
   and no log line. `docker stop` first, build, then start.
+
+`bench_myseliasan_lockout.py` is the same shape aimed at the OTHER Tier A clusterable app,
+and it stands up its own everything — its own network (`selbench`), Postgres, Redis and two
+myseliasan instances — so it needs no prior harness run. It builds into
+`bin/myseliasan-sel`, a **private binary name**, precisely so it can be rebuilt while the
+base `fleet_harness.py` containers are still running off `bin/myseliasan`.
+
+It exists because the myidsan lockout bench turned up something it could not fix: myseliasan
+had **no failed-login lockout at all**. So this bench had to be able to fail honestly before
+it could pass, and its headline number is the attacker's real budget rather than a boolean:
+**13 consecutive guesses served, at ~61ms each, and then the correct password accepted**.
+
+The before/after was measured against **one identical set of checks** rather than against
+whichever version the bench happened to have on the day. `KOPIV2_SKIP_BUILD=1` exists for
+that: build `bin/myseliasan-sel` from the other commit (a `git worktree` at `main` works
+fine), then run the same bench file against it.
+
+There is also a **screen check**, because the API bench cannot see the half a locked-out
+operator actually experiences. The server's refusal is one English sentence and this app ships
+in four languages, so the countdown is rendered client-side from `retryAfterSeconds`; a wrong
+field name or a swallowed envelope degrades silently to "Invalid username or password", which
+tells a locked-out user to keep typing while every API assertion still passes.
+
+```
+python tools/fleetbench/bench_myseliasan_lockout.py --standup   # cluster only, no attack
+node   tools/fleetbench/uicheck_sel_lockout.js .artifacts/fleetbench en
+node   tools/fleetbench/uicheck_sel_lockout.js .artifacts/fleetbench ms
+python tools/fleetbench/bench_myseliasan_lockout.py --teardown
+```
+
+It types REAL keystrokes (`Input.dispatchKeyEvent`, not `value=`) — setting `.value` directly
+never fires React's `onChange`, so the component state stays empty and the form submits blank,
+failing for a reason that has nothing to do with the lockout.
+
+**Only the `char` event may carry `text`.** Chrome inserts the character for a `keyDown` that
+has `text` *and* again for the `char` event, so the obvious three-event sequence types
+everything TWICE. The first run of this check filled the username with `aaddmmiinn`, reported
+6/6, and had proved the lockout against an account nobody was attacking — a nonexistent
+username is also a failed sign-in, and the per-IP key locked out regardless. **Open the PNG**:
+the assertion text said nothing, the screenshot said `aaddmmiinn`. The check now reads the
+field back after typing and throws if it does not hold what it meant to type, so it can never
+again lie about its own input.
+
+Traps specific to it, on top of every one listed for the myidsan lockout bench (which all
+apply — two throttles answering 429, the shared source key, the one jwt secret, never
+rebuilding a binary under a running container):
+
+- **A bench for a control that does not exist must be written to fail, not to error.** Every
+  check here reports what the deployment actually did — "13 guesses served before anything
+  stopped us" — rather than raising on the first surprise. That number is the finding.
+- **`base_config` disables the rate limiter and this bench must put it back.** The generic
+  limiter is the only throttle the unfixed app has, so a bench that turns it off measures a
+  server nobody runs and reports a scarier number than the truth.
+- **A check that passes on an EMPTY result is not a check.** "The trail never records the
+  password attempted" passed against the unfixed app for the worst possible reason: the trail
+  had recorded nothing at all. It is now conditioned on the trail being non-empty. "No
+  evidence of X" and "evidence of no X" are different checks and only one of them is worth
+  running.
+- **The attempt that TRIPS a lockout still gets its credential verdict**, because the guard is
+  consulted before the credential and the threshold is only crossed by recording the failure.
+  So the lockout applies from the *next* request. The account-axis check failed on the first
+  fixed run purely from that off-by-one — it made one attempt from a second source address
+  and expected a 429. It takes two.
+- **Count from a clean slate or do not quote a count.** The first fixed run reported "7
+  guesses served" against a threshold of 8, because the baseline phase's one wrong password
+  was already on the counter and invisible to the phase that thought it was starting at zero.
+- Bring the escalation down between phases with a **successful** sign-in (`reset_guard`): it
+  clears the escalation counter as well as the window, and without it the waits compound —
+  60s, then 120s, then 240s — and the run stops being worth waiting for.
+- myseliasan's local sign-in is `POST /api/auth/local-login` and its change-password is
+  `POST /api/auth/change-password` — **not** myidsan's `/api/login/default`. Its password
+  minimum is **8** characters, not myidsan's 12.
 
 `bench_idsan_mfa.py` needs a **freshly stood-up harness**: it enrols a second factor on the
 stock superadmin, and its first check is that the account starts without one. Run

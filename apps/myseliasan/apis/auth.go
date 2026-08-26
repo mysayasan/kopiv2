@@ -10,9 +10,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +22,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/apps/myseliasan/services"
 	"github.com/mysayasan/kopiv2/domain/models"
+	sharedapis "github.com/mysayasan/kopiv2/domain/shared/apis"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 	"github.com/mysayasan/kopiv2/domain/utils/middlewares"
 	"github.com/mysayasan/kopiv2/infra/cache"
@@ -33,6 +36,17 @@ type authApi struct {
 	auth  *middlewares.AuthMidware
 	store cache.Store
 	users services.IControlUserService
+	// guard is the failed-login lockout. This app had none: local-login called
+	// AuthenticateLocal and returned, so the only thing between a password list and the
+	// fleet console was the generic rate limiter — a budget of 30 attempts a minute that
+	// refills forever, never escalates, never notices one account being attacked from many
+	// addresses, and is per-instance besides, so a two-node cluster simply doubles it.
+	// A live two-instance bench served 13 consecutive guesses and then signed in with the
+	// correct password as if nothing had happened.
+	guard *sharedapis.LoginGuard
+	// audit records the authentication events. Nil-safe: the trail is best-effort by design
+	// and must never be able to fail a sign-in.
+	audit services.IAuditService
 }
 
 type stateEntry struct {
@@ -72,8 +86,9 @@ type providerTokenResponse struct {
 	Result     providerTokenResult `json:"result"`
 }
 
-func NewAuthApi(router *mux.Router, cfg *config.AppConfigModel, auth *middlewares.AuthMidware, store cache.Store, users services.IControlUserService) {
-	handler := &authApi{cfg: cfg, auth: auth, store: store, users: users}
+func NewAuthApi(router *mux.Router, cfg *config.AppConfigModel, auth *middlewares.AuthMidware, store cache.Store,
+	users services.IControlUserService, guard *sharedapis.LoginGuard, audit services.IAuditService) {
+	handler := &authApi{cfg: cfg, auth: auth, store: store, users: users, guard: guard, audit: audit}
 	group := router.PathPrefix("/auth").Subrouter()
 	group.HandleFunc("/start", handler.start).Methods("GET")
 	group.HandleFunc("/callback", handler.callback).Methods("GET")
@@ -109,15 +124,30 @@ func (m *authApi) localLogin(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrParseFailed, "invalid request")
 		return
 	}
-	user, err := m.users.AuthenticateLocal(r.Context(), body.Username, body.Password)
-	if err != nil {
-		if errors.Is(err, services.ErrUserDisabled) {
-			controllers.SendError(w, controllers.ErrLimitedAccess, "this account has been disabled")
-			return
-		}
-		controllers.SendError(w, controllers.ErrLimitedAccess, "invalid username or password")
+	// Checked AFTER decoding so the per-account key is available: a lockout keyed only on
+	// the source address never sees a spray distributed across many addresses, which is the
+	// shape credential stuffing actually takes. Checked BEFORE the credential so a locked
+	// caller costs no bcrypt work — that is what keeps the refusal cheap to serve under a
+	// flood, and it is why waiting a lockout out by "just signing in correctly" cannot work.
+	if locked, retry := m.guardLocked(r, body.Username); locked {
+		sharedapis.WriteLockoutJSON(w, retry, "too many failed sign-in attempts")
 		return
 	}
+
+	user, err := m.users.AuthenticateLocal(r.Context(), body.Username, body.Password)
+	if err != nil {
+		// A disabled account is NOT a wrong password, but it is still a refused credential
+		// and still worth counting: an attacker who has learned that one account is disabled
+		// would otherwise have an unmetered oracle for every other guess against it.
+		reason := "invalid username or password"
+		if errors.Is(err, services.ErrUserDisabled) {
+			reason = "this account has been disabled"
+		}
+		m.recordCredentialFailure(r, services.ActionLoginFailure, body.Username, reason)
+		controllers.SendError(w, controllers.ErrLimitedAccess, reason)
+		return
+	}
+	m.guardSuccess(r, body.Username)
 	// The shared auth middleware rejects any token with an empty Email claim, so the
 	// session cookie MUST carry one. The stock superadmin has no real email, so fall
 	// back to its username (e.g. "admin") — a stable, non-empty identifier.
@@ -136,6 +166,17 @@ func (m *authApi) localLogin(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
+	m.recordAudit(r, services.AuditEntry{
+		Action:     services.ActionLoginSuccess,
+		ActorId:    user.Id,
+		ActorEmail: email,
+		ActorRole:  user.RoleId,
+		TargetType: "user",
+		TargetId:   strconv.FormatInt(user.Id, 10),
+		Outcome:    services.OutcomeSuccess,
+		Detail:     "signed in",
+		Metadata:   map[string]any{"method": "local"},
+	})
 	controllers.SendResult(w, map[string]any{
 		"ok":                 true,
 		"mustChangePassword": user.MustChangePassword,
@@ -160,15 +201,127 @@ func (m *authApi) changePassword(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrParseFailed, "invalid request")
 		return
 	}
+	// The front door being guarded is worth little if THIS endpoint is an unmetered password
+	// oracle for whoever holds a stolen cookie: it checks the same account's password, and a
+	// live bench walked eleven current-password guesses through it in a row. Same guard, same
+	// keys — the identifier is the signed-in account, so a compromised session cannot escape
+	// the account counter by never touching the login form.
+	identifier := strings.TrimSpace(claims.Email)
+	if locked, retry := m.guardLocked(r, identifier); locked {
+		sharedapis.WriteLockoutJSON(w, retry, "too many failed password attempts")
+		return
+	}
+
 	if err := m.users.ChangePassword(r.Context(), claims.Id, body.CurrentPassword, body.NewPassword); err != nil {
 		if errors.Is(err, services.ErrInvalidCredentials) {
+			m.recordCredentialFailure(r, services.ActionLoginFailure, identifier,
+				"current password is incorrect")
 			controllers.SendError(w, controllers.ErrLimitedAccess, "current password is incorrect")
 			return
 		}
+		// A rejected NEW password (too short, same as the old one) is a policy refusal, not a
+		// failed credential. Counting it would let a user lock themselves out by trying to
+		// pick a password the policy keeps refusing — while they are already holding a valid
+		// session and have proven nothing about them is in doubt.
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return
 	}
+	m.guardSuccess(r, identifier)
+	m.recordAudit(r, services.AuditEntry{
+		Action:     services.ActionPasswordChange,
+		ActorId:    claims.Id,
+		ActorEmail: identifier,
+		ActorRole:  claims.RoleId,
+		TargetType: "user",
+		TargetId:   strconv.FormatInt(claims.Id, 10),
+		Outcome:    services.OutcomeSuccess,
+		Detail:     "changed own password",
+	})
 	controllers.SendResult(w, map[string]any{"ok": true}, "succeed")
+}
+
+// ---- the lockout and the trail -------------------------------------------------------
+//
+// Every helper below is nil-safe on purpose. A deployment that configures no guard, and the
+// unit tests that construct this API without one, must behave exactly as they did before.
+
+func (m *authApi) guardLocked(r *http.Request, identifier string) (bool, time.Duration) {
+	if m.guard == nil {
+		return false, 0
+	}
+	return m.guard.Locked(sharedapis.LoginGuardKeys(r, identifier)...)
+}
+
+// guardSuccess clears BOTH keys: a correct password proves this source is not spraying and
+// that this account's owner is present, so neither counter should keep counting. It is also
+// what stops a user who mistypes twice and then remembers from being left one attempt away
+// from being shut out.
+func (m *authApi) guardSuccess(r *http.Request, identifier string) {
+	if m.guard == nil {
+		return
+	}
+	m.guard.RecordSuccess(sharedapis.LoginGuardKeys(r, identifier)...)
+}
+
+// recordCredentialFailure writes the refusal to the trail, delays the response, and advances
+// the lockout — recording the lockout itself only on the attempt that engages it, so the one
+// event worth alerting on is not buried under every refusal that follows.
+func (m *authApi) recordCredentialFailure(r *http.Request, action, attempted, reason string) {
+	m.recordAudit(r, services.AuditEntry{
+		Action:     action,
+		ActorEmail: attempted,
+		TargetType: "user",
+		TargetId:   attempted,
+		Outcome:    services.OutcomeDenied,
+		Detail:     reason,
+		Metadata:   map[string]any{"method": "local"},
+	})
+	if m.guard == nil {
+		return
+	}
+	// Applied to every failure, not just the ones that lock: it costs an attacker far more
+	// than it costs a person who mistyped, and it is the part that still works when the
+	// attempt count is deliberately kept below the threshold.
+	time.Sleep(m.guard.FailedDelay())
+	if lockedNow, retry := m.guard.RecordFailure(sharedapis.LoginGuardKeys(r, attempted)...); lockedNow {
+		log.Printf("login lockout engaged ip=%s account=%q retryAfter=%s",
+			sharedapis.LoginGuardSourceKey(r), attempted, retry)
+		m.recordAudit(r, services.AuditEntry{
+			Action:     services.ActionLoginLockout,
+			ActorEmail: attempted,
+			TargetType: "user",
+			TargetId:   attempted,
+			Outcome:    services.OutcomeDenied,
+			Detail:     "too many failed sign-in attempts",
+			Metadata: map[string]any{
+				"method":            "local",
+				"retryAfterSeconds": int(retry.Seconds()),
+			},
+		})
+	}
+}
+
+// recordAudit stamps the source address onto an entry and files it.
+//
+// ClientIp is the PEER address — the same one the lockout keys on — and never the
+// X-Forwarded-For the app's other entries use. On a login entry the address IS the evidence,
+// and a header the caller writes is evidence of nothing; a forged one would also make the
+// trail disagree with the lockout about who was attacking. A proxy's claim is still kept when
+// it made one, labelled as claimed rather than observed, because it is the only way to
+// identify the client when the deployment really is behind a proxy.
+func (m *authApi) recordAudit(r *http.Request, e services.AuditEntry) {
+	if m.audit == nil {
+		return
+	}
+	e.ClientIp = strings.TrimPrefix(sharedapis.LoginGuardSourceKey(r), "ip:")
+	e.UserAgent = r.UserAgent()
+	if fwd := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); fwd != "" {
+		if e.Metadata == nil {
+			e.Metadata = map[string]any{}
+		}
+		e.Metadata["claimedForwardedFor"] = fwd
+	}
+	m.audit.Record(r.Context(), e)
 }
 
 func (m *authApi) start(w http.ResponseWriter, r *http.Request) {

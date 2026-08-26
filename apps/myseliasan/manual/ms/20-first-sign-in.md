@@ -75,7 +75,12 @@ diingati pada pelayar ini:
   lagi. Itu disengajakan: pengguna baharu bermula tanpa apa-apa dan bukan mewarisi capaian. Pentadbir
   menetapkannya di bawah Peranan & Capaian.
 - **Kegagalan berulang mengunci alamat itu** untuk tempoh yang bertambah dengan setiap percubaan.
-  Tunggu kiraan detik; tiada sesiapa boleh memendekkannya.
+  Tunggu kiraan detik; tiada sesiapa boleh memendekkannya. **Akaun** dikira berasingan daripada
+  alamat, jadi seseorang yang meneka nama pengguna anda dari tempat lain boleh menguncinya walaupun
+  anda tidak tersilap taip. Itu kos yang disengajakan untuk menghentikan serangan tekaan yang
+  tersebar merentas banyak alamat, dan ia terbuka semula sebaik sahaja sesiapa log masuk dengan
+  betul. Menukar kata laluan anda sendiri dikira sama: kata laluan *semasa* yang salah berulang kali
+  turut menguncinya.
 - **Ubah hala daripada pelayan identiti gagal** — biasanya sijil yang tidak dipercayai satah kawalan,
   atau URL ubah hala yang tidak sepadan dengan tepat. Import semula berkas SSO dan bukan menaip
   semula medan.

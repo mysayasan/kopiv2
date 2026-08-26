@@ -74,7 +74,11 @@ this browser:
   yet. That is deliberate: a new user starts with nothing rather than inheriting access. An
   administrator assigns one under Roles & Access.
 - **Repeated failures lock the address out** for a period that grows with each attempt. Wait for
-  the countdown; nobody can shorten it.
+  the countdown; nobody can shorten it. The **account** is counted separately from the address, so
+  someone guessing at your username from elsewhere can lock you out of it even though you have
+  typed nothing wrong. That is the deliberate cost of stopping a guessing attack spread across many
+  addresses, and it clears the moment anyone signs in correctly. Changing your own password on the
+  change-password screen counts the same way: repeated wrong *current* passwords lock it too.
 - **The redirect from the identity server fails** — usually a certificate the control plane does
   not trust, or a redirect URL that does not match exactly. Re-import the SSO bundle rather than
   retyping the fields.

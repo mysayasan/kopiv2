@@ -32,6 +32,15 @@ action.
   `services/fleet_policy_reconciler.go.md` since this is the only settings change on a node
   with no operator behind it), `ActionPolicySave` / `ActionPolicyDelete` (edits to the
   estate's configuration standard itself, recorded by `apis/fleet_policy_api.go.md`).
+- **Authentication actions** (`ActionLoginSuccess`, `ActionLoginFailure`, `ActionLoginLockout`,
+  `ActionPasswordChange`), recorded by `apis/auth.go.md`. Added after a live cluster bench found
+  the trail had never recorded a single authentication event — it knew about node adoptions,
+  policy edits and key rotations, so a complete brute-force run against the fleet console left
+  nothing at all in the product's own record of who did what. The **values match myidsan's**
+  (`login.success`, `login.failure`, `login.lockout`, `password.change`) on purpose: an operator
+  correlating the identity server's trail with the control plane's should not have to learn two
+  vocabularies for the same event. `login.lockout` is written once, on the attempt that engages
+  the lockout. The password attempted is never recorded on any of them.
 
 ## Notes
 

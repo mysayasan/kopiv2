@@ -37,6 +37,7 @@ const CHECK_LABELS = {
   atrestKey: 'deploy.check.atrestKey',
   jwtSecret: 'deploy.check.jwtSecret',
   dbPool: 'deploy.check.dbPool',
+  loginLockout: 'deploy.check.loginLockout',
 };
 
 // DeploymentPanel is the whole feature: the mode question, the verified checklist, the
