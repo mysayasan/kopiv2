@@ -67,6 +67,15 @@ func (m *MemoryStore) Set(_ context.Context, key string, value any, ttl time.Dur
 
 func (m *MemoryStore) Delete(_ context.Context, key string) error {
 	m.cache.Delete(key)
+	// Sliding-window state lives in its own map, so deleting only the value would leave a
+	// rate-limit history behind under a key the caller believes it has just forgotten.
+	// Redis has no such split — the window IS the key there — and a primitive that means
+	// two different things on two providers is a bug waiting for whichever one is not
+	// under test. The failed-login lockout clears a key exactly this way when a correct
+	// credential arrives, and on this provider the window used to survive it.
+	m.rateMu.Lock()
+	delete(m.rateWindows, key)
+	m.rateMu.Unlock()
 	return nil
 }
 

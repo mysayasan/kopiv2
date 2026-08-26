@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"math"
 	"net"
@@ -604,6 +605,45 @@ func writeLoginLockout(w http.ResponseWriter, retry time.Duration) {
 	writeLockout(w, retry, "too many failed login attempts")
 }
 
+// Throttling the endpoints that re-check a SIGNED-IN caller's own password.
+//
+// The lockout was wired to the front doors — the local login, the directory login, the
+// server-rendered form — and to nothing else. But several authenticated endpoints also take
+// the account password and report whether it was right, which makes each of them a password
+// oracle for whoever is holding the cookie: change-password (a correct guess sets a new
+// password and takes the account permanently), removing a security key, and clearing one's
+// own second factor. Step-up was the fourth and was fixed separately.
+//
+// An attacker with a stolen session cannot sign in — they do not have the password — but
+// could ask any of these about candidates as fast as the network allowed. They now count
+// against the same lockout the front door does, keyed on the SESSION's own account rather
+// than a submitted username, so unlike the login door this counter cannot be aimed at
+// somebody else by a stranger.
+
+// selfThrottleLocked answers 429 when the signed-in caller's own account is locked out,
+// before any credential work happens. Returns true when it has written the response.
+func selfThrottleLocked(w http.ResponseWriter, r *http.Request, guard *sharedapis.LoginGuard, email string) bool {
+	locked, retry := guardLocked(guard, r, email)
+	if !locked {
+		return false
+	}
+	writeLockout(w, retry, fmt.Sprintf(
+		"too many failed attempts — try again in %d seconds", int(math.Ceil(retry.Seconds()))))
+	return true
+}
+
+// selfThrottleFailure delays this response and counts one wrong password against the
+// shared lockout. The delay matters as much as the counter: without it the attempts before
+// the threshold are free, and free guesses against a password are worth a lot when the
+// candidate list is a breach dump ordered by likelihood.
+func selfThrottleFailure(guard *sharedapis.LoginGuard, r *http.Request, email string) {
+	if guard == nil {
+		return
+	}
+	time.Sleep(guard.FailedDelay())
+	guard.RecordFailure(loginGuardKeys(r, email)...)
+}
+
 // writeLockout answers a throttled credential check: 429, a Retry-After header, and a body
 // carrying both the wait and a message naming what was being attempted.
 //
@@ -1145,6 +1185,9 @@ func (m *loginApi) changePassword(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrPermission, "not authenticated")
 		return
 	}
+	if selfThrottleLocked(w, r, m.guard, claims.Email) {
+		return
+	}
 	var body struct {
 		CurrentPassword string `json:"currentPassword"`
 		NewPassword     string `json:"newPassword"`
@@ -1156,6 +1199,10 @@ func (m *loginApi) changePassword(w http.ResponseWriter, r *http.Request) {
 	if err := m.userService.ChangePassword(r.Context(), claims.Id, body.CurrentPassword, body.NewPassword); err != nil {
 		switch {
 		case errors.Is(err, services.ErrInvalidCredential):
+			// A correct guess here does not merely reveal the password, it REPLACES it —
+			// the one authenticated password check whose success hands the account over
+			// permanently. Counted against the same lockout as a failed sign-in.
+			selfThrottleFailure(m.guard, r, claims.Email)
 			controllers.SendError(w, controllers.ErrAuthFailed, "current password is incorrect")
 		case errors.Is(err, services.ErrThirdPartyOnlyAccount):
 			controllers.SendError(w, controllers.ErrLimitedAccess, err.Error())
@@ -1164,6 +1211,9 @@ func (m *loginApi) changePassword(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	// The password was right, so this caller is the account's owner: clear the counters
+	// their own fat-fingering may have built up.
+	guardSuccess(m.guard, r, claims.Email)
 	controllers.SendResult(w, map[string]bool{"ok": true})
 }
 

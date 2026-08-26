@@ -80,7 +80,47 @@ python tools/fleetbench/bench_idsan_sso.py     # the sign-in every other app dep
 python tools/fleetbench/bench_idsan_mfa.py     # the second factor + step-up (FRESH stand-up)
 python tools/fleetbench/idsan_harness.py       # RE-STAND between them (see below)
 python tools/fleetbench/bench_idsan_backup.py  # disaster recovery across two hosts
+python tools/fleetbench/bench_idsan_lockout.py # the lockout, against a real 2-node CLUSTER
 ```
+
+`bench_idsan_lockout.py` is the only myidsan bench that stands up a **cluster**: a Postgres
+container plus two myidsan instances sharing that database AND the harness's Redis. It
+removes all three in a `finally`. It needs the base harness to have run first (for the
+docker network, the bench certificate and the built image), but it does not use the base
+instance.
+
+Why a cluster: a failed-login lockout is per-process state, and "Tier A, genuinely
+clusterable" is a documented, wizard-declarable deployment for this app. A single-instance
+bench cannot see that the lockout stops being one. It also runs with the SHIPPED posture —
+generic rate limiter ON, login-security at its defaults — because "under real attack" means
+the configuration customers run.
+
+Traps, all of which cost real time:
+
+- **Two different throttles answer 429 here and they mask each other.** The generic
+  per-endpoint rate limiter and the lockout both refuse with 429 and Retry-After, so "got a
+  429" proves nothing. An early run of this bench passed two throttle checks purely on
+  rate-limit refusals while the lockout it was measuring did not exist at all. `is_lockout()`
+  tells them apart (the lockout body carries `retryAfterSeconds`; the limiter says "rate
+  limit exceeded"), and `status_of()` renders a rate-limit refusal as `"rl"` so it can never
+  be mistaken for one in a status list.
+- `/api/login/*` shares ONE 30-per-minute bucket, and the bench spends most of it failing to
+  sign in — so a later probe of `change-password` (same prefix) is refused by the limiter
+  before the lockout can engage. `cooldown_rate_limit()` waits that window out. `/api/step-up`
+  and the security-key routes have their own buckets and need no pause.
+- **Do not wait out a lockout by signing in correctly.** A success legitimately resets the
+  escalation counter, which is exactly what must not happen while measuring escalation.
+  `wait_until_unlocked()` probes with a WRONG password instead — a locked request never
+  reaches the credential check, so it costs nothing.
+- **The source key is shared by every attempt the bench makes**, so each phase inherits the
+  last one's failures unless it explicitly resets. `reset_guard()` does that and asserts it
+  worked; several checks failed on the first run purely from leftovers.
+- **Set one jwt secret across the instances.** Left empty each mints its own and a session
+  issued by one is rejected by the other as a bad signature — which is a checklist row for
+  real clusters, and which this bench walked into before setting it.
+- **Never rebuild the binary while containers are running from it.** The bind-mounted
+  executable is overwritten under a running process and every instance dies with exit 139
+  and no log line. `docker stop` first, build, then start.
 
 `bench_idsan_mfa.py` needs a **freshly stood-up harness**: it enrols a second factor on the
 stock superadmin, and its first check is that the account starts without one. Run

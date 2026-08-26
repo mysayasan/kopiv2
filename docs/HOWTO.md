@@ -492,6 +492,20 @@ preflight checklist reports (`atrestKey`) between instances, not the key file's 
 (`KeyId`) — copying `atrest.key` to a second host without its `.init` marker produces two different
 marker ids for one identical key, which would read as a mismatch that does not exist.
 
+**The failed-login lockout must also span instances, and it did not by default.** Like session
+state, `myidsan`'s lockout is per-process unless it rides on the shared cache — the guard mirrors
+its counters into `cache.provider` (when that is `redis`/`redis-cluster`) alongside its own
+in-memory map, so a lockout tripped on one instance is visible to every other one instead of each
+instance granting its own separate `maxAttempts` budget. A live two-instance bench on one shared
+Postgres and one shared Redis (the shipped configuration) found this the hard way before the fix:
+instance A locked an account after eight wrong passwords, and instance B then evaluated a ninth
+normally and went on to accept the CORRECT password — signing in a user the deployment was
+supposed to have locked out. Pointing `cache.provider` at Redis (the same setting the sessions
+guidance above already requires) is what enables the shared half; nothing further needs
+configuring, and a `memory` cache leaves the lockout exactly as per-process as it always was. This
+is not yet a row on the `GET /api/deployment/preflight` checklist. `myseliasan`, the other Tier A
+clusterable app, does not share its lockout state yet either.
+
 ### Leader election and the migration lock
 
 Scheduled singleton work — retention purges, the notification rollup, the AI digest, heartbeat

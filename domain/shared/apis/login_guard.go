@@ -3,6 +3,8 @@ package apis
 import (
 	"sync"
 	"time"
+
+	"github.com/mysayasan/kopiv2/infra/cache"
 )
 
 // LoginGuardConfig tunes the failed-login lockout. Zero values are filled with
@@ -62,6 +64,13 @@ type LoginGuard struct {
 	cfg     LoginGuardConfig
 	entries map[string]*guardEntry
 	now     func() time.Time
+
+	// store, when set, mirrors the same state into a shared cache so a lockout spans every
+	// instance of a clustered deployment. See login_guard_shared.go — the in-memory map
+	// above keeps working exactly as before either way, and is what the deployment falls
+	// back to if the cache is unreachable.
+	store     cache.Store
+	namespace string
 }
 
 // NewLoginGuard builds a guard from cfg. A nil result is never returned; callers
@@ -89,6 +98,10 @@ func (g *LoginGuard) Locked(keys ...string) (bool, time.Duration) {
 	if g == nil || !g.cfg.Enabled {
 		return false, 0
 	}
+	// Asked BEFORE taking the mutex: the shared lookup does network I/O, and holding the
+	// lock across it would serialise every sign-in on the slowest cache round trip.
+	sharedLocked, sharedRetry := g.sharedLocked(keys...)
+
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	now := g.now()
@@ -106,6 +119,14 @@ func (g *LoginGuard) Locked(keys ...string) (bool, time.Duration) {
 			}
 		}
 	}
+	// The OR of the two verdicts. The shared half can only ever add a lockout, never
+	// remove one, so a cache that is down or lying leaves the local guard in charge.
+	if sharedLocked {
+		locked = true
+		if sharedRetry > maxRetry {
+			maxRetry = sharedRetry
+		}
+	}
 	return locked, maxRetry
 }
 
@@ -116,6 +137,8 @@ func (g *LoginGuard) RecordFailure(keys ...string) (lockedNow bool, retry time.D
 	if g == nil || !g.cfg.Enabled {
 		return false, 0
 	}
+	sharedNow, sharedRetry := g.sharedRecordFailure(keys...)
+
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	now := g.now()
@@ -153,6 +176,18 @@ func (g *LoginGuard) RecordFailure(keys ...string) (lockedNow bool, retry time.D
 			retry = dur
 		}
 	}
+	// A lockout the SHARED half tripped is still a transition worth reporting: on a
+	// clustered deployment it is the one that actually took effect. Only the call that
+	// crosses the threshold reports it — once the shared lock exists every later call takes
+	// the already-locked branch — so the caller's "notify on the transition" holds. Two
+	// instances crossing in the same instant can both report it, which costs a duplicate
+	// audit entry and log line and nothing else.
+	if sharedNow {
+		lockedNow = true
+	}
+	if sharedRetry > retry {
+		retry = sharedRetry
+	}
 	return lockedNow, retry
 }
 
@@ -162,6 +197,8 @@ func (g *LoginGuard) RecordSuccess(keys ...string) {
 	if g == nil || !g.cfg.Enabled {
 		return
 	}
+	g.sharedRecordSuccess(keys...)
+
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	for _, key := range keys {

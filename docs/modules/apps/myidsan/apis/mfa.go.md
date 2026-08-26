@@ -42,7 +42,11 @@ account, identified from the JWT claims):
   possession so a hijacked session cannot silently strip the second factor. A
   third-party-only (directory/SSO) account has no local password, so
   `ErrThirdPartyOnlyAccount` from `AuthenticateDefault` is tolerated and the code
-  gate alone stands. On success, records `services.ActionMfaDisable` — the single most
+  gate alone stands. Checks `selfThrottleLocked` first and calls `selfThrottleFailure`
+  on a wrong password (`apis/login.go.md`'s "Self-Throttled Password Re-checks") —
+  defence in depth only here, since the code gate is checked before the password and
+  already refuses an attacker with no second factor; still throttled rather than
+  relying on that ordering never changing. On success, records `services.ActionMfaDisable` — the single most
   important line this trail can hold: `Disable` deletes the factor row and every
   recovery-code hash, so the act erases its own evidence and afterwards the account is
   indistinguishable from one that never enrolled. If the code that authorized the removal
@@ -79,6 +83,10 @@ online guessing attempt against a known password. Described once via
   with the same `services.IMfaService` instance the login APIs use
   (`apps/myidsan/app/app.go`), so enrollment state is immediately visible to the
   next login attempt.
+- `mfaApi` gained a `guard *sharedapis.LoginGuard` field; `NewMfaApi` gained a trailing
+  `guard` parameter (same `*sharedapis.LoginGuard` instance `apis.NewLoginApi` and
+  `apis.NewWebAuthnApi` share) so `disable` can throttle its password re-check — see
+  `apis/login.go.md`'s "Self-Throttled Password Re-checks".
 - `mfaApi` embeds `auditRecorder` (`apis/audit.go.md`); `NewMfaApi` now also takes
   `services.IAuditService` and `services.IStepUpService` parameters (Phase 2).
 - `writeCodeGateError` centralizes the `ErrMfaBadCode`/`ErrMfaNotEnrolled`/other

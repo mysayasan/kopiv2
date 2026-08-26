@@ -259,7 +259,9 @@ self-service-email design and the `docs/HOWTO.md` operator workflow.
 
 `NewLoginApi`'s `guard *sharedapis.LoginGuard` (built by `apps/myidsan/app/app.go`'s
 `loginGuardConfig` from the shared `LoginSecurity` config block — the same one
-`mymatasan`/`myiotsan` use) is applied to **every** interactive *credential-guessing*
+`mymatasan`/`myiotsan` use, now optionally spanning a clustered deployment via
+`WithSharedStore` — see `domain/shared/apis/login_guard_shared.go.md`) is applied to **every**
+interactive *credential-guessing*
 surface in this file: `defaultLogin` and `ldapLogin` both check `guardLocked` before
 doing any credential work and respond `429` + `Retry-After` (`writeLoginLockout`) when
 locked; only a genuine credential failure (`services.ErrInvalidCredential` /
@@ -357,9 +359,40 @@ not guessed here.
 - Successful login/register responses return `{ result: { ok: true } }` and set the auth/CSRF cookies.
 - Logout is available at `POST /api/login/default/logout` and clears both secure and local-development cookie names.
 
+## Self-Throttled Password Re-checks (`selfThrottleLocked`/`selfThrottleFailure`)
+
+Several *authenticated* endpoints re-check the signed-in caller's own password, which makes
+each of them a password oracle for whoever holds the session cookie — they need no separate
+credential of their own, just the ability to try candidates as fast as the network allows.
+Two shared helpers, defined here and reused by `apis/mfa.go`'s `disable` and
+`apis/webauthn.go`'s `remove` (both gained a `guard *sharedapis.LoginGuard` field/constructor
+parameter for this), count these checks against the same lockout the login door uses — but
+keyed on the SESSION's own account (`claims.Email`), never a submitted identifier, so unlike
+the login door this counter cannot be aimed at somebody else by a stranger:
+
+- `selfThrottleLocked(w, r, guard, email) bool` — checked first, before any credential work;
+  answers `429` + `Retry-After` when the account is already locked and reports that it wrote
+  the response.
+- `selfThrottleFailure(guard, r, email)` — called on a wrong-password result; sleeps the
+  configured `FailedDelay` (the delay matters as much as the counter — without it, every
+  attempt before the threshold is a free guess) and calls `guard.RecordFailure`.
+
+Covers `POST /api/login/default/change-password` (see below — the worst of the three, since a
+correct guess here REPLACES the password and takes the account permanently),
+`DELETE /api/mfa/webauthn/{id}` (`apis/webauthn.go.md`'s `remove`, which reproves identity
+BEFORE looking up the key, so any key id works and no second factor is needed), and
+`DELETE /api/mfa` (`apis/mfa.go.md`'s `disable`, defence-in-depth only — the valid-code gate
+fires first there, so it was not actually reachable as an oracle before this either; throttled
+anyway rather than relying on that ordering never changing).
+
 ## Change Password
 
 `POST /api/login/default/change-password` is an authenticated endpoint (JWT cookie required). It verifies the caller's current password, hashes and stores the new one, and clears the `must_change_password` flag so the forced first-login gate is released. Returns `{ ok: true }` on success. Error responses distinguish between an incorrect current password (`ErrAuthFailed`) and a third-party-only account with no local password (`ErrLimitedAccess`). The new password must pass the configured password policy (`services.ValidatePassword`, `GET /api/login/password-policy` above publishes the rules; previously a hard-coded "at least 8 characters" — see `services/password_policy.go.md`).
+
+Now checks `selfThrottleLocked` before any credential work, and on `ErrInvalidCredential` calls
+`selfThrottleFailure` before responding — see "Self-Throttled Password Re-checks" above. On
+success, calls `guardSuccess` to clear the caller's own counters (their own fat-fingering may
+have built some up).
 
 ## Notes
 

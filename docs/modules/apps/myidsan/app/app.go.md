@@ -43,7 +43,10 @@ Implements the `myidsan` app module for the shared runtime host.
   (trailing `sessions, audit, trustedProxies` — ending a disabled/deleted account's
   sessions), `apis.NewDirectoryConfigApi`, `apis.NewBackupApi`, `apis.NewMfaApi`, and
   `apis.NewPasswordResetApi` (each gaining trailing `audit`/`stepUp`/`trustedProxies`
-  parameters where applicable), plus two new mounts: `apis.NewStepUpApi` (`/api/step-up`,
+  parameters where applicable; `apis.NewMfaApi` and `apis.NewWebAuthnApi` also gained a
+  trailing `loginGuard` parameter, ahead of `trustedProxies`, for the self-throttled
+  password re-checks - see the `loginGuardConfig` section below and
+  `apis/mfa.go.md`/`apis/webauthn.go.md`), plus two new mounts: `apis.NewStepUpApi` (`/api/step-up`,
   auth-only) and `apis.NewSessionApi` (`/api/session` self-service auth-only, `/api/session-admin`
   superadmin) — see `apis/audit.go.md`, `apis/session.go.md`, `apis/stepup.go.md`,
   `services/audit.go.md`, `services/session.go.md`, `services/stepup.go.md`. `apis.NewAuditApi`
@@ -147,7 +150,7 @@ Implements the `myidsan` app module for the shared runtime host.
   physical key, since `CredentialId` is unique across the whole table), `backupService`
   (below), and mounted for self-service + admin management via
   `apis.NewWebAuthnApi(api, *deps.Auth, deps.Access, webauthnService, userLoginService,
-  mfaService, auditService, stepUpService, deps.Config.RateLimit.TrustedProxies)`
+  mfaService, auditService, stepUpService, loginGuard, deps.Config.RateLimit.TrustedProxies)`
   (`/api/mfa/webauthn`, `/api/mfa-admin/{id}/webauthn` — see `apis/webauthn.go.md`,
   `services/webauthn.go.md`). Also registers `myidsanentities.UserWebauthnCredential{}` for
   bootstrap schema generation (see `entities/user_webauthn_credential.go.md`) and includes
@@ -187,8 +190,25 @@ through `.Effective()` rather than the struct fields directly is what makes an a
 `Enabled=false`. The
 resulting `*sharedapis.LoginGuard` is shared by every interactive credential surface
 in this app (local JSON login, LDAP JSON login, the server-rendered federated login
-page's POST) — **new for myidsan**, which previously had no failed-login lockout at
-all on any surface.
+page's POST, `POST /api/step-up`, and — as of the clustering fix below — the
+self-throttled password re-checks on `apis/login.go.md`'s `change-password`,
+`apis/mfa.go.md`'s `disable`, and `apis/webauthn.go.md`'s `remove`) — **new for
+myidsan**, which previously had no failed-login lockout at all on any surface.
+
+**Clustered deployments** (live two-instance bench,
+`tools/fleetbench/bench_idsan_lockout.py`): `RegisterAppRoutes` now calls
+`loginGuard.WithSharedStore(deps.Cache, "myidsan")` when
+`sharedservices.IsSharedCacheProvider(deps.Config.Cache.Provider)` is true, mirroring the
+lockout into the shared cache alongside the in-memory map (see
+`domain/shared/apis/login_guard_shared.go.md`) so the lockout spans every instance instead of
+being per-process. Before this fix, a live bench against two instances on one shared Postgres
+and one shared Redis (the shipped configuration) locked an account on instance A after eight
+wrong passwords while instance B evaluated a ninth normally and then accepted the CORRECT
+password with `200` — an attacker's budget was `MaxAttempts × instance count`, and this was
+invisible on the `GET /api/deployment/preflight` checklist, which says nothing about the
+lockout. `myseliasan`, the suite's other Tier A clusterable app, does not yet call
+`WithSharedStore` — no bench covers its login surfaces — so its lockout stays per-process; see
+`docs/HOWTO.md`'s "Which apps can actually be clustered" section.
 
 ## Removed (accessrbac migration)
 
