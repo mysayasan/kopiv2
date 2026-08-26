@@ -81,8 +81,10 @@ python tools/fleetbench/bench_idsan_mfa.py     # the second factor + step-up (FR
 python tools/fleetbench/idsan_harness.py       # RE-STAND between them (see below)
 python tools/fleetbench/bench_idsan_backup.py  # disaster recovery across two hosts
 python tools/fleetbench/bench_idsan_lockout.py # the lockout, against a real 2-node CLUSTER
-python tools/fleetbench/bench_myseliasan_lockout.py  # myseliasan's lockout — it had NONE
 python tools/fleetbench/bench_idsan_session_revoke.py # does a revoke reach the RELYING app?
+node   tools/fleetbench/uicheck_idsan_admin.js .artifacts/fleetbench en  # myidsan's FIRST screen check
+node   tools/fleetbench/uicheck_idsan_admin.js .artifacts/fleetbench ar  # (also ms, zh)
+python tools/fleetbench/bench_myseliasan_lockout.py  # myseliasan's lockout — it had NONE
 ```
 
 `bench_idsan_lockout.py` is the only myidsan bench that stands up a **cluster**: a Postgres
@@ -229,6 +231,41 @@ Traps, each of which cost a wrong answer first:
 - The first defect masks the second. Until sessions are indexed, `revoke` reports
   `{"revoked":0}` and every downstream check fails for that reason instead of its own — fix
   the indexing, re-run, and only then read the relying-app result.
+`uicheck_idsan_admin.js` is the first screen check myidsan has ever had. Every bench before it
+was an API bench, and this suite has now been taught four separate times that a green API run
+and a working screen are different claims. It drives all twelve admin sections, then drives real
+workflows and confirms the SERVER changed. **21/21 English, 8/8 ms, 8/8 zh, 9/9 ar against the
+fix; 19/21 against main.**
+
+Part A runs per language: every section renders with a heading, leaks no untranslated dictionary
+key, and every enabled control is **hit-testable at its own centre** (`document.elementFromPoint`
+at the control's midpoint — the test that once found a button which rendered perfectly and could
+not be pressed, in Arabic only). Part B runs in English only and drives create **and DELETE** on
+Roles, the audit CSV export, the Settings sections, and finally the destructive one.
+
+Traps, each of which produced a wrong answer first:
+
+- **The first-run wizard sits in front of every admin screen** until dismissed, in every
+  language. Without skipping it the run reports an empty navigation and nothing else.
+- **The SPA's writes need the double-submit CSRF header.** A raw in-page `fetch` gets
+  `401 csrf token not found`, which reads exactly like "the screen cannot do this" — the first
+  run reported a role-create failure that was entirely its own.
+- **Anchor the untranslated-key regex to the app's real dictionary prefixes.** A bare
+  `word.word` match flags the audit log's own DATA: action names like `login.success` are
+  content, not missing translations.
+- **A check that passes on an empty result is not a check** (this suite's second time).
+  "The deleted role disappears from the screen" passed while the create had failed with that
+  CSRF error and the role had never existed. It is now conditioned on the create having worked.
+- **Order Part B so the destructive step is LAST.** "End all sessions" pressed on the
+  administrator's own row ends the session running the check; every screen after it renders
+  empty. The first run read the audit log afterwards, got zero rows, and reported a broken
+  screen that was perfectly fine.
+- The audit export is `/api/audit/export.csv`, not `/api/audit/export`.
+- `Page.javascriptDialogOpening` is an EVENT, not a command — subscribe to it on the socket and
+  answer with `Page.handleJavaScriptDialog`, or `window.confirm` blocks the page forever.
+- **To bench the UNFIXED bundle**, run `idsan_harness.py` from a `git worktree` at `main` with
+  `KOPIV2_BENCH_DIR` pointed at your existing artifacts dir: the harness bind-mounts
+  `REPO/apps/myidsan`, so that mounts main's built bundle while reusing your binaries and cert.
 
 `bench_idsan_mfa.py` needs a **freshly stood-up harness**: it enrols a second factor on the
 stock superadmin, and its first check is that the account starts without one. Run

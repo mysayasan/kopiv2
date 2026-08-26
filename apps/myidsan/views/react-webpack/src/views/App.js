@@ -7,8 +7,10 @@ import {
   emptyToZero,
   formatDateTime,
   getCookie,
+  onSessionLost,
   pageOf,
   queryString,
+  resetSessionLost,
   resultOf,
   rowsOf,
   setCookie
@@ -411,6 +413,10 @@ function AppInner({ lang, onLangChange }) {
 
   const handleAuthed = () => {
     localStorage.setItem('myidsan.session', 'active')
+    // Arm the session-lost announcement again: it fires at most once per lost session so a
+    // page fanning out parallel requests cannot bounce the operator several times, which
+    // means a NEW session has to re-arm it or the next loss would go unnoticed.
+    resetSessionLost()
     setSession(true)
     setSessionReady(true)
     setSessionError('')
@@ -419,11 +425,27 @@ function AppInner({ lang, onLangChange }) {
 
   const handleLogout = async () => {
     await apiRequest('/api/login/default/logout', { method: 'POST' })
+    endSessionLocally()
+  }
+
+  // Everything a lost session has to undo locally. Shared by the logout button and by the
+  // 401 handler below, so a session that ENDS ON ITS OWN leaves the app in the same state as
+  // one the operator chose to end — rather than in a drawn admin console full of empty data.
+  const endSessionLocally = useCallback(() => {
     localStorage.removeItem('myidsan.session')
     setAccessList([])
     setSession(false)
     setActiveSection('dashboard')
-  }
+  }, [])
+
+  // A 401 from anywhere means the session is gone: it expired, an administrator ended it, or
+  // the operator ended it themselves from the Users page (which includes their own row). The
+  // first screen check this app ever had found the app rendering the whole console afterwards,
+  // with the Audit log reporting "No events match these filters" while nobody was signed in.
+  useEffect(() => onSessionLost(() => {
+    setSessionError('')
+    endSessionLocally()
+  }), [endSessionLocally])
 
   if (!sessionReady) {
     return <div className="boot-screen">{t('common.checkingSession')}</div>
@@ -1208,7 +1230,14 @@ function UsersPage({ accessList, currentEmail, stockEmail = STOCK_SUPERADMIN_EMA
   }
 
   const endSessions = async u => {
-    if (!window.confirm(t('user.endSessionsConfirm'))) return
+    // Ending YOUR OWN sessions from this page includes the one you are using: the admin revoke
+    // deliberately spares nothing (that is right when the account is somebody else's), unlike
+    // the self-service "sign out everywhere else" on the Profile page, which spares the current
+    // session. So the question has to say so. The old wording — "They will have to sign in
+    // again" — quietly assumed the account belonged to somebody else, and a screen check
+    // pressing it on the administrator's own row signed the operator straight out.
+    const self = currentEmail && u.email === currentEmail
+    if (!window.confirm(t(self ? 'user.endSessionsConfirmSelf' : 'user.endSessionsConfirm'))) return
     setBusy(true)
     try {
       const res = await apiRequest(`/api/session-admin/user/${u.id}/revoke`, { method: 'POST', body: {} })
