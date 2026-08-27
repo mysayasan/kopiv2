@@ -489,7 +489,21 @@ func (s *CommandService) OnReported(ctx context.Context, deviceId int64, key str
 	_, _ = s.attrs.UpdateById(ctx, "", *attr)
 }
 
-// confirmPending marks the sent commands on this key as confirmed.
+// confirmPending marks the sent commands THIS report can speak for as confirmed.
+//
+// The matching is the whole point, and it is narrower than it looks like it needs to be. A report
+// carries one telemetry key and one number; a device can have several commands outstanding at
+// once, and on a building controller they routinely carry the SAME number — a lock and a fan are
+// both switches, so both are 1. Matching on the number alone therefore lets one device's answer
+// speak for commands it said nothing about: the fan that never moved is marked `confirmed`, which
+// is the strongest statement this system can make about a physical action, and it never becomes
+// the failure an operator would have been shown. One report both invents an actuation and loses a
+// failure.
+//
+// So a command is confirmed by a report only when the profile declared THAT key as the one the
+// device reports this command's result on (ConfirmKey), and a command that declares no ConfirmKey
+// is never confirmed by a report at all — "sent, never confirmed" is the honest outcome the
+// profile documents for a device that cannot report the state back in one number.
 func (s *CommandService) confirmPending(ctx context.Context, deviceId int64, key string, value float64, nowSec int64) {
 	rows, _, err := s.commands.Get(ctx, "", 20, 0,
 		[]sqldataenums.Filter{
@@ -500,42 +514,105 @@ func (s *CommandService) confirmPending(ctx context.Context, deviceId int64, key
 	if err != nil {
 		return
 	}
+	// Which key each command confirms on is a property of the device's PROFILE, not of the row, so
+	// the declarations are read once here. A device whose type cannot be read confirms nothing:
+	// leaving the commands `sent` costs a timeout and an honest "not confirmed", where guessing
+	// costs a false claim that a relay moved.
+	dev, err := s.devices.GetById(ctx, deviceId)
+	if err != nil || dev == nil {
+		s.logf("cannot confirm commands on device %d: its record could not be read: %v", deviceId, err)
+		return
+	}
+	decls, err := s.CommandsFor(ctx, dev.ProfileId)
+	if err != nil {
+		s.logf("cannot confirm commands on device %d: its type's commands could not be read: %v", deviceId, err)
+		return
+	}
+	confirmKeys := make(map[string]string, len(decls))
+	for _, d := range decls {
+		if d == nil {
+			continue
+		}
+		confirmKeys[strings.ToLower(strings.TrimSpace(d.Name))] = d.ConfirmKey
+	}
+
 	for _, c := range rows {
 		if c.Value != value {
+			continue
+		}
+		if !confirmsKey(confirmKeys[strings.ToLower(strings.TrimSpace(c.Name))], key) {
 			continue
 		}
 		c.Status = "confirmed"
 		c.ConfirmedAt = nowSec
 		_, _ = s.commands.UpdateById(ctx, "", *c)
 		s.countCommand("confirmed")
-		s.logf("command %d confirmed by the device", c.Id)
+		s.logf("command %d confirmed by the device reporting %s=%v", c.Id, key, value)
 	}
 }
 
-// SweepUnconfirmed ends commands the device never confirmed.
+// confirmsKey reports whether a report on reportedKey may confirm a command whose profile declares
+// confirmKey. An EMPTY declaration confirms nothing — the absence of a confirm key is a statement
+// that this command cannot be confirmed by telemetry, not an invitation to match on the value.
+func confirmsKey(confirmKey, reportedKey string) bool {
+	confirmKey = strings.TrimSpace(confirmKey)
+	if confirmKey == "" {
+		return false
+	}
+	return strings.EqualFold(confirmKey, strings.TrimSpace(reportedKey))
+}
+
+// SweepUnconfirmed ends commands that never reached a verdict.
 //
 // It marks them FAILED. It does NOT resend them. Re-sending is a second physical action, and if
 // the first one landed but its confirmation was lost, the retry fires the relay again — the
 // door opens twice — and nothing here can distinguish that case from the first one never
 // arriving. So the operator is told plainly that it was not confirmed, and THEY decide.
+//
+// THAT IS ONLY SAFE IF THE OPERATOR IS ACTUALLY TOLD, which is why this sweeps two states rather
+// than one. `sent` is the expected case: the message went out and no report came back. `pending`
+// is the interrupted one — the row is written down BEFORE the send (deliberately: an actuation
+// that was sent but never recorded is the worst possible ordering), so a process that stops in
+// between leaves a row that has never been ruled on. Left alone it stays pending forever: no
+// timeout applies to it, the metric never counts it, the notification never fires, and the UI
+// renders it as still in flight — a spinner that never resolves. A command nobody will ever look
+// at again is a worse outcome than the retry this design refuses to do, so it is ended here too.
 func (s *CommandService) SweepUnconfirmed(ctx context.Context) {
 	cutoff := time.Now().Add(-confirmTimeout).Unix()
+	s.endStale(ctx, "sent", "SentAt", cutoff,
+		"the device never reported the new state — it may or may not have acted. Not retried automatically: re-sending could act twice.",
+		"UNCONFIRMED: %s on %q was not confirmed by the device",
+		"command %d unconfirmed after %s — failed, NOT retried")
+	// A pending row is timed from when it was REQUESTED — it has no SentAt, that being exactly
+	// what it never got to. The same cutoff is comfortably longer than any legitimate stay in
+	// pending: the MQTT publish is in-process, and the Modbus write is bounded by
+	// modbusWriteTimeout, so nothing healthy is still pending after half a minute.
+	s.endStale(ctx, "pending", "RequestedAt", cutoff,
+		"the app stopped before this command's result was recorded — it may or may not have reached the device. Not retried automatically: re-sending could act twice.",
+		"INTERRUPTED: %s on %q was never completed — the app stopped before it could be recorded",
+		"command %d was still pending after %s — the app stopped before it was sent; failed, NOT retried")
+}
+
+// endStale marks one class of stuck command as failed, with its own explanation. The reason text
+// differs because the two cases tell an operator different things: an unconfirmed command was
+// definitely sent, while an interrupted one may never have left the building.
+func (s *CommandService) endStale(ctx context.Context, status, timeField string, cutoff int64, reason, auditFmt, logFmt string) {
 	rows, _, err := s.commands.Get(ctx, "", 200, 0,
 		[]sqldataenums.Filter{
-			{FieldName: "Status", Compare: sqldataenums.Equal, Value: "sent"},
-			{FieldName: "SentAt", Compare: sqldataenums.LessThan, Value: cutoff},
+			{FieldName: "Status", Compare: sqldataenums.Equal, Value: status},
+			{FieldName: timeField, Compare: sqldataenums.LessThan, Value: cutoff},
 		}, nil)
 	if err != nil {
 		return
 	}
 	for _, c := range rows {
 		c.Status = "failed"
-		c.Error = "the device never reported the new state — it may or may not have acted. Not retried automatically: re-sending could act twice."
+		c.Error = reason
 		_, _ = s.commands.UpdateById(ctx, "", *c)
 		s.countCommand("failed")
-		s.audit(ctx, fmt.Sprintf("UNCONFIRMED: %s on %q was not confirmed by the device", c.Name, c.DeviceName),
+		s.audit(ctx, fmt.Sprintf(auditFmt, c.Name, c.DeviceName),
 			map[string]any{"deviceId": c.DeviceId, "command": c.Name, "commandId": c.Id})
-		s.logf("command %d unconfirmed after %s — failed, NOT retried", c.Id, confirmTimeout)
+		s.logf(logFmt, c.Id, confirmTimeout)
 	}
 }
 

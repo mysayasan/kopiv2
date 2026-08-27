@@ -92,6 +92,7 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o .artifacts/fleetbench/bin/myio
 python tools/fleetbench/iotsan_harness.py            # myiotsan + its EMBEDDED broker
 python tools/fleetbench/bench_iotsan_actuation.py    # does anything reach a relay off-path?
 python tools/fleetbench/bench_iotsan_modbus.py       # does a WRITE reach the wire, and move plant?
+python tools/fleetbench/bench_iotsan_commands.py     # does a failed command STAY failed?
 ```
 
 `bench_idsan_lockout.py` is the only myidsan bench that stands up a **cluster**: a Postgres
@@ -480,6 +481,64 @@ Facts worth not rediscovering:
 - A stale simulator holds the port, so the next one dies on bind while the port still answers, and
   the bench then measures the OLD binary with none of the flags it just asked for. `start_sim`
   refuses to return until the process IT launched is both alive and serving.
+
+
+## myiotsan — the life of a command
+
+`bench_iotsan_commands.py`, **34/34** (27/32 against unfixed main on the identical file — two of
+the 34 only become reachable once an interrupted command actually ends). It takes the app at its word on the one
+design decision it argues for hardest: **an actuation is never automatically retried**, because
+re-sending a relay write is a second physical action and a retry whose first attempt landed opens
+the door twice.
+
+That promise has two halves, and the second is the dangerous one. *Nothing retries* is easy to
+believe. *Nothing is silently lost* is not — and it is what makes the first half safe: refusing to
+retry is only defensible because a HUMAN is handed the decision, so a command that reaches no
+human is a silent drop rather than a safe refusal. A command that ends up neither confirmed nor
+failed is worse than a retry: the operator is never told, the metric never counts it, and the row
+sits there claiming to be in flight.
+
+It found two, and both are of that second kind.
+
+**One report confirmed three commands.** Confirmation matched a report against the commands
+waiting on a device by comparing the reported NUMBER alone. A building controller routinely has
+several commands outstanding that share a number — a lock and a fan are both switches, so both are
+`1`. Reporting the lock's state marked the fan `confirmed`, the strongest claim this system makes
+about a physical action, and the fan's command then never became the failure the operator would
+have been shown. One report invented an actuation and lost a failure in the same stroke. It even
+confirmed a command whose profile declares NO confirm key — the case the code documents as an
+honest "sent, never confirmed". Confirmation now requires the report to be on the key the
+profile declares for that command (`confirmsKey`, unit-pinned).
+
+**A command interrupted mid-write stayed `pending` forever.** The row is written down BEFORE the
+send, deliberately — an actuation that was sent but never recorded is the worst ordering. But
+`SweepUnconfirmed` only ever looked at `sent`, so a process that stopped in between left a row no
+timeout applied to: never counted, never notified, and rendered by the UI as still in flight, a
+spinner that never resolves. The sweep now ends `pending` too, timed from `RequestedAt` (a pending
+row has no `SentAt` — that is exactly what it never got), with a reason that is honest about the
+difference: it may or may not have reached the device.
+
+Everything else held, and is now proven rather than assumed: an unconfirmed command becomes
+`failed` on the timeout and NOTHING is re-sent across the whole window; the failure reaches the
+operator's notification feed; a LATE report does not resurrect it; a restart with a command in
+flight ends that command and re-sends nothing; and a wedged Modbus device is dialled exactly once
+per attempt, with no re-dial after a restart.
+
+How the two hard cases are driven:
+
+- **A wedged device is a socket that accepts and never answers** (`Blackhole` in the bench). That
+  stalls a Modbus write inside its 3-second per-operation timeout, which is the window a
+  `docker kill` has to land in — and it COUNTS dials, which is how "nothing re-drove it" is
+  measured on the polled transport, the Modbus equivalent of watching the MQTT wire.
+- **The Modbus bench profile declares no telemetry keys on purpose.** The poller refuses such a
+  profile out loud (the fix from the Modbus bench), so nothing but the command path ever dials the
+  endpoint and the dial count means what it says. A command binds an absolute register and needs
+  no read map.
+- The device that CONFIRMS is the same `paho` client that watches the wire: it reports state back
+  over the real broker, through the real ingest path, so a confirmation is the product's own loop
+  closing rather than an API poke.
+- Every negative is preceded by the positive that proves the mechanism works — the confirm path is
+  demonstrated end to end before any "it did not confirm" is believed.
 
 
 ## mypintusan — the first bench of the app that opens doors

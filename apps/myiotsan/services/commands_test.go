@@ -211,3 +211,33 @@ func TestCommand_ColorPayloadSubstitutesChannels(t *testing.T) {
 		t.Fatalf("expected %s, got %s", want, got)
 	}
 }
+// A device's report may only confirm the command it belongs to.
+//
+// This is the matching rule a live bench caught being too loose: confirmation used to compare the
+// reported NUMBER alone, and a building controller routinely has several commands outstanding that
+// share a number — a lock and a fan are both switches, so both are 1. One report of the lock's key
+// then confirmed the fan that never moved, and the fan's command never became the failure an
+// operator would have been shown.
+func TestCommand_AReportConfirmsOnlyItsOwnKey(t *testing.T) {
+	cases := []struct {
+		confirmKey string
+		reported   string
+		want       bool
+	}{
+		{"state", "state", true},
+		{"State", "state", true},   // keys compare case-insensitively everywhere else too
+		{" state ", "state", true}, // authored with stray whitespace in the profile form
+		{"state", "fan_state", false},
+		{"fan_state", "state", false},
+		// No declared confirm key means this command cannot be confirmed by telemetry at all —
+		// "sent, never confirmed" is the honest outcome, not an invitation to match on the value.
+		{"", "state", false},
+		{"state", "", false},
+		{"", "", false},
+	}
+	for _, c := range cases {
+		if got := confirmsKey(c.confirmKey, c.reported); got != c.want {
+			t.Errorf("confirmsKey(%q, %q) = %v, want %v", c.confirmKey, c.reported, got, c.want)
+		}
+	}
+}
