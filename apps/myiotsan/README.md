@@ -322,13 +322,19 @@ wrongly.
   could be about to act. Do not treat `sent` as "done". A Modbus command never passes through
   `sent` at all — it goes straight to `confirmed` or `failed`, since the write is confirmed inline.
 - **`confirmed`** is the only status that means the device physically acted: for an MQTT command
-  it is set the moment the device reports the state back on the command's `confirmKey`; for a
+  it is set the moment the device reports the state back **on that command's own `confirmKey`** —
+  a reading on any other key confirms nothing, however well the number matches, and a command that
+  declares no `confirmKey` is never confirmed by telemetry at all; for a
   Modbus command it is set the moment the guarded write reads the register back and sees the
   value land — no separate reported reading is needed. This is the status to wait for before
   believing a door is locked or a breaker is open.
-- **`failed`** means either the command was refused (a gate rejected it — the reason is given
-  verbatim, e.g. "outside the safe range 5..30") or, for MQTT, it was sent but never confirmed
-  within 30 seconds, or, for Modbus, the guarded write itself was not confirmed within 5 seconds.
+- **`failed`** means the command was refused (a gate rejected it — the reason is given verbatim,
+  e.g. "outside the safe range 5..30"); or, for MQTT, it was sent but never confirmed within 30
+  seconds; or, for Modbus, the guarded write itself was not confirmed within 5 seconds; or the app
+  **stopped before the command's result could be recorded** — a restart in the middle of a write.
+  The last case reads differently on purpose ("it may or may not have reached the device"), because
+  unlike the others nobody knows whether it left the building. **Nothing may sit in `pending`
+  waiting for an answer that is never coming**: not being told is worse than being told badly.
   **A failed-by-timeout command is never automatically resent, on either transport** — re-sending
   a relay write or a register write is a second physical action, and if the first one actually
   landed but its confirmation was lost in transit, a retry would fire the relay (or write the

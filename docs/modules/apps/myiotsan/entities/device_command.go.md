@@ -16,17 +16,23 @@ produce this row and `docs/MYIOTSAN_PLAN.md` §3.4.
 - `Status` — the lifecycle, and the one field an operator actually reads:
   - `pending` — accepted, not yet published.
   - `sent` — published to the device. **Not** "done" — see `Error`/notes below.
-  - `confirmed` — the device REPORTED BACK the state that was asked for. The only status that
-    means the physical thing actually happened.
-  - `failed` — refused (a gate rejected it), or never confirmed within the window.
+  - `confirmed` — the device REPORTED BACK the state that was asked for, **on the telemetry key
+    the command's profile declares as its `ConfirmKey`**. The only status that means the physical
+    thing actually happened. A report on any other key confirms nothing however well the number
+    matches, and a command that declares no `ConfirmKey` can never be confirmed by telemetry —
+    "sent, never confirmed" is the honest outcome there.
+  - `failed` — refused (a gate rejected it), never confirmed within the window, or **interrupted**:
+    a row left `pending` by a process that stopped between recording the command and sending it is
+    ended by the same sweep. Nothing may sit in a non-terminal state forever.
   - A failed command is **never retried automatically**. Re-sending a relay write is a SECOND
     PHYSICAL ACTION: if the first one landed but its confirmation was lost, a retry fires the
     relay again — the door opens twice — and nothing at this layer can tell the two cases apart.
     A timeout ends the command and leaves the decision to a human; see
     `CommandService.SweepUnconfirmed`.
-- `Error` — explains a refusal or an unconfirmed timeout in words an operator can act on (e.g.
-  "outside the safe range 5..30", "the device never reported the new state — it may or may not
-  have acted. Not retried automatically: re-sending could act twice.").
+- `Error` — explains a refusal, an unconfirmed timeout or an interruption in words an operator can
+  act on (e.g. "outside the safe range 5..30", "the device never reported the new state — it may
+  or may not have acted. Not retried automatically: re-sending could act twice.", "the app stopped
+  before this command's result was recorded — it may or may not have reached the device.").
 - `RequestedBy`/`RequestedAt` — the local user id and when; `SentAt`; `ConfirmedAt` (zero means
   never confirmed — an unconfirmed command must never be displayed as if it succeeded).
 - `RequestedByName` — who `RequestedBy` WAS, by name, and not redundant with the id. A command can

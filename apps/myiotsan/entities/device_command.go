@@ -27,9 +27,18 @@ type DeviceCommand struct {
 	//
 	//	pending    accepted, not yet published
 	//	sent       published to the device
-	//	confirmed  the device REPORTED BACK the state we asked for — the only status that means
-	//	           the physical thing actually happened
-	//	failed     refused, or never confirmed within the window
+	//	confirmed  the device REPORTED BACK, on the telemetry key this command's profile declares
+	//	           as its ConfirmKey, the state we asked for — the only status that means the
+	//	           physical thing actually happened. A report on any OTHER key confirms nothing,
+	//	           however well the number matches: two commands on one controller routinely carry
+	//	           the same value (a lock and a fan are both switches), and letting one device's
+	//	           answer speak for a command it said nothing about would invent an actuation and
+	//	           lose a failure in the same stroke.
+	//	failed     refused, never confirmed within the window, or INTERRUPTED — a row left pending
+	//	           by a process that stopped between recording the command and sending it is ended
+	//	           by the same sweep. Nothing may sit in a non-terminal state forever: "we never
+	//	           retry" is only safe because a human is handed the decision, and a command nobody
+	//	           is ever told about is a silent drop rather than a safe refusal.
 	//
 	// A failed command is NEVER retried automatically. Re-sending a relay write is a SECOND
 	// PHYSICAL ACTION: a retry that "succeeds" after a timeout may have fired the relay twice,

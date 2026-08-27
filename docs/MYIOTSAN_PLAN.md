@@ -525,6 +525,19 @@ acted. Not retried automatically: re-sending could act twice."*, and the decisio
 human. **Verified live** with a relay simulator that obeys but never reports back: it physically
 switched, the command was recorded `failed`, and exactly ONE command was ever sent.
 
+Refusing to retry is only safe **because a human is handed the decision**, which makes the second
+half of the promise the load-bearing one: nothing may be silently lost. A command left in a
+non-terminal state is worse than a retry — nobody is told, nothing counts it, and the row claims
+to be in flight forever. The command-lifecycle bench
+(`tools/fleetbench/bench_iotsan_commands.py`) found the one state where that happened: a row
+interrupted between being recorded and being sent stayed `pending` for good, because the sweep
+only ever looked at `sent`. It now ends `pending` too, timed from `RequestedAt`, saying honestly
+that the command may or may not have reached the device. The same bench found confirmation
+matching on the reported VALUE alone, so one device's report confirmed commands it had said
+nothing about (a lock and a fan are both switches, so both are `1`) — inventing an actuation and
+losing a failure at once; a report now confirms only a command that declares that telemetry key as
+its `ConfirmKey`.
+
 **B. Desired state expires (5 minutes) and is never re-applied.** The obvious twin
 implementation re-applies desired state whenever a device reconnects — fine for a light bulb,
 dangerous here. A door controller offline for a month would come back and immediately apply a

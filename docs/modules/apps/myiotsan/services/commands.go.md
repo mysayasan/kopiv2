@@ -86,6 +86,16 @@ this layer can distinguish that from the first one never arriving. So:
   still `sent` past that window `failed`, with `Error` reading plainly: *"the device never
   reported the new state — it may or may not have acted. Not retried automatically: re-sending
   could act twice."* It does **not** resend. The decision is left to a human.
+- **It sweeps `pending` too**, timed from `RequestedAt` since a pending row has no `SentAt` —
+  that being exactly what it never got. The row is written down BEFORE the send (deliberately: an
+  actuation that was sent but never recorded is the worst ordering), so a process that stops in
+  between leaves a command no timeout applies to. Left alone it stayed pending forever: never
+  counted, never notified, and rendered by the UI as still in flight — a spinner that never
+  resolves. **"We never retry" is only safe because a human is handed the decision, so a command
+  nobody is ever told about is a silent drop rather than a safe refusal.** Its `Error` is honest
+  about the difference: *"the app stopped before this command's result was recorded — it may or
+  may not have reached the device."* Found by the command-lifecycle bench, which kills the app
+  mid-write against a device that accepts the connection and never answers.
 - Verified live with a relay simulator that obeys but never reports back: the relay physically
   switched, the command was recorded `failed`, and exactly ONE command was ever sent.
 
@@ -104,6 +114,16 @@ this layer can distinguish that from the first one never arriving. So:
   matches an outstanding (unexpired-or-not — matching is not gated by `DesiredExpiresAt`, only
   *re-application* would be, and this app does not re-apply) desire, clears `HasDesired` and
   confirms the matching `sent` `DeviceCommand` rows via `confirmPending`.
+- **`confirmPending` matches on the KEY as well as the value** (`confirmsKey`): a report confirms
+  a command only when the profile declares that telemetry key as the command's `ConfirmKey`, and a
+  command with no `ConfirmKey` is never confirmed by a report at all. Matching on the value alone
+  was wrong in a way a live bench caught and a unit test could not: a controller routinely has
+  several commands outstanding that carry the same number (a lock and a fan are both switches, so
+  both are `1`), so one report of the lock's key marked the fan `confirmed` — the strongest claim
+  this system makes about a physical action — and the fan's command then never became the failure
+  the operator would have been shown. One report invented an actuation and lost a failure at once.
+  If the device or its profile cannot be read, nothing is confirmed: a timeout and an honest "not
+  confirmed" costs less than a false claim that a relay moved.
 - **Desired state is never re-applied on its own.** `DesiredExpiresAt` exists so a stale desire
   is visibly stale (the twin still returns it, `HasDesired: true`, past expiry) rather than
   either vanishing or being silently re-sent to a device that just reconnected. See
