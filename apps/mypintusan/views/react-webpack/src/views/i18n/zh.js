@@ -150,6 +150,7 @@ export default {
   'reason.offlineDenied': '此门在离线时拒绝通行',
   'reason.secureChannel': '读卡器未加密',
   'reason.readerOffline': '读卡器无响应',
+  'reason.readerNotEnrolled': '读卡器尚未登记',
   'reason.doorDisabled': '此门已停用',
   'reason.badPin': 'PIN 码错误',
   'reason.duress': '在胁迫状态下放行',

@@ -86,6 +86,8 @@ node   tools/fleetbench/uicheck_idsan_admin.js .artifacts/fleetbench en  # myids
 node   tools/fleetbench/uicheck_idsan_admin.js .artifacts/fleetbench ar  # (also ms, zh)
 node   tools/fleetbench/uicheck_idsan_webauthn.js .artifacts/fleetbench  # a REAL FIDO2 ceremony
 python tools/fleetbench/bench_myseliasan_lockout.py  # myseliasan's lockout — it had NONE
+python tools/fleetbench/pintusan_harness.py     # mypintusan + a REAL OSDP reader on the bus
+python tools/fleetbench/bench_pintusan_door.py  # does the door open for the right person?
 ```
 
 `bench_idsan_lockout.py` is the only myidsan bench that stands up a **cluster**: a Postgres
@@ -375,6 +377,56 @@ background moves — see the checklist entry for why both halves matter.
 `uicheck_faceredact.js` drives the export dialog and runs a real face-redacted export from the
 browser, so it is slow (a face pass reads every frame). Run the API bench first — the screen
 check needs a camera with footage on node-a.
+
+## mypintusan — the first bench of the app that opens doors
+
+`pintusan_harness.py` + `bench_pintusan_door.py`, **32/32**. The app had the thinnest unit
+coverage in the suite and no live exercise at all. Its decision path is a pure function with
+genuinely good table tests, which is exactly the shape that lulls: `Decide()` can be flawless
+while the SNAPSHOT handed to it is wrong, and no test of a pure function will ever notice. So
+every claim is made by presenting a card on a real OSDP bus and reading what the product
+recorded.
+
+The core access path held up — a valid badge grants, a revoked card stops opening the door
+within a second, lockdown denies, a duress PIN grants while raising a critical alarm, and a
+remote unlock is recorded with the operator's name.
+
+Things it cost a run to learn:
+
+- **The simulator's DEFAULT CARD could never open a door.** `deadbeef` fails Wiegand-26 leading
+  even parity, and a CP treats a parity failure as a hard denial (a card one bit out may be
+  somebody else's). The first run watched every badge denied and looked like a broken grant
+  path. The default is now `00880040` — facility 1, card 4096, valid parity. **If you change
+  it, decode the new value with `services.DecodeCard` first.**
+- **mypintusan is an APPLIANCE app**: shared local Basic auth (`GET /api/auth/session`), like
+  mymatasan and myiotsan. Not myseliasan's `/api/auth/local-login`, not myidsan's
+  `/api/login/default`. Guessing wrong costs a confusing run of 404s.
+- **Creating a DOOR creates its reader.** `POST /api/doors` takes `busPort` + `osdpAddress` and
+  writes both rows; readers are list-only, so there is no reader-create endpoint to hunt for.
+- **A holder needs `ref` AND `name`** (the API decodes an `entities.Holder` directly).
+- **Lockdown takes `{"lockdown": true}`, not `{"on": true}`, and returns the RESULTING state.**
+  Assert the state: this bench first passed on a 200 whose body said `lockdown: false`, having
+  asked for something the API never parsed.
+- **Alarms surface as NOTIFICATIONS** (`/api/notifications`). There is no `/api/events/alarms`;
+  asking for one returns nothing, and a substring fallback then reported a duress alarm on a run
+  with no duress in it.
+- **The access event carries no strike duration**, so a strike-parity check compares two absent
+  fields and passes on `None == None` — the fourth empty-result pass in this bench series.
+  Duress strike parity is structural (one expression, no duress branch) and belongs to the unit
+  tests; what a live run can show is that the DECISION is indistinguishable.
+- **Badge before provisioning if you want to test the unprovisioned state.** Asking "was an
+  unenrolled reader misreported?" after provisioning finds no such events and passes on nothing.
+- **The bus port must be `tcp://host:port`** and the container must reach the simulator on the
+  host's LAN address, not `127.0.0.1`. Buses are seeded from config on FIRST BOOT only — a
+  surviving data dir means the second run silently ignores the bus it was just handed, so the
+  harness wipes it.
+- Kill a stale simulator with `taskkill //F //IM osdp-sim.exe` on Windows; `pkill` does not
+  reach it, and the old process keeps the port and keeps badging the OLD card.
+- **Seen but NOT fixed:** a remote unlock that races another command on the same reader is
+  refused with the raw protocol string `osdp: superseded by a newer command`. It is a genuine
+  transient (12/12 succeeded once the bus was up) and the superseded command really did not
+  execute — but it is the one action where an operator most needs to know whether the door
+  opened, and a protocol string does not tell them.
 
 ## `onvifsim.py` — a real ONVIF device, on demand
 

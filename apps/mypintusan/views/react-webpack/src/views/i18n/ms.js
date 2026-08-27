@@ -150,6 +150,7 @@ export default {
   'reason.offlineDenied': 'Pintu ini menolak semasa luar talian',
   'reason.secureChannel': 'Pembaca tidak disulitkan',
   'reason.readerOffline': 'Pembaca tidak bertindak balas',
+  'reason.readerNotEnrolled': 'Pembaca belum didaftarkan',
   'reason.doorDisabled': 'Pintu tidak berfungsi',
   'reason.badPin': 'PIN salah',
   'reason.duress': 'Dibenarkan di bawah paksaan',

@@ -44,11 +44,17 @@ type scenario struct {
 }
 
 type config struct {
-	log        *log.Logger
-	verbose    bool
-	card       []byte
-	bits       int
-	cardEvery  time.Duration
+	log       *log.Logger
+	verbose   bool
+	card      []byte
+	bits      int
+	cardEvery time.Duration
+	// pin, when set, is entered on the keypad immediately BEFORE each card presentation.
+	// The order is not a detail: the controller buffers a keypad entry and CONSUMES it when
+	// the card arrives (services/controller.go takePIN), so a PIN sent after the card is
+	// simply left for the next person — which is the behaviour that stops the man behind you
+	// in the queue opening the door on your PIN.
+	pin        string
 	faultAfter time.Duration
 	slowReply  time.Duration
 	siteKey    osdp.SCBK
@@ -213,7 +219,13 @@ func main() {
 	addr := flag.String("addr", ":4870", "TCP listen address for the simulated bus")
 	scen := flag.String("scenario", "happy", "fault scenario to run (-list to see them all)")
 	list := flag.Bool("list", false, "list the scenarios and exit")
-	cardHex := flag.String("card", "deadbeef", "card data presented on the bus, hex")
+	// A card with VALID Wiegand-26 parity (facility 1, number 4096), so the default demonstrates
+	// the happy path. The old default, `deadbeef`, fails leading even parity — and a CP treats a
+	// parity failure as a hard denial, because a card one bit out may be somebody else's. The
+	// first live bench of mypintusan spent a run watching every badge denied before working out
+	// that the simulator's own default could never be granted.
+	cardHex := flag.String("card", "00880040", "card data presented on the bus, hex (must have valid parity for the bit count)")
+	pin := flag.String("pin", "", "PIN digits entered on the keypad just before each card (empty = card only)")
 	bits := flag.Int("bits", 26, "card bit count (26 = standard Wiegand, 34 = extended)")
 	every := flag.Duration("card-every", 8*time.Second, "how often to present a card; 0 disables")
 	faultAfter := flag.Duration("fault-after", 15*time.Second, "delay before a time-based fault bites")
@@ -256,7 +268,7 @@ func main() {
 
 	bus, scripts := s.build(config{
 		log: lg, verbose: *verbose, card: card, bits: *bits,
-		cardEvery: *every, faultAfter: *faultAfter, slowReply: *slow, siteKey: siteKey,
+		cardEvery: *every, pin: *pin, faultAfter: *faultAfter, slowReply: *slow, siteKey: siteKey,
 	})
 
 	ln, err := net.Listen("tcp", *addr)
@@ -311,10 +323,18 @@ func cardLoop(c config, addr uint8) func(*Bus) {
 		for range time.Tick(c.cardEvery) {
 			b.With(func(pds []*osdp.PD) {
 				for _, pd := range pds {
-					if pd.Address == addr {
-						pd.PresentCard(osdp.CardRead{Format: 1, BitCount: uint16(c.bits), Data: c.card})
-						c.log.Printf("card presented at PD %d: % x (%d bits)", addr, c.card, c.bits)
+					if pd.Address != addr {
+						continue
 					}
+					// KEYPAD FIRST, then the card. The CP buffers the digits and consumes
+					// them when the card arrives, so the reverse order presents a card with
+					// no PIN and leaves the digits waiting for whoever badges next.
+					if c.pin != "" {
+						pd.PresentKeypad(0, []byte(c.pin))
+						c.log.Printf("PIN entered at PD %d: %s", addr, strings.Repeat("*", len(c.pin)))
+					}
+					pd.PresentCard(osdp.CardRead{Format: 1, BitCount: uint16(c.bits), Data: c.card})
+					c.log.Printf("card presented at PD %d: % x (%d bits)", addr, c.card, c.bits)
 				}
 			})
 		}

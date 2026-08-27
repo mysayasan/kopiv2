@@ -40,3 +40,16 @@ system that logs only successes cannot produce it.
   implementation; nothing survives a restart.
 - Written by `services.Controller.record` on every badge (`services/controller.go.md`), and by
   `emitDoorEvents` for the two door-state-machine alarm kinds above.
+
+## `ReasonReaderNotEnrolled` (added after the first live bench)
+
+A badge on a reader that **answers perfectly well** and that nobody has added. It used to be
+filed as `ReasonReaderOffline`, which is the one thing it is not: the first live bench of this
+app (`tools/fleetbench/bench_pintusan_door.py`) watched a healthy simulated reader deliver cards
+while the operator was told the reader was offline. That sends whoever is commissioning a new
+door to check cabling and power for a device whose only problem is that it is not in the
+database.
+
+The `Detail` was always accurate ("no reader enrolled at <bus> address N"); it was the reason
+CODE — the thing the events screen filters and translates on — that lied. Mapped in
+`views/react-webpack/src/lib/access.js` and translated in all four dictionaries.

@@ -155,6 +155,7 @@ export default {
   'reason.offlineDenied': 'This door refuses while offline',
   'reason.secureChannel': 'Reader is not encrypted',
   'reason.readerOffline': 'Reader not answering',
+  'reason.readerNotEnrolled': 'Reader is not enrolled',
   'reason.doorDisabled': 'Door is out of service',
   'reason.badPin': 'Wrong PIN',
   'reason.duress': 'Allowed under duress',
