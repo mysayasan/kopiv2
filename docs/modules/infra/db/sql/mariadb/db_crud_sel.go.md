@@ -11,3 +11,4 @@ Builds and executes MariaDB select queries for the runtime DB adapter.
 - Scan rows using destinations selected from reflected field types.
 - Normalize nullable database strings into empty strings for plain Go string fields.
 - Return selected rows plus the total count expected by repository callers.
+- `selectWithSQL` no longer hardcodes a 100-row scan ceiling (same fix as the SQLite and Postgres adapters). `Select`/`SelectJoin` pass the caller's `limit` through, and the scan loop is capped at `dbsql.ScanRowLimit(limit)` — see `infra/db/sql/scan_limit.go.md` and `sqlite/db_crud_sel.go.md` for the full defect this closes across all three drivers.

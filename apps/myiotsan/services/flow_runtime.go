@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mysayasan/kopiv2/apps/myiotsan/entities"
@@ -34,6 +35,26 @@ const (
 	// drains) the OLDEST-style backpressure is to DROP the newest event and count it — a flow is a
 	// convenience layer over telemetry, never the system of record, so shedding load here is safe.
 	flowEventQueue = 4096
+	// flowEventBudget bounds what ONE reading may cost the worker, across every node it touches.
+	//
+	// flowScriptTimeout fences a single script; nothing used to fence the event. A graph is
+	// allowed 200 nodes and a propagation is allowed flowMaxSteps of them, so a graph whose
+	// scripts each finish just inside their budget — none of them misbehaving by any rule the
+	// runtime could see — could legally spend a hundred seconds of the shared worker on ONE
+	// sample. Measured on a live appliance: a 190-node graph of 80ms scripts held every other
+	// flow in the install for fifteen seconds per reading. One second is far more than a
+	// data-flow graph needs and far less than an operator would call an outage.
+	flowEventBudget = time.Second
+	// flowQuarantineAfter is how many CONSECUTIVE script timeouts a flow gets before the runtime
+	// stops running it and tells somebody.
+	//
+	// A script that throws is ordinary — a payload arrived in a shape it did not expect — and it
+	// costs nothing, so it is not counted here. A script that never RETURNS costs the whole
+	// per-script budget out of a worker shared by every flow in the install, on every message,
+	// forever. Five in a row is not a bad reading; it is a broken flow, and running it another ten
+	// thousand times helps nobody. The count is kept per NODE and a node's own successful run
+	// resets its own count; editing the flow recompiles it and clears the quarantine.
+	flowQuarantineAfter = 5
 )
 
 // flowNotifier and deviceResolver are the two collaborators an OUTPUT node needs, as interfaces so the
@@ -99,6 +120,25 @@ type compiledFlow struct {
 	lastPass map[string]int64   // nodeId -> last pass unix-milli (throttle state)
 	debug    *debugRing
 	deps     *flowDeps
+
+	// Quarantine state. `timeouts` is touched only by the worker goroutine, which is the only
+	// thing that executes a flow. `quarantined` is also READ by the status endpoint on an HTTP
+	// goroutine, so it is atomic rather than plain.
+	//
+	// The count is PER NODE, and that is not a detail. A flow-wide counter reset by any
+	// successful script would never fire on the commonest shape of all — a healthy transform
+	// wired into a runaway one — because the healthy node zeroes the count on every event
+	// moments before the runaway node increments it back to one.
+	timeouts    map[string]int // nodeId -> consecutive script timeouts
+	quarantined atomic.Bool
+}
+
+// flowRun is what one event carries as it propagates: how many nodes it has been through, and
+// when its budget runs out. Both bounds belong to the EVENT, not to a node — the thing being
+// protected is the worker every other flow in the install is waiting on.
+type flowRun struct {
+	steps    int
+	deadline time.Time
 }
 
 type flowInputBinding struct {
@@ -122,27 +162,21 @@ func compileFlow(id int64, name, rawGraph string, deps *flowDeps) (*compiledFlow
 		outWires: map[string][]string{},
 		deadband: map[string]float64{},
 		lastPass: map[string]int64{},
+		timeouts: map[string]int{},
 		debug:    newDebugRing(),
 		deps:     deps,
 	}
 	for i := range g.Nodes {
 		n := &g.Nodes[i]
 		cf.nodes[n.Id] = n
+		if body, ok := nodeScript(n); ok {
+			// Same source the save path compiles (flows.go nodeScript) — one definition, so a
+			// flow that validated cannot fail here for a reason the author was never shown.
+			if err := cf.sandbox.compile(n.Id, body); err != nil {
+				return nil, err
+			}
+		}
 		switch n.Type {
-		case nodeFunction:
-			if err := cf.sandbox.compile(n.Id, cfgString(n.Config, "code")); err != nil {
-				return nil, err
-			}
-		case nodeExpression:
-			expr := cfgString(n.Config, "expr")
-			if err := cf.sandbox.compile(n.Id, "return ("+expr+");"); err != nil {
-				return nil, err
-			}
-		case nodeSwitch:
-			pred := cfgString(n.Config, "predicate")
-			if err := cf.sandbox.compile(n.Id, "if ("+pred+") { return msg; } return null;"); err != nil {
-				return nil, err
-			}
 		case nodeDeviceTelemetry:
 			cf.inputs = append(cf.inputs, flowInputBinding{
 				nodeId:    n.Id,
@@ -159,13 +193,24 @@ func compileFlow(id int64, name, rawGraph string, deps *flowDeps) (*compiledFlow
 
 // onInput seeds a message at an input node and propagates it through the graph.
 func (cf *compiledFlow) onInput(ctx context.Context, nodeId string, msg *flowMessage) {
-	steps := 0
-	cf.visit(ctx, nodeId, msg, &steps)
+	if cf.quarantined.Load() {
+		return
+	}
+	run := &flowRun{deadline: time.Now().Add(flowEventBudget)}
+	cf.visit(ctx, nodeId, msg, run)
 }
 
-func (cf *compiledFlow) visit(ctx context.Context, nodeId string, in *flowMessage, steps *int) {
-	if *steps++; *steps > flowMaxSteps {
+func (cf *compiledFlow) visit(ctx context.Context, nodeId string, in *flowMessage, run *flowRun) {
+	if run.steps++; run.steps > flowMaxSteps {
 		cf.deps.logf("flow %q exceeded %d propagation steps — stopping this event", cf.name, flowMaxSteps)
+		return
+	}
+	if time.Now().After(run.deadline) {
+		// The worker is shared. A graph that wants more than this per reading is starving every
+		// other flow in the install, so the event stops here and the operator gets told which
+		// flow to look at rather than a system that is mysteriously behind.
+		cf.deps.logf("flow %q spent its %s budget on one reading at node %q — stopping this event; "+
+			"the graph is too slow to run on every sample", cf.name, flowEventBudget, nodeId)
 		return
 	}
 	cf.debug.record(nodeId, in) // what this node received — the inspector shows this
@@ -178,7 +223,7 @@ func (cf *compiledFlow) visit(ctx context.Context, nodeId string, in *flowMessag
 		return
 	}
 	for _, next := range cf.outWires[nodeId] {
-		cf.visit(ctx, next, out.clone(), steps)
+		cf.visit(ctx, next, out.clone(), run)
 	}
 }
 
@@ -243,8 +288,10 @@ func (cf *compiledFlow) exec(ctx context.Context, node *flowNode, in *flowMessag
 		out, err := cf.sandbox.run(node.Id, in, flowScriptTimeout)
 		if err != nil {
 			cf.deps.logf("flow %q node %q script error: %v", cf.name, node.Id, err)
+			cf.noteScriptError(ctx, node.Id, err)
 			return nil, false
 		}
+		delete(cf.timeouts, node.Id) // this script returned; it is not the wedged one
 		if out == nil {
 			return nil, false
 		}
@@ -274,6 +321,41 @@ func (cf *compiledFlow) exec(ctx context.Context, node *flowNode, in *flowMessag
 		cf.deps.logf("flow %q has unhandled node type %q", cf.name, node.Type)
 		return nil, false
 	}
+}
+
+// noteScriptError counts consecutive TIMEOUTS and quarantines a flow that keeps hitting them.
+//
+// The distinction between a timeout and a thrown error is the whole point. A script that throws
+// has met a payload it did not expect; that is ordinary, it costs nothing, and quarantining a
+// flow for it would take an alerting flow off the air because one sensor sent a null. A script
+// that does not RETURN spends the entire per-script budget out of a worker every other flow is
+// queued behind, and it will do so on every message until somebody notices — which, before this,
+// nobody ever did: the only trace was an INFO log line per event.
+func (cf *compiledFlow) noteScriptError(ctx context.Context, nodeId string, err error) {
+	if !isScriptTimeout(err) {
+		return
+	}
+	cf.timeouts[nodeId]++
+	n := cf.timeouts[nodeId]
+	if n < flowQuarantineAfter || cf.quarantined.Load() {
+		return
+	}
+	cf.quarantined.Store(true)
+	cf.deps.logf("flow %q quarantined: node %q exceeded its time budget %d times in a row; "+
+		"the flow has been stopped until it is edited", cf.name, nodeId, n)
+	if cf.deps.flowNotifier == nil {
+		return
+	}
+	cf.deps.flowNotifier.Publish(ctx, notification.Notification{
+		Category: notification.CategorySystem,
+		Severity: notification.Warning,
+		Title:    "Flow stopped: " + cf.name,
+		Body: fmt.Sprintf("The script on node %q in flow %q did not finish within its time budget "+
+			"%d times in a row, so the flow has been stopped to keep it from delaying every other "+
+			"flow. Edit and save the flow to start it again.", nodeId, cf.name, n),
+		Source: "flow:" + cf.name,
+		Data:   map[string]any{"flowId": cf.id, "node": nodeId, "reason": "quarantined"},
+	})
 }
 
 // doNotify publishes a notification. A flow's notification is a first-class alert, indistinguishable
@@ -496,8 +578,19 @@ type FlowRuntime struct {
 	mu       sync.RWMutex
 	compiled map[int64]*compiledFlow
 	index    map[string][]boundInput // deviceKey\x00key -> inputs to seed
+	// broken records the flows the runtime could NOT compile, by id, with the reason. An enabled
+	// flow that does not compile used to leave one INFO log line and nothing else — no state on
+	// the row, nothing in the feed — so the canvas showed an enabled flow that was never going to
+	// run. This is what FlowState reads and what the flows list renders.
+	broken map[int64]string
+	// told remembers which compile failure has already been reported, so a reconcile every thirty
+	// seconds does not put the same message in the operator's feed twice a minute forever.
+	told map[int64]string
 
-	dropped int64 // events shed under backpressure (for logging)
+	// dropped counts events shed when the queue overflowed. It is atomic because OnReading runs
+	// on whatever goroutine delivered the reading (the broker hook, the Modbus poller) while the
+	// stats endpoint reads it on an HTTP one.
+	dropped atomic.Int64
 }
 
 func NewFlowRuntime(svc *FlowService, issuer commandIssuer, notif flowNotifier, devices deviceResolver, writer readingSink, publish mqttPublish, topics topicGuard, logf func(string, ...any)) *FlowRuntime {
@@ -511,6 +604,8 @@ func NewFlowRuntime(svc *FlowService, issuer commandIssuer, notif flowNotifier, 
 		reloadCh: make(chan struct{}, 1),
 		compiled: map[int64]*compiledFlow{},
 		index:    map[string][]boundInput{},
+		broken:   map[int64]string{},
+		told:     map[int64]string{},
 	}
 }
 
@@ -526,7 +621,14 @@ func (r *FlowRuntime) OnReading(_ context.Context, dev *entities.IotDevice, key 
 	select {
 	case r.events <- flowEvent{deviceKey: dev.DeviceKey, key: key, value: value, ts: nowSec}:
 	default:
-		r.dropped++
+		n := r.dropped.Add(1)
+		// Log on a ramp, not per event: under sustained overload the log becomes the bottleneck.
+		// The COUNTER is the thing to watch (GET /api/flows/stats, and the Prometheus gauge) —
+		// this line is only so a shed shows up in an ordinary log read as well.
+		if n == 1 || n%1000 == 0 {
+			r.deps.logf("flow runtime is shedding telemetry events — the flows are not keeping up "+
+				"(%d dropped so far); a flow bound to a busy key is silently missing readings", n)
+		}
 	}
 }
 
@@ -572,6 +674,7 @@ func (r *FlowRuntime) reload(ctx context.Context) {
 	defer r.mu.Unlock()
 
 	next := make(map[int64]*compiledFlow, len(rows))
+	broken := make(map[int64]string)
 	for _, f := range rows {
 		if existing, ok := r.compiled[f.Id]; ok && existing.sig == f.Graph {
 			existing.name = f.Name
@@ -580,12 +683,25 @@ func (r *FlowRuntime) reload(ctx context.Context) {
 		}
 		cf, err := compileFlow(f.Id, f.Name, f.Graph, r.deps)
 		if err != nil {
+			// A graph that cannot compile is skipped, as it always was — one bad flow may not stop
+			// the others. What is new is that it stops being invisible: the state is recorded for
+			// the flows list, and the operator is told once. Scripts are refused at save now, so
+			// reaching here means an IMPORTED flow, or a row written by an older build — which is
+			// exactly the case nobody was ever going to notice.
 			r.deps.logf("flow %q (id %d) did not compile — skipped: %v", f.Name, f.Id, err)
+			broken[f.Id] = err.Error()
+			r.reportBroken(ctx, f.Id, f.Name, err.Error())
 			continue
 		}
 		next[f.Id] = cf
 	}
 	r.compiled = next
+	r.broken = broken
+	for id := range r.told {
+		if _, still := broken[id]; !still {
+			delete(r.told, id) // fixed or gone: a future failure is worth telling about again
+		}
+	}
 
 	idx := map[string][]boundInput{}
 	for _, cf := range next {
@@ -598,6 +714,90 @@ func (r *FlowRuntime) reload(ctx context.Context) {
 		}
 	}
 	r.index = idx
+}
+
+// reportBroken tells the operator, once, that an enabled flow cannot run. Caller holds r.mu.
+func (r *FlowRuntime) reportBroken(ctx context.Context, id int64, name, detail string) {
+	if r.told[id] == detail {
+		return
+	}
+	r.told[id] = detail
+	if r.deps.flowNotifier == nil {
+		return
+	}
+	r.deps.flowNotifier.Publish(ctx, notification.Notification{
+		Category: notification.CategorySystem,
+		Severity: notification.Warning,
+		Title:    "Flow not running: " + name,
+		Body: fmt.Sprintf("Flow %q is enabled but could not be compiled, so it is not running: %s. "+
+			"Open it and fix the node it names.", name, detail),
+		Source: "flow:" + name,
+		Data:   map[string]any{"flowId": id, "reason": "compile-error", "detail": detail},
+	})
+}
+
+// FlowState is what the flows list shows about a flow the RUNTIME knows something about: it is
+// enabled, and it is either running, stopped because it could not be compiled, or stopped because
+// its script kept running away. Anything the runtime has nothing to say about is simply running.
+type FlowState struct {
+	State  string `json:"state"`            // "running" | "error" | "quarantined"
+	Detail string `json:"detail,omitempty"` // why, when it is not running
+}
+
+// States returns the runtime state of every enabled flow, by id.
+func (r *FlowRuntime) States() map[int64]FlowState {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make(map[int64]FlowState, len(r.compiled)+len(r.broken))
+	for id, detail := range r.broken {
+		out[id] = FlowState{State: "error", Detail: detail}
+	}
+	for id, cf := range r.compiled {
+		if cf.quarantined.Load() {
+			out[id] = FlowState{State: "quarantined",
+				Detail: "a script exceeded its time budget repeatedly; edit and save the flow to start it again"}
+			continue
+		}
+		out[id] = FlowState{State: "running"}
+	}
+	return out
+}
+
+// Stats is what the flow runtime is doing, for /api/flows/stats and the metrics sampler.
+//
+// `dropped` is the reason this exists. The runtime sheds events when its queue overflows, and
+// until now it counted them into a field nothing ever read — the comment said "for logging" and
+// no line logged it. A flow that quietly stops firing under load has no other symptom: the broker
+// keeps accepting publishes, the readings keep landing, the chart keeps drawing, and only the
+// automation is missing. services/metrics.go states the rule this was breaking — instrument what
+// fails silently.
+type FlowStats struct {
+	Compiled    int   `json:"compiled"`    // enabled flows the runtime is running
+	Broken      int   `json:"broken"`      // enabled flows that would not compile
+	Quarantined int   `json:"quarantined"` // flows stopped for running away
+	Bindings    int   `json:"bindings"`    // (device,key) pairs any flow is listening on
+	Queued      int   `json:"queued"`      // events waiting for the worker
+	Capacity    int   `json:"capacity"`    // how many it can hold before shedding
+	Dropped     int64 `json:"dropped"`     // events SHED because the worker could not keep up
+}
+
+func (r *FlowRuntime) Stats() FlowStats {
+	r.mu.RLock()
+	s := FlowStats{
+		Compiled: len(r.compiled),
+		Broken:   len(r.broken),
+		Bindings: len(r.index),
+	}
+	for _, cf := range r.compiled {
+		if cf.quarantined.Load() {
+			s.Quarantined++
+		}
+	}
+	r.mu.RUnlock()
+	s.Queued = len(r.events)
+	s.Capacity = cap(r.events)
+	s.Dropped = r.dropped.Load()
+	return s
 }
 
 // dispatch delivers one telemetry event to every input node bound to it.

@@ -472,13 +472,6 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	scheduleService := services.NewScheduleService(deps.Db, sceneService, commandService,
 		func(f string, a ...any) { deps.Logger.Infof("myiotsan.scheduler", f, a...) })
 
-	// Runtime metrics. Everything here instruments a SILENT failure — a dropped reading, a
-	// mistuned deadband, a device gone quiet, a command that failed — none of which raises an
-	// error a human sees. The ingest gauges are SAMPLED off ingest's own atomic counters rather
-	// than instrumented on the publish path, which must stay off any shared lock.
-	services.DescribeMetrics(deps.Metrics)
-	services.RunMetricsSampler(bgCtx, deps.Metrics, ingest, deviceService, 10*time.Second)
-
 	// Commands the device never confirmed are ENDED, not resent.
 	safego.Supervise(bgCtx, "myiotsan.command-sweep", func(ctx context.Context) {
 		ticker := time.NewTicker(commandSweepInterval)
@@ -552,6 +545,15 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	safego.Supervise(bgCtx, "myiotsan.flows", func(ctx context.Context) {
 		flowRuntime.Run(ctx, flowReconcileInterval)
 	})
+
+	// Runtime metrics. Everything here instruments a SILENT failure — a dropped reading, a
+	// mistuned deadband, a device gone quiet, a command that failed, a flow that has quietly
+	// stopped firing — none of which raises an error a human sees. The gauges are SAMPLED off the
+	// counters ingest and the flow runtime already keep, rather than instrumented on the publish
+	// path, which must stay off any shared lock. It is wired here, after the flow runtime exists,
+	// because the flow gauges need it.
+	services.DescribeMetrics(deps.Metrics)
+	services.RunMetricsSampler(bgCtx, deps.Metrics, ingest, flowRuntime, deviceService, 10*time.Second)
 
 	apis.NewDevicesApi(protected, deviceService, telemetry, profileService, ingest)
 	apis.NewDiscoveryApi(protected, enrollment, deviceService, scanService)

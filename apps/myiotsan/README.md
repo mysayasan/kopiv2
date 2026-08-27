@@ -388,11 +388,19 @@ A visual, executable data-flow canvas — the myiotsan equivalent of a Node-RED 
 composite computations scenes/schedules cannot express: combining two telemetry streams into a
 derived value (self-consumption, net grid), or wiring a bespoke transform-then-alert chain without
 it deserving its own first-class entity. `GET/POST/PUT/DELETE /api/flows`, plus
-`POST /api/flows/import`, `GET /api/flows/{id}/export`, `GET /api/flows/{id}/slots`,
-`POST /api/flows/{id}/instantiate`, `POST /api/flows/{id}/run` (test-fire), and
-`GET /api/flows/{id}/debug` (the live per-node inspector). **The whole area is admin-only, unlike
-scenes/schedules where reading is open to every role** — even seeing a flow's graph reveals what it
-could do, and test-firing one can actuate a real device.
+`GET /api/flows/stats`, `POST /api/flows/import`, `GET /api/flows/{id}/export`,
+`GET /api/flows/{id}/slots`, `POST /api/flows/{id}/instantiate`, `POST /api/flows/{id}/run`
+(test-fire), and `GET /api/flows/{id}/debug` (the live per-node inspector). **The whole area is
+admin-only, unlike scenes/schedules where reading is open to every role** — even seeing a flow's
+graph reveals what it could do, and test-firing one can actuate a real device.
+
+Every flow row (list and detail) carries a `runtimeState` — `running`, `error` (enabled but could
+not compile), `quarantined` (stopped for a script that kept timing out), `disabled`, or `starting`
+— because "enabled" and "actually running" are different questions: a flow whose script would not
+compile used to save, enable, and list as "On" while never firing, with the only trace one INFO log
+line. The flows list now renders that as **Not running**/**Stopped** instead. `GET /api/flows/stats`
+reports how many flows are compiled/broken/quarantined, how many (device,key) bindings are live,
+and the worker queue's depth/capacity/dropped-event count.
 
 A flow is a graph of NODES (an input that emits on a new reading; transforms — including a
 `function`/`expression` node running arbitrary JavaScript, and a `switch` node gating on a JS
@@ -416,6 +424,16 @@ already uses** — actuation-enabled, admin-only, declared-commands-only, server
 limit, full audit, never auto-retried. An arbitrary-JavaScript node can shape a *value*; it cannot
 skip a gate, retry a refused write, or reach a device the command layer would otherwise refuse. A
 flow is convenience and computation layered on the existing actuation path, never a new authority.
+
+**The worker is shared, so what a script costs is bounded too, not just what it can reach.** Every
+node's script is compiled at SAVE, not just at runtime — a `function`/`expression`/`switch` node
+with a syntax error is refused with a 400 rather than saving as enabled and never running. Every
+graph's whole propagation for one reading is bounded to 1 second, whatever the sum of its
+individually-in-budget scripts adds up to — a graph large enough that its scripts always finish
+inside their own 100ms budget could otherwise still spend a hundred seconds of the shared worker
+on a single sample. And a script whose watchdog fires five readings in a row (a timeout, not an
+ordinary thrown error) gets its flow stopped and named in the notification feed, rather than
+quietly costing every other flow in the install a full budget on every message forever.
 
 **Templates via device-role slots.** A flow becomes reusable simply by naming a device with a
 placeholder (`"$inverter"`) instead of a concrete key — `GET /api/flows/{id}/slots` reports what a
@@ -622,6 +640,9 @@ raise an error a human sees; these metrics instrument exactly those silent failu
 | `myiotsan_ingest_series` | gauge | — | Distinct `(device, key)` series the deadband gate is tracking. |
 | `myiotsan_devices_online` / `myiotsan_devices_offline` | gauge | — | Fleet health at a glance. Offline is the one to alert on — a sensor gone silent is a monitoring blind spot, and a smoke detector gone silent is worse. |
 | `myiotsan_commands_total` | counter | `outcome` (`confirmed`/`failed`/`refused`) | Actuation command outcomes. A rising `failed` is devices not acting; a rising `refused` is somebody repeatedly trying something they aren't allowed to. |
+| `myiotsan_flow_events_dropped_total` | gauge (sampled counter) | — | Telemetry events the Flow Engine SHED because its worker queue overflowed. Same silent-loss shape as `myiotsan_ingest_dropped_total`, one layer up: the reading still lands and the chart still draws, only the automation on top of it quietly stops. Alert on any increase. |
+| `myiotsan_flow_queue_depth` | gauge | — | The Flow Engine's current worker backlog — the leading indicator of the row above. |
+| `myiotsan_flows_stopped` | gauge | — | Enabled flows that are not actually running: one that would not compile, plus one quarantined for a script that kept timing out. An operator who drew a flow believes it is armed. |
 | `kopiv2_control_events_forwarded_total` | counter | `kind` | Node events (notifications, going-offline) successfully pushed up the fleet control channel to `myseliasan`. Only meaningful next to the drop counter below — a drop count with no total is a number nobody can size. |
 | `kopiv2_control_events_dropped_total` | counter | `kind`, `reason` (`disconnected`/`write_failed`) | Node events that could **not** be forwarded — the control channel was down, or the write itself failed mid-flight. Both paths used to return silently with no record. The running count since the last successful hello also rides upstream on the node's next control-channel hello, so `myseliasan` sees it too (`myseliasan_node_events_dropped_total`). |
 | `myiotsan_task_panics_total` | counter | `task` | Recovered panics in `infra/safego`-supervised background tasks. A supervised task is restarted automatically on panic, but that alone leaves no other trace than one log line. |
@@ -635,6 +656,11 @@ What's worth alerting on:
 - `myiotsan_ingest_queue_depth` climbing toward its configured cap — act before drops start.
 - `myiotsan_devices_offline > 0` sustained for a device that should be reporting.
 - A rising `myiotsan_task_panics_total` for any `task`.
+- Any increase in `myiotsan_flow_events_dropped_total`, or `myiotsan_flow_queue_depth` climbing
+  toward its cap — the Flow Engine's worker is falling behind and automation is silently missing
+  readings.
+- `myiotsan_flows_stopped > 0` — an enabled flow is not actually running; check the flows list for
+  which one and why (compile error vs. quarantined).
 - Any increase in `kopiv2_control_events_dropped_total` while this node is adopted into a fleet — a rule alert or health event that never reached `myseliasan`'s unified feed live.
 
 ## Install & release

@@ -215,6 +215,7 @@ Database config contract (`db` in app config):
 - For SQLite, `db_name` is a database file path and relative paths resolve from the selected app directory. `:memory:` is supported for tests/dev experiments only.
 - SQLite is intended for single-process small-device deployments; use PostgreSQL or MariaDB for multi-instance production deployments.
 - `apps/mymatasan/config.dev.json` defaults to SQLite at `./data/mymatasan.db` with the in-process default cache for standalone small-device deployment.
+- **List-query row scanning** (`infra/db/sql`, all three drivers — `dbsql.ScanRowLimit`, `docs/modules/infra/db/sql/scan_limit.go.md`): a caller's `Select`/`SelectJoin` `limit` now bounds the scan loop directly, so asking for e.g. 2000 rows returns up to 2000. Only a caller that passes `limit == 0` (no `LIMIT` clause at all) is capped, at `dbsql.DefaultScanRowLimit` (100 rows) — the previous, unconditional ceiling. Before this fix all three drivers stopped scanning at a hardcoded 100 rows regardless of the requested limit, while the reported total row count still reflected the true, larger result — a truncated page was indistinguishable from a complete one.
 - `pool` (`db.pool` in app config; Postgres and MariaDB only — SQLite ignores it and stays pinned to a single connection, a correctness constraint since concurrent writers to one file deadlock, not a tunable): `maxOpenConns` (default 25 when absent/zero), `maxIdleConns` (default 5; clamped down to `maxOpenConns` if configured higher, since `database/sql` would otherwise silently reduce it while the config kept claiming a number it never honoured), `maxLifetimeSeconds` (default 1800 = 30 minutes), `maxIdleTimeSeconds` (default 300 = 5 minutes), and `unlimited` (explicit opt-in for Go's old unbounded-open-connections behavior; idle/lifetime bounds still apply even when set). Applied via `dbsql.ApplyPool` right after `sql.Open`, before `Ping`, in both engines' `NewDbCrud`. The default matters more than the knobs: `database/sql` defaults to unlimited open connections, so before this existed a traffic burst could exhaust a database server's entire connection budget and take down every other application sharing it; an absent `pool` block now yields the bounded 25/5 default instead.
 
 SSO relying-app config contract (`sso` in app config):
@@ -468,7 +469,11 @@ falling value means for the operator to act on.
   arranged so a publish never touches the database and so never raises an error a human sees.
   `myiotsan_ingest_dropped_total` is the headline — a reading shed because the write queue was
   full is silent data loss (the broker keeps accepting, the UI keeps rendering, nothing is
-  logged). See `docs/modules/apps/myiotsan/services/metrics.go.md`.
+  logged). The Flow Engine's worker has the identical shape one layer up:
+  `myiotsan_flow_events_dropped_total`/`myiotsan_flow_queue_depth` cover telemetry events shed
+  because the flow runtime's queue overflowed, and `myiotsan_flows_stopped` counts enabled flows
+  that are not actually running (would not compile, or quarantined for a script that kept timing
+  out). See `docs/modules/apps/myiotsan/services/metrics.go.md`.
 - `myseliasan` (a live scrape showed 0 series before this): a control plane is a relay with no
   sensors of its own, so its failures are fleet failures and they are the quietest kind — a node
   dropping off the control channel looks in the UI identical to one an operator released; a

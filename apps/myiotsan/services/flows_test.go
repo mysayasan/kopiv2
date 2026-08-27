@@ -487,6 +487,198 @@ func TestFlow_BuiltinSolarIsATemplate(t *testing.T) {
 	}
 }
 
+// --- a misbehaving flow costs the others nothing -----------------------------------------------
+
+// A stale interrupt from the watchdog must not kill the NEXT script.
+//
+// The watchdog Interrupts the runtime from another goroutine, and timer.Stop() does not wait for a
+// func that has already started — so a script that finishes in the same instant the watchdog fires
+// can leave an Interrupt pending on a runtime that is about to be reused. Before, the next message
+// on that flow died for a budget it never came close to using: one silently lost reading, on a
+// flow that is working perfectly, with a log line blaming the wrong script. This asserts the
+// property directly rather than trying to race it: a runtime carrying a pending interrupt still
+// runs the next script.
+func TestFlow_StaleInterruptDoesNotKillTheNextScript(t *testing.T) {
+	sb := newJSSandbox()
+	if err := sb.compile("fn", "return msg.payload * 2;"); err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	sb.rt.Interrupt("a watchdog that fired after its script had already returned")
+
+	out, err := sb.run("fn", &flowMessage{Payload: 21.0}, flowScriptTimeout)
+	if err != nil {
+		t.Fatalf("a pending interrupt from a FINISHED call killed the next script: %v", err)
+	}
+	if out == nil || out.Payload != 42.0 {
+		t.Fatalf("payload = %v, want 42", out)
+	}
+}
+
+// One reading may not spend more than its budget, however many nodes it passes through.
+//
+// flowScriptTimeout fences a single script and nothing used to fence the event, so a graph of
+// scripts that each finish just inside their budget could legally hold the shared worker for a
+// hundred seconds per sample without any single node misbehaving. Measured on a live appliance:
+// 190 nodes at 80ms delayed every other flow in the install by fifteen seconds per reading.
+func TestFlow_OneEventCannotExceedItsBudget(t *testing.T) {
+	burn := "var t = Date.now(); while (Date.now() - t < 60) {} return msg;"
+	nodes := []flowNode{{Id: "in", Type: nodeDeviceTelemetry,
+		Config: map[string]any{"deviceKey": "d1", "key": "x"}}}
+	var wires []flowWire
+	prev := "in"
+	for i := 0; i < 60; i++ { // 60 x 60ms = 3.6s of scripts, against a 1s event budget
+		id := fmt.Sprintf("n%d", i)
+		nodes = append(nodes, flowNode{Id: id, Type: nodeFunction, Config: map[string]any{"code": burn}})
+		wires = append(wires, flowWire{From: flowPort{Node: prev}, To: flowPort{Node: id}})
+		prev = id
+	}
+	nodes = append(nodes, flowNode{Id: "dbg", Type: nodeDebug})
+	wires = append(wires, flowWire{From: flowPort{Node: prev}, To: flowPort{Node: "dbg"}})
+
+	cf := compileForTest(t, flowGraph{Nodes: nodes, Wires: wires}, testDeps(nil, nil, nil))
+	start := time.Now()
+	seed(cf, "in", "x", 1)
+	spent := time.Since(start)
+
+	// The budget is checked BEFORE a node runs, so the overrun is at most one script's worth.
+	if limit := flowEventBudget + 2*flowScriptTimeout + 500*time.Millisecond; spent > limit {
+		t.Fatalf("one reading spent %s on the shared worker; the budget is %s", spent, flowEventBudget)
+	}
+	if _, ok := cf.debug.snapshot()["dbg"]; ok {
+		t.Fatal("the event should have been stopped before it reached the end of the graph")
+	}
+}
+
+// A flow whose script times out on every message is stopped, and somebody is told.
+func TestFlow_RunawayFlowIsQuarantinedAndReported(t *testing.T) {
+	notif := &fakeNotifier{}
+	g := flowGraph{
+		Nodes: []flowNode{
+			{Id: "in", Type: nodeDeviceTelemetry, Config: map[string]any{"deviceKey": "d1", "key": "x"}},
+			{Id: "fn", Type: nodeFunction, Config: map[string]any{"code": "while(true){} return msg;"}},
+		},
+		Wires: []flowWire{{From: flowPort{Node: "in"}, To: flowPort{Node: "fn"}}},
+	}
+	cf := compileForTest(t, g, testDeps(nil, notif, nil))
+	for i := 0; i < flowQuarantineAfter; i++ {
+		if cf.quarantined.Load() {
+			t.Fatalf("quarantined after %d timeouts; the threshold is %d", i, flowQuarantineAfter)
+		}
+		seed(cf, "in", "x", float64(i))
+	}
+	if !cf.quarantined.Load() {
+		t.Fatalf("a flow whose script timed out %d times in a row is still running", flowQuarantineAfter)
+	}
+	if len(notif.published) != 1 {
+		t.Fatalf("published %d notifications, want exactly 1 naming the flow", len(notif.published))
+	}
+
+	// Once stopped it costs nothing: the next reading does not even reach the sandbox.
+	before := cf.debug.snapshot()
+	start := time.Now()
+	seed(cf, "in", "x", 99)
+	if spent := time.Since(start); spent > flowScriptTimeout {
+		t.Fatalf("a quarantined flow still spent %s running", spent)
+	}
+	if len(cf.debug.snapshot()) != len(before) {
+		t.Fatal("a quarantined flow still propagated an event")
+	}
+}
+
+// The commonest shape of all: a healthy transform wired into a runaway one.
+//
+// A flow-wide timeout counter reset by ANY successful script never fires here — the healthy node
+// zeroes it on every event, moments before the runaway node increments it back to one — so the
+// flow runs away forever while looking, to the counter, perfectly fine. The count is per node.
+func TestFlow_HealthyNodeDoesNotMaskARunawayOne(t *testing.T) {
+	notif := &fakeNotifier{}
+	g := flowGraph{
+		Nodes: []flowNode{
+			{Id: "in", Type: nodeDeviceTelemetry, Config: map[string]any{"deviceKey": "d1", "key": "x"}},
+			{Id: "ok", Type: nodeFunction, Config: map[string]any{"code": "return msg;"}},
+			{Id: "bad", Type: nodeFunction, Config: map[string]any{"code": "while(true){} return msg;"}},
+		},
+		Wires: []flowWire{
+			{From: flowPort{Node: "in"}, To: flowPort{Node: "ok"}},
+			{From: flowPort{Node: "ok"}, To: flowPort{Node: "bad"}},
+		},
+	}
+	cf := compileForTest(t, g, testDeps(nil, notif, nil))
+	for i := 0; i < flowQuarantineAfter; i++ {
+		seed(cf, "in", "x", float64(i))
+	}
+	if !cf.quarantined.Load() {
+		t.Fatalf("a runaway node downstream of a healthy one ran away %d times without being stopped",
+			flowQuarantineAfter)
+	}
+	if len(notif.published) != 1 {
+		t.Fatalf("published %d notifications, want exactly 1", len(notif.published))
+	}
+}
+
+// A script that THROWS is ordinary and must not get a flow quarantined: a sensor sending one odd
+// payload may not take an alerting flow off the air.
+func TestFlow_ThrowingScriptDoesNotQuarantine(t *testing.T) {
+	g := flowGraph{
+		Nodes: []flowNode{
+			{Id: "in", Type: nodeDeviceTelemetry, Config: map[string]any{"deviceKey": "d1", "key": "x"}},
+			{Id: "fn", Type: nodeFunction, Config: map[string]any{"code": "throw new Error('odd payload');"}},
+		},
+		Wires: []flowWire{{From: flowPort{Node: "in"}, To: flowPort{Node: "fn"}}},
+	}
+	cf := compileForTest(t, g, testDeps(nil, nil, nil))
+	for i := 0; i < flowQuarantineAfter*3; i++ {
+		seed(cf, "in", "x", float64(i))
+	}
+	if cf.quarantined.Load() {
+		t.Fatal("a flow was quarantined for throwing, which costs the worker nothing")
+	}
+}
+
+// --- a flow that cannot run is refused where a human can see it --------------------------------
+
+// checkScripts is what Create/Update call, and it must refuse exactly what the runtime would.
+func TestFlow_ScriptsAreValidatedAtSave(t *testing.T) {
+	broken := []struct {
+		name string
+		node flowNode
+	}{
+		{"function", flowNode{Id: "fn", Type: nodeFunction, Config: map[string]any{"code": "return (1 +;"}}},
+		{"expression", flowNode{Id: "ex", Type: nodeExpression, Config: map[string]any{"expr": "1 +"}}},
+		{"switch", flowNode{Id: "sw", Type: nodeSwitch, Config: map[string]any{"predicate": "msg.payload >"}}},
+	}
+	for _, tc := range broken {
+		g := &flowGraph{Nodes: []flowNode{tc.node}}
+		if err := checkScripts(g); err == nil {
+			t.Fatalf("a %s node that does not compile was accepted at save", tc.name)
+		}
+	}
+	ok := &flowGraph{Nodes: []flowNode{
+		{Id: "fn", Type: nodeFunction, Config: map[string]any{"code": "return msg.payload + 1;"}},
+		{Id: "ex", Type: nodeExpression, Config: map[string]any{"expr": "msg.payload * 2"}},
+		{Id: "sw", Type: nodeSwitch, Config: map[string]any{"predicate": "msg.payload > 3"}},
+		{Id: "sc", Type: nodeScale, Config: map[string]any{"factor": 2}},
+	}}
+	if err := checkScripts(ok); err != nil {
+		t.Fatalf("a graph of valid scripts was refused: %v", err)
+	}
+}
+
+// The save path and the runtime must compile the SAME text, or a flow can validate and then fail
+// on the worker for a reason its author was never shown.
+func TestFlow_SaveAndRuntimeCompileTheSameScript(t *testing.T) {
+	// `return` is legal in a function body and illegal inside an expression — so a config that
+	// only ONE of the two wrappers accepts proves they are the same wrapper.
+	g := &flowGraph{Nodes: []flowNode{
+		{Id: "ex", Type: nodeExpression, Config: map[string]any{"expr": "return 1"}},
+	}}
+	saveErr := checkScripts(g)
+	_, runtimeErr := compileFlow(1, "t", graphJSON(t, *g), testDeps(nil, nil, nil))
+	if (saveErr == nil) != (runtimeErr == nil) {
+		t.Fatalf("save and runtime disagree: save=%v runtime=%v", saveErr, runtimeErr)
+	}
+}
+
 func TestFlow_ExportImportDocVersionGuard(t *testing.T) {
 	// A document from a future format is refused rather than half-understood. (The full DB round
 	// trip is covered by the live boot; this pins the version guard, which is pure.)

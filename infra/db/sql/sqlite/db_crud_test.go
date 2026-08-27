@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -168,6 +169,66 @@ func TestSQLiteDbCrudScopedTxRollback(t *testing.T) {
 	}
 	if total != 0 || len(rows) != 0 {
 		t.Fatalf("rollback left rows=%+v total=%d", rows, total)
+	}
+}
+
+// TestSQLiteSelectReturnsTheLimitAsked pins the one thing every list query in the suite depends
+// on: that asking for N rows and getting fewer means there were fewer.
+//
+// All three drivers used to stop scanning at a hardcoded hundred rows no matter what the caller
+// asked for, while the total count came back from the database over the whole result set — so a
+// truncated read was indistinguishable from a complete one. It cost a telemetry chart its shape,
+// a device page most of its keys, and an install its hundred-and-first flow.
+func TestSQLiteSelectReturnsTheLimitAsked(t *testing.T) {
+	ctx := context.Background()
+	crud := newTestCrud(t)
+	repo := dbsql.NewGenericRepo[localCrudTestModel](crud)
+
+	const total = 250
+	for i := 0; i < total; i++ {
+		if _, err := repo.Create(ctx, "", localCrudTestModel{
+			Name: fmt.Sprintf("row-%03d", i), Age: int64(i), Active: true,
+		}); err != nil {
+			t.Fatalf("Create(%d) error = %v", i, err)
+		}
+	}
+
+	rows, count, err := repo.Get(ctx, "", total, 0, nil,
+		[]sqldataenums.Sorter{{FieldName: "Age", Sort: sqldataenums.ASC}})
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if len(rows) != total {
+		t.Fatalf("Get(limit=%d) returned %d rows; a limit the caller asked for must not be "+
+			"silently capped", total, len(rows))
+	}
+	if count != total {
+		t.Fatalf("Get() reported total = %d, want %d", count, total)
+	}
+	// The last row proves the tail was reached, not just that the slice was long enough.
+	if rows[len(rows)-1].Age != total-1 {
+		t.Fatalf("last row Age = %d, want %d", rows[len(rows)-1].Age, total-1)
+	}
+
+	// A smaller limit is still honoured — the fix must not have removed paging.
+	page, count, err := repo.Get(ctx, "", 10, 0, nil,
+		[]sqldataenums.Sorter{{FieldName: "Age", Sort: sqldataenums.ASC}})
+	if err != nil {
+		t.Fatalf("Get(limit=10) error = %v", err)
+	}
+	if len(page) != 10 || count != total {
+		t.Fatalf("Get(limit=10) returned %d rows / total %d; want 10 / %d", len(page), count, total)
+	}
+
+	// A caller that asks for NOTHING in particular still gets a bounded read: an unbounded scan
+	// of the hot table is not something to do by accident.
+	unbounded, _, err := repo.Get(ctx, "", 0, 0, nil, nil)
+	if err != nil {
+		t.Fatalf("Get(limit=0) error = %v", err)
+	}
+	if uint64(len(unbounded)) != dbsql.DefaultScanRowLimit {
+		t.Fatalf("Get(limit=0) returned %d rows; want the default ceiling of %d",
+			len(unbounded), dbsql.DefaultScanRowLimit)
 	}
 }
 

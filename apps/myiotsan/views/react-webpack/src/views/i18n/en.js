@@ -70,6 +70,8 @@ export default {
   'flows.status': 'Status',
   'flows.on': 'On',
   'flows.off': 'Off',
+  'flows.stateError': 'Not running',
+  'flows.stateStopped': 'Stopped',
   'flows.builtin': 'sample',
   'flows.template': 'template',
   'flows.enable': 'Enable',

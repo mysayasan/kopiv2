@@ -21,7 +21,26 @@ only ever leaves through the guarded issuer.
   (Node-RED semantics).
 - **The sandbox cannot escape, and cannot hang the worker**: `TestFlow_SandboxCannotReachHost`
   (`require`/`process`/`readFileSync` all fail to resolve), `TestFlow_WatchdogKillsInfiniteLoop`
-  (a `while(true){}` node is interrupted within the 3s test bound and never reaches downstream).
+  (a `while(true){}` node is interrupted within the 3s test bound and never reaches downstream),
+  `TestFlow_StaleInterruptDoesNotKillTheNextScript` (a runtime carrying a pending interrupt from a
+  call that already finished must still run the next script — `flow_eval.go.md`).
+- **One reading may not cost the shared worker more than its budget**:
+  `TestFlow_OneEventCannotExceedItsBudget` — 60 nodes at 60ms each (3.6s of scripts, all
+  individually inside `flowScriptTimeout`) against a 1s `flowEventBudget`; the event is stopped
+  before it reaches the debug sink and the overrun is at most one script's worth.
+- **A flow that keeps timing out is quarantined, not just logged**:
+  `TestFlow_RunawayFlowIsQuarantinedAndReported` (`flowQuarantineAfter` consecutive timeouts stops
+  the flow and publishes exactly one notification; a quarantined flow costs the sandbox nothing on
+  the next reading), `TestFlow_HealthyNodeDoesNotMaskARunawayOne` (the per-node throw a healthy
+  node upstream resets does not hide a runaway node downstream — the timeout count is per node,
+  not per flow), `TestFlow_ThrowingScriptDoesNotQuarantine` (a script that THROWS, as opposed to
+  timing out, never counts toward quarantine — a sensor sending one odd payload may not take an
+  alerting flow off the air).
+- **A flow that cannot run is refused where a human can see it**:
+  `TestFlow_ScriptsAreValidatedAtSave` (`checkScripts` refuses a broken `function`/`expression`/
+  `switch` node and accepts a graph of valid ones), `TestFlow_SaveAndRuntimeCompileTheSameScript`
+  (the save-time check and `compileFlow` must agree on the identical script text, proven with a
+  `return` that is legal in a function body and illegal in an expression).
 - **Actuation is contained**: `TestFlow_CommandRoutesThroughGuardedIssuer` — the safety invariant:
   even arbitrary JS upstream can do nothing but shape the value the guarded issuer then receives;
   `TestFlow_NotifyPublishes`.

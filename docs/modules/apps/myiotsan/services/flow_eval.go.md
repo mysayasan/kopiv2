@@ -15,7 +15,9 @@ database around it.
   it, so a script's whole world is the `msg` it is handed and the value it returns.
 - Every call is fenced by a watchdog (`time.AfterFunc` + `goja.Runtime.Interrupt`) that interrupts
   the runtime after `flowScriptTimeout` (100ms, `flow_runtime.go.md`), so a `while(true){}` cannot
-  wedge the flow worker. The runtime is cleared (`ClearInterrupt`) and reused afterwards.
+  wedge the flow worker. The runtime is cleared (`ClearInterrupt`) both on the way IN to `run` and
+  on the way out, so a watchdog that fires just as its script returns cannot leave a pending
+  interrupt that kills the NEXT, unrelated call.
 - A script cannot actuate. It only transforms a message; only an OUTPUT node acts, and the command
   output routes through `CommandService.Issue`. This file never calls the actuation layer.
 
@@ -69,6 +71,12 @@ surprise.
 - `(nil, err)` — a script error or a timeout: the node failed; the caller records it and the rest of
   the flow is unaffected (partial failure is first-class, like a scene action).
 
+`isScriptTimeout(err)` tells a watchdog TIMEOUT (`goja.InterruptedError`, or the wrapped
+`scriptTimeoutMessage`) apart from an ordinary thrown error. `flow_runtime.go.md`'s
+`compiledFlow.noteScriptError` is the reason this distinction exists: a script that throws is
+routine (an unexpected payload) and costs nothing, but a script that never returns spends the
+watchdog's whole budget on every message, and repeating that is what gets a flow quarantined.
+
 A bare `return` of a number/string/bool is a convenience: `run` keeps the message's provenance and
 replaces only its payload (`normalizePayload`); an object return (`msgFromMap`) rebuilds a
 `flowMessage`, falling back to the input's provenance for any field the script did not set.
@@ -79,4 +87,6 @@ replaces only its payload (`normalizePayload`); an object return (`msgFromMap`) 
   `int32`/`int64`), collapsing them to one type so every downstream node sees a consistent numeric
   payload.
 - `flows_test.go.md`'s `TestFlow_SandboxCannotReachHost` and `TestFlow_WatchdogKillsInfiniteLoop`
-  pin exactly the two guarantees this file exists to make.
+  pin exactly the two guarantees this file exists to make; `TestFlow_StaleInterruptDoesNotKillTheNextScript`
+  pins the clear-on-the-way-in fix — a runtime carrying a pending interrupt from a call that
+  already finished must still run the next script.

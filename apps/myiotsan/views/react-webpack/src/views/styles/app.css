@@ -1649,6 +1649,13 @@ dd {
   color: var(--accent);
 }
 
+/* Something is switched ON but is NOT working — an enabled flow the runtime could not compile, or
+   one it has stopped. Distinct from `offline`, which is about reachability. */
+.status-pill.danger {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
 .status-pill.saved {
   background: var(--ok-bg);
   color: var(--ok-text);
