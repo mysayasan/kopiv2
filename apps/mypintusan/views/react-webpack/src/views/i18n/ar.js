@@ -150,6 +150,7 @@ export default {
   'reason.offlineDenied': 'هذا الباب يرفض أثناء عدم الاتصال',
   'reason.secureChannel': 'القارئ غير مشفّر',
   'reason.readerOffline': 'القارئ لا يستجيب',
+  "reason.readerNotEnrolled": "القارئ غير مسجَّل",
   'reason.doorDisabled': 'الباب خارج الخدمة',
   'reason.badPin': 'رمز PIN خاطئ',
   'reason.duress': 'مسموح تحت الإكراه',

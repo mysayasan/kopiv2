@@ -146,6 +146,7 @@ export const REASON_KEYS = {
   'offline-denied': 'reason.offlineDenied',
   'secure-channel-failed': 'reason.secureChannel',
   'reader-offline': 'reason.readerOffline',
+  'reader-not-enrolled': 'reason.readerNotEnrolled',
   'door-disabled': 'reason.doorDisabled',
   'bad-pin': 'reason.badPin',
   duress: 'reason.duress',

@@ -16,6 +16,19 @@ imports `infra/access/osdp` on purpose.** It shares `pd.go` with the driver, so 
 the production PD-side decoder cannot drift apart. A simulator with its own private frame parser is
 one that agrees with itself and disagrees with the wire.
 
+## The default card must be a card that can be GRANTED
+
+`-card` defaults to `00880040` — Wiegand-26, facility 1, card number 4096, **valid parity**. It
+used to default to `deadbeef`, which fails leading even parity, and a CP treats a parity failure
+as a hard denial (a card one bit out may be somebody else's). The first live bench of mypintusan
+spent a run watching every badge denied before working out that the simulator's own default could
+never open a door. If you change it, decode the new value with `services.DecodeCard` first.
+
+`-pin` sends keypad digits immediately **before** each card. The order matters: the CP buffers a
+keypad entry and consumes it when the card arrives, so digits sent afterwards are left for
+whoever badges next — which is exactly the behaviour that stops the person behind you in the
+queue opening the door on your PIN.
+
 ## Usage
 
 ```sh
@@ -30,7 +43,8 @@ Then point a CP at `127.0.0.1:4870`.
 | --- | --- | --- |
 | `-addr` | `:4870` | TCP listen address for the simulated bus |
 | `-scenario` | `happy` | which fault to run (see below) |
-| `-card` | `deadbeef` | card data presented on the bus, hex |
+| `-card` | `00880040` | card data presented on the bus, hex — **must have valid parity for `-bits`** |
+| `-pin` | *(empty)* | PIN digits entered on the keypad just before each card |
 | `-bits` | `26` | card bit count (26 = standard Wiegand, 34 = extended) |
 | `-card-every` | `8s` | how often to badge; `0` disables |
 | `-fault-after` | `15s` | delay before a time-based fault bites |

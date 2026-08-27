@@ -130,3 +130,20 @@ runtime and the only consumer of the bus's event channel. It also owns lockdown,
   boundary: a badge grant and an operator unlock are both published, a door-state row
   (forced/held-open, no `RawCredential`) is not, and a `Store.RecordEvent` failure does not
   suppress the publish.
+
+## Unenrolled readers (`handleCard`)
+
+A badge from a reader with no row is logged rather than dropped — it means the bus has a device
+on it that nobody enrolled, which is worth someone's attention. It is filed under
+`ReasonReaderNotEnrolled` rather than `ReasonReaderOffline`: the reader is answering, it just
+delivered a card. See `entities/access_event.go.md`.
+
+## What the first live bench confirmed
+
+`tools/fleetbench/bench_pintusan_door.py` drives this controller over a real OSDP bus (32/32).
+The snapshot builder is the half a pure-function test cannot reach, and it holds up: a revoked
+credential stops opening the door within a second, lockdown denies above every grant, a duress
+PIN grants while raising a critical alarm, and the operator unlock is recorded with the actor.
+Note that `Snapshot.AntiPassbackViolation` is still never computed here — anti-passback is a
+declared-but-unbuilt P3 feature, correctly hardcoded off at door creation and exposed nowhere,
+so `Decide()`'s GATE 9 cannot currently fire.

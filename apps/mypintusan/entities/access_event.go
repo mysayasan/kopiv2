@@ -70,6 +70,12 @@ const (
 	ReasonOfflineDenied      = "offline-denied"
 	ReasonSecureChannel      = "secure-channel-failed"
 	ReasonReaderOffline      = "reader-offline"
+	// ReasonReaderNotEnrolled is a badge on a reader that ANSWERS PERFECTLY WELL and that nobody
+	// added. It used to be filed as reader-offline, which is the one thing it is not: the first
+	// live bench of this app watched a healthy simulated reader deliver cards while the operator
+	// was told the reader was offline. That sends an installer commissioning a new door to check
+	// cabling and power for a device whose only problem is that it is not in the database.
+	ReasonReaderNotEnrolled = "reader-not-enrolled"
 	ReasonDoorDisabled       = "door-disabled"
 	ReasonBadPin             = "bad-pin"
 	ReasonDuress             = "duress"

@@ -446,7 +446,11 @@ func (c *Controller) handleCard(ctx context.Context, ev osdp.Event) {
 	if err != nil || reader == nil {
 		// A badge on a reader we have no record of. Logged rather than dropped: it means the bus
 		// has a device on it that nobody enrolled, which is worth someone's attention.
-		access.Reason = entities.ReasonReaderOffline
+		//
+		// Its OWN reason code, not reader-offline. The reader is answering — it just delivered a
+		// card — so telling an operator it is offline sends whoever is commissioning the door to
+		// check cabling and power for a device that works.
+		access.Reason = entities.ReasonReaderNotEnrolled
 		access.Detail = fmt.Sprintf("no reader enrolled at %s address %d", c.cfg.BusPort, ev.Address)
 		c.record(ctx, access)
 		return
