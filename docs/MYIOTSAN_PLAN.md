@@ -1308,6 +1308,46 @@ even reading a flow's graph reveals what it could do, and test-firing it can act
   pan/zoom. The server's hard validation (`parseGraph` — unknown types, cycles, dangling wires) is
   unchanged and still the last word at save.
 
+### Hardened, 2026-08-27, by the second live bench of this app
+
+`tools/fleetbench/bench_iotsan_flows.py` (41/41 with the fixes, 32/43 without) drove the sandbox
+containment claims above against a real broker and found them holding completely — no escape, no
+cross-flow leakage, a throwing node drops only its own branch. What it found was on the other
+side: what a flow that CANNOT run costs, and what one COMPILED script can cost the shared worker.
+
+- **A script that would not compile used to save, enable, and never run.** `parseGraph` validated
+  a graph's shape at save; its scripts were not checked until the runtime tried to compile them,
+  and a compile failure there left one INFO log line as the only trace — an operator's alerting
+  flow looked armed and never fired. Scripts in code-bearing nodes are now compiled at SAVE
+  (`FlowService.checkScripts`, using the identical `nodeScript` text the runtime compiles), so a
+  typo is refused with a 400 where its author is still looking at it; a flow that still fails to
+  compile at runtime (an import, or a row from before this fix) is recorded
+  (`FlowRuntime.broken`), reported once to the notification feed, and rendered on the flows list as
+  "Not running" via a new `runtimeState` field the list/detail endpoints now carry.
+- **One reading could legally cost the shared worker a hundred seconds.** `flowScriptTimeout`
+  (100ms) fenced a single script; nothing fenced the EVENT, so a graph of well-behaved scripts that
+  each finish inside their own budget could still spend `maxFlowNodes` (200) × `flowScriptTimeout`
+  per sample on the one worker every flow in the install shares. Measured live: a 190-node graph of
+  80ms scripts delayed an unrelated flow's own reading by 15.1 seconds. A new `flowEventBudget`
+  (1s) now bounds one reading across the WHOLE graph, and a flow whose script TIMES OUT (not merely
+  throws — an ordinary thrown error costs nothing and does not count)
+  `flowQuarantineAfter` (5) times in a row is stopped and reported by name, with an edit-and-save
+  clearing the quarantine.
+- **Dropped flow events were invisible.** The runtime counted events shed under backpressure into
+  a field nothing read (`dropped`, an unlocked `int64` — also a data race, now `atomic.Int64`).
+  `GET /api/flows/stats` and three Prometheus gauges (`myiotsan_flow_events_dropped_total`,
+  `myiotsan_flow_queue_depth`, `myiotsan_flows_stopped`) now expose it, matching the "instrument
+  what fails silently" rule `services/metrics.go.md` already states for ingest.
+- **A stale watchdog interrupt could kill the wrong script.** `time.AfterFunc`'s `Stop()` does not
+  wait for a func that has already fired, so a script finishing in the same instant its watchdog
+  triggers could leave a pending `Interrupt` that then killed the NEXT, unrelated message. The
+  runtime now clears the interrupt on the way IN to a script as well as on the way out.
+- **A defect one layer down, found chasing why 110 flows compiled 100.** `infra/db/sql`'s three
+  drivers stopped scanning at a hardcoded 100 rows regardless of the caller's `limit`, while the
+  reported total came back true — see `docs/TECHNICAL_SPEC.md`'s DB config contract and
+  `docs/modules/infra/db/sql/scan_limit.go.md`. Not a Flow Engine bug, but the Flow Engine is what
+  surfaced it: an install's hundred-and-first enabled flow was listed nowhere and never ran.
+
 ### Relationship to §8g's Layer B (the system workspace, still not built)
 
 The Flow Engine is NOT the system workspace — there is still no `system_template`/`system_instance`

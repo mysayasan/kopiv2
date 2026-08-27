@@ -247,9 +247,20 @@ export function FlowsPage({ onToast, session }) {
       );
     } },
     { key: 'category', label: t('flows.category') },
-    { key: 'enabled', label: t('flows.status'), filterType: 'boolean', render: (v) => (
-      v ? <span className="status-pill resolved">{t('flows.on')}</span> : <span className="status-pill">{t('flows.off')}</span>
-    ) },
+    // "Enabled" is what the author asked for; runtimeState is what the RUNTIME is actually doing.
+    // They are not the same question, and when they disagree this column is the only place an
+    // operator would ever find out — a flow that will not compile, or one stopped for running
+    // away, used to show here as simply "on".
+    { key: 'enabled', label: t('flows.status'), filterType: 'boolean', render: (v, row) => {
+      if (!v) return <span className="status-pill">{t('flows.off')}</span>;
+      if (row.runtimeState === 'error') {
+        return <span className="status-pill danger" title={row.runtimeDetail || ''}>{t('flows.stateError')}</span>;
+      }
+      if (row.runtimeState === 'quarantined') {
+        return <span className="status-pill danger" title={row.runtimeDetail || ''}>{t('flows.stateStopped')}</span>;
+      }
+      return <span className="status-pill resolved">{t('flows.on')}</span>;
+    } },
     { key: 'actions', label: '', filterable: false, render: (_v, row) => {
       const isTemplate = graphSlots(row.graph).length > 0;
       return (

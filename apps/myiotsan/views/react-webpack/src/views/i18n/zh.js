@@ -67,6 +67,8 @@ export default {
   'flows.status': '状态',
   'flows.on': '开',
   'flows.off': '关',
+  'flows.stateError': '未运行',
+  'flows.stateStopped': '已停止',
   'flows.builtin': '示例',
   'flows.template': '模板',
   'flows.enable': '启用',

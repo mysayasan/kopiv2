@@ -70,6 +70,55 @@ func codeBearing(t string) bool {
 	return t == nodeFunction || t == nodeExpression || t == nodeSwitch
 }
 
+// nodeScript returns the JavaScript body a code-bearing node compiles to, and whether it has one.
+//
+// It exists so there is exactly ONE definition of what a node's script IS. The runtime compiles
+// it to run the flow; the save path compiles it to refuse a flow that cannot run. If those two
+// built the wrapper text separately they would drift, and the drift would show up as a flow that
+// validated on save and failed on the worker — which is the failure this whole seam exists to
+// remove.
+func nodeScript(n *flowNode) (string, bool) {
+	switch n.Type {
+	case nodeFunction:
+		return cfgString(n.Config, "code"), true
+	case nodeExpression:
+		return "return (" + cfgString(n.Config, "expr") + ");", true
+	case nodeSwitch:
+		return "if (" + cfgString(n.Config, "predicate") + ") { return msg; } return null;", true
+	}
+	return "", false
+}
+
+// checkScripts compiles every code-bearing node in a graph and throws the sandbox away.
+//
+// WHY AT SAVE. flows.go has always claimed that "validation runs at save and again at compile, so
+// a bad graph can neither be stored nor run" — and for the graph's SHAPE that was true. For its
+// SCRIPTS it was not: a function node with a typo in it saved, enabled, listed as enabled, and
+// then failed to compile on the worker, where the only trace was one INFO log line. The operator
+// had an alerting flow that was never going to run and nothing anywhere said so. A missed alert
+// is the one failure a monitoring product may never have, so the typo is refused here, at the
+// point where the person who made it is still looking at it.
+func checkScripts(g *flowGraph) error {
+	if g == nil {
+		return nil
+	}
+	var sandbox *jsSandbox
+	for i := range g.Nodes {
+		n := &g.Nodes[i]
+		body, ok := nodeScript(n)
+		if !ok {
+			continue
+		}
+		if sandbox == nil {
+			sandbox = newJSSandbox()
+		}
+		if err := sandbox.compile(n.Id, body); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func knownNodeType(t string) bool {
 	switch t {
 	case nodeDeviceTelemetry, nodeFunction, nodeExpression, nodeScale,
@@ -326,7 +375,11 @@ func (s *FlowService) Create(ctx context.Context, req SaveFlowRequest, actor int
 	if name == "" {
 		return nil, fmt.Errorf("a flow needs a name")
 	}
-	if _, err := parseGraph(req.Graph); err != nil {
+	g, err := parseGraph(req.Graph)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkScripts(g); err != nil {
 		return nil, err
 	}
 	if err := s.checkTopics(ctx, req.Graph); err != nil {
@@ -336,7 +389,7 @@ func (s *FlowService) Create(ctx context.Context, req SaveFlowRequest, actor int
 	if slug == "" {
 		slug = slugify(name)
 	}
-	slug, err := s.uniqueSlug(ctx, slug)
+	slug, err = s.uniqueSlug(ctx, slug)
 	if err != nil {
 		return nil, err
 	}
@@ -362,7 +415,11 @@ func (s *FlowService) Update(ctx context.Context, id int64, req SaveFlowRequest,
 	if name == "" {
 		return nil, fmt.Errorf("a flow needs a name")
 	}
-	if _, err := parseGraph(req.Graph); err != nil {
+	g, err := parseGraph(req.Graph)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkScripts(g); err != nil {
 		return nil, err
 	}
 	if err := s.checkTopics(ctx, req.Graph); err != nil {

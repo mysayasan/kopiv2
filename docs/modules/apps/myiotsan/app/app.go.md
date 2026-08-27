@@ -157,11 +157,16 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
      log** — skipping this re-arms every still-true rule on every restart, the alert storm
      mymatasan shipped), `services.NewIngest`, then `iotmqtt.New` (the embedded broker, refuses
      to build with no authenticator) run via `safego.Go`.
-  9a. **Wires runtime metrics** immediately after the ingest spine: `services.DescribeMetrics(deps.Metrics)`
-      then `services.RunMetricsSampler(bgCtx, deps.Metrics, ingest, deviceService, 10*time.Second)`.
-      Nine series total (was zero — a live scrape confirmed it), all instrumenting failure modes
-      the ingest pipeline otherwise raises no error for: a dropped reading, a mistuned deadband, a
-      device gone quiet, a failed/refused command. See `services/metrics.go.md`.
+  9a. **Wires onboarding, scanning, home automation and the Flow Engine first** (steps 9b-10e
+      below), **then wires runtime metrics last**, right after the Flow Engine (step 10e):
+      `services.DescribeMetrics(deps.Metrics)` then `services.RunMetricsSampler(bgCtx,
+      deps.Metrics, ingest, flowRuntime, deviceService, 10*time.Second)` — moved here (it used to
+      sit immediately after the ingest spine) because the three flow gauges need `flowRuntime` to
+      exist. Twelve series total (was zero — a live scrape confirmed it), all instrumenting failure
+      modes that otherwise raise no error a human sees: a dropped ingest reading, a mistuned
+      deadband, a device gone quiet, a failed/refused command, and — the three new ones — telemetry
+      events the flow runtime shed under backpressure, its queue depth, and flows that are enabled
+      but not actually running. See `services/metrics.go.md`.
   9b. **Wires onboarding (P3)** immediately after the ingest spine: `services.NewEnrollment(deps.Db,
       profileService, logf)`, where `logf` both logs and publishes a `notification.CategorySystem`
       warning through `notificationService.Publish` — opening a window is a security event, and it
@@ -224,8 +229,13 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
       JavaScript (`services/flow_eval.go.md`), but only a dedicated `command` output node can
       actuate, and it routes through `commandService.Issue` — the identical guarded chokepoint every
       other actuation path in this app uses, so a flow can command nothing a person could not; an
-      `mqtt_out` output publishes data, not a command, so it does not go through that gate. See
-      `services/flow_runtime.go.md` and `docs/MYIOTSAN_PLAN.md` §8i.
+      `mqtt_out` output publishes data, not a command, so it does not go through that gate. A
+      script is now compiled at SAVE (`FlowService.Create`/`Update` -> `checkScripts`), so a typo
+      is refused with a 400 rather than saving as enabled and never running; one reading may not
+      spend more than `flowEventBudget` (1s) across a whole graph, and a flow whose script times
+      out `flowQuarantineAfter` (5) times in a row is stopped and reported to the notification
+      feed, both bounding what an "arbitrary JavaScript" flow can cost the one shared worker every
+      other flow depends on. See `services/flow_runtime.go.md` and `docs/MYIOTSAN_PLAN.md` §8i.
   11. Registers `apis.NewDevicesApi`, `apis.NewDiscoveryApi` (P3, now also taking `scanService`
       for the active-scan route — step 9c), `apis.NewCommandsApi` (P4),
       `apis.NewProfilesApi`, `apis.NewRulesApi`, `apis.NewScenesApi`, `apis.NewSchedulesApi`
@@ -282,13 +292,15 @@ adopted myiotsan node) were booted together for a live end-to-end check. See
 
 ## Notes
 
-- **Runtime metrics (was 0 series on `/metrics` → 9):** a live scrape before this change showed
+- **Runtime metrics (was 0 series on `/metrics` → 12):** a live scrape before this change showed
   myiotsan exposing nothing app-specific. The ingest pipeline is deliberately arranged so a
   publish never touches the database and so never raises an error a human sees — a dropped
   reading, a mistuned deadband, a device gone quiet are all silent without a scrape. See
   `services/metrics.go.md` for the full catalog; the headline is `myiotsan_ingest_dropped_total`
   (readings shed because the write queue was full), verified live at `dropped_total 86` against a
-  torrent that outran the disk.
+  torrent that outran the disk. Three more (`myiotsan_flow_events_dropped_total`,
+  `myiotsan_flow_queue_depth`, `myiotsan_flows_stopped`) instrument the identical silent-failure
+  shape one layer up, in the flow engine's own worker.
 - Uses `sharedapis.NewLocalLoginApi` (session-cookie login, new with this app — see
   `domain/shared/apis/local_login_api.go.md`) as its primary sign-in path rather than
   Basic-only; Basic still works for API clients since `NewLocalBasicAuth` accepts both.

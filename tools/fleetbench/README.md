@@ -93,6 +93,7 @@ python tools/fleetbench/iotsan_harness.py            # myiotsan + its EMBEDDED b
 python tools/fleetbench/bench_iotsan_actuation.py    # does anything reach a relay off-path?
 python tools/fleetbench/bench_iotsan_modbus.py       # does a WRITE reach the wire, and move plant?
 python tools/fleetbench/bench_iotsan_commands.py     # does a failed command STAY failed?
+python tools/fleetbench/bench_iotsan_flows.py        # can the JS in a flow escape, or starve the rest?
 ```
 
 `bench_idsan_lockout.py` is the only myidsan bench that stands up a **cluster**: a Postgres
@@ -539,6 +540,78 @@ How the two hard cases are driven:
   closing rather than an API poke.
 - Every negative is preceded by the positive that proves the mechanism works — the confirm path is
   demonstrated end to end before any "it did not confirm" is believed.
+
+
+## myiotsan — arbitrary JavaScript inside the app that writes to the building
+
+`bench_iotsan_flows.py`, **41/41** (32/43 against unfixed main — the count differs because two of
+the old checks asked what a broken flow LOOKS like once stored, and a broken flow can no longer be
+stored). The flow canvas runs user-authored JavaScript on every reading, on purpose: the fork was
+chosen deliberately for Node-RED parity. `flow_eval.go` states the three-line safety model that
+makes that acceptable — no host bindings in the sandbox, a watchdog on every call, and no way to
+actuate except an output node routed through `CommandService.Issue`. This bench asks all three of
+a running app.
+
+**The sandbox holds, completely, and that is worth saying plainly.** A script's whole global object
+is the two names the flow bootstrap puts there (`flow`, `__flowctx`); `require`, `process`, `fs`,
+`net`, `os` and `child_process` are all absent; the Function-constructor escape lands in the same
+empty global; a runaway loop and unbounded recursion are both interrupted inside one script budget
+without touching the process; a throwing node drops its own branch and not its sibling's; and one
+flow cannot read another's scratchpad. Nothing was found there. The bench also closed a gap the
+engine's own verification left open: it was never proven on REAL broker telemetry, because the
+broker was off when it was written. It is now.
+
+What it found was on the other side — not what a script can REACH, but what it can COST, and what
+happens to a flow that cannot run at all.
+
+**A flow whose script would not compile saved, enabled, listed as enabled, and never ran.** The
+graph's shape was validated at save; its SCRIPTS were not. A typo in a function node produced a
+`200 OK`, an enabled row, an On badge on the canvas, and then one INFO log line per reconcile on a
+worker nobody is watching. An operator who drew an alerting flow believed it was armed. Scripts are
+now compiled at save and the typo is refused where the person who made it is still looking at it;
+a flow that still cannot compile at runtime (an import, an older row) is reported to the
+notification feed once and rendered on the list as **Not running** rather than On.
+
+**One flow's slow scripts stalled every other flow in the install.** Every flow shares one worker
+goroutine. `flowScriptTimeout` fences a single script and nothing fenced the EVENT, so a graph of
+scripts that each finish just inside their budget — nothing misbehaving by any rule the runtime
+could see — spent as long as it liked per reading. Measured: **one reading into a 190-node graph of
+80ms scripts delayed an unrelated flow by 15.1 seconds**, and the ceiling the runtime actually
+permitted (`flowMaxSteps` × `flowScriptTimeout`) is a hundred seconds per sample. A second shape,
+a script that never returns, cost the same worker a full budget on every message forever. Both are
+now bounded: one reading gets `flowEventBudget` across the whole graph, and a flow whose script
+times out five times in a row is quarantined and the operator is told which flow to look at. The
+same two measurements after: **0.8 s** and **0.8 s**.
+
+**Events the runtime shed were invisible.** `FlowRuntime` counted the telemetry events it dropped
+when its queue overflowed into a field whose comment said "for logging" and which nothing read.
+That is the exact failure `services/metrics.go` says an instrument exists for: when the flow worker
+falls behind, the readings still land and the charts still draw, and only the automation quietly
+stops. There is now `GET /api/flows/stats`, a ramped log line, and Prometheus gauges for shed
+events, queue depth and stopped flows. (The counter also raced — it was a plain `int64` written
+from the broker hook and the Modbus poller — and is now atomic.)
+
+**And one that is not myiotsan's at all.** Chasing why an install's 110 enabled flows produced 100
+derived series led to `infra/db/sql`: all three drivers stopped scanning a result set at a
+**hardcoded 100 rows, whatever limit the caller asked for**, while `x_rows_cnt` still reported the
+true total from the database — so a truncated read was indistinguishable from a complete one.
+Seventy call sites across the suite ask for more than a hundred rows. Live, on this app alone: a
+telemetry series asked for 2000 points and drew 100; `Latest` folded the newest 500 readings into
+"the current value of every key" and saw 100, so a busy key crowded the others off the device page;
+and the flow runtime asked for its 500 enabled flows and compiled 100 — the hundred-and-first flow
+was listed nowhere and never ran, with no error at any layer. The scan now takes exactly what the
+caller asked for; only a caller that passes no limit at all gets a ceiling. Pinned by a real-sqlite
+test that writes 250 rows and reads them back.
+
+How the starvation half is driven, because the measurement is the whole argument:
+
+- **A WITNESS flow is the clock.** A trivial flow on its own telemetry key, timed from publish to
+  stored derived value. Its baseline with nothing else running (0.3 s) is measured first, so a slow
+  docker host cannot be mistaken for starvation.
+- **The slow graph uses scripts that each stay INSIDE the budget.** That is the point: a graph
+  built only of well-behaved nodes was the case no rule in the runtime could see.
+- The burst size is 200 readings on purpose. At 100 the unfixed app landed at 9.7 s against a 10 s
+  budget, and a knife edge is not a measurement.
 
 
 ## mypintusan — the first bench of the app that opens doors

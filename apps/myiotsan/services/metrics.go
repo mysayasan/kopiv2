@@ -53,6 +53,17 @@ const (
 	// A rising `failed` is devices not acting; a rising `refused` is somebody repeatedly trying
 	// something they are not allowed to — both are worth seeing.
 	MetricCommandsTotal = "myiotsan_commands_total"
+
+	// MetricFlowEventsDropped counts telemetry events the flow runtime SHED because its queue
+	// overflowed. The same argument as MetricIngestDropped, one layer up and even quieter: when
+	// the flow worker cannot keep up, the readings still arrive and the charts still draw, and the
+	// only thing missing is the automation on top of them. Nothing else anywhere goes wrong.
+	MetricFlowEventsDropped = "myiotsan_flow_events_dropped_total"
+	// MetricFlowQueueDepth is the runtime's current backlog — the leading indicator of the above.
+	MetricFlowQueueDepth = "myiotsan_flow_queue_depth"
+	// MetricFlowsStopped counts enabled flows that are NOT running: one that would not compile, or
+	// one quarantined for running away. An operator who drew a flow believes it is armed.
+	MetricFlowsStopped = "myiotsan_flows_stopped"
 )
 
 // DescribeMetrics attaches help text. Call once at startup.
@@ -69,12 +80,21 @@ func DescribeMetrics(m telemetry.Metrics) {
 	m.Describe(MetricDevicesOnline, "Devices whose last reading is recent.")
 	m.Describe(MetricDevicesOffline, "Devices that have gone silent — a monitoring blind spot.")
 	m.Describe(MetricCommandsTotal, "Actuation commands by outcome (confirmed|failed|refused).")
+	m.Describe(MetricFlowEventsDropped, "Telemetry events SHED by the flow runtime — automation silently stopped firing. Alert on any increase.")
+	m.Describe(MetricFlowQueueDepth, "Current flow-runtime backlog. Climbing toward the cap is the leading indicator of shed events.")
+	m.Describe(MetricFlowsStopped, "Enabled flows that are not running (would not compile, or quarantined for running away).")
 }
 
 // statSource is the narrow slice of Ingest the sampler needs — one method. A consumer-defined
 // interface so the sampler does not drag in the whole ingest pipeline.
 type statSource interface {
 	Stats() IngestStats
+}
+
+// flowStatSource is the same narrow shape for the flow runtime. Nil is allowed: an install can be
+// wired without flows, and a sampler that panicked on that would be worse than a missing gauge.
+type flowStatSource interface {
+	Stats() FlowStats
 }
 
 // RunMetricsSampler periodically reads the ingest counters and device health into Prometheus.
@@ -87,7 +107,7 @@ type statSource interface {
 //
 // Counters are exposed as gauges of the running total, which Prometheus turns back into a rate
 // with `rate()`. That loses nothing and keeps the sampler a plain copy.
-func RunMetricsSampler(ctx context.Context, m telemetry.Metrics, stats statSource, devices *DeviceService, interval time.Duration) {
+func RunMetricsSampler(ctx context.Context, m telemetry.Metrics, stats statSource, flows flowStatSource, devices *DeviceService, interval time.Duration) {
 	if m == nil || stats == nil {
 		return
 	}
@@ -102,13 +122,13 @@ func RunMetricsSampler(ctx context.Context, m telemetry.Metrics, stats statSourc
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				sampleOnce(ctx, m, stats, devices)
+				sampleOnce(ctx, m, stats, flows, devices)
 			}
 		}
 	})
 }
 
-func sampleOnce(ctx context.Context, m telemetry.Metrics, stats statSource, devices *DeviceService) {
+func sampleOnce(ctx context.Context, m telemetry.Metrics, stats statSource, flows flowStatSource, devices *DeviceService) {
 	s := stats.Stats()
 	m.Set(MetricIngestReceived, nil, float64(s.Received))
 	m.Set(MetricIngestStored, nil, float64(s.Stored))
@@ -116,6 +136,13 @@ func sampleOnce(ctx context.Context, m telemetry.Metrics, stats statSource, devi
 	m.Set(MetricIngestDropped, nil, float64(s.Dropped))
 	m.Set(MetricIngestQueueDepth, nil, float64(s.Queued))
 	m.Set(MetricIngestSeries, nil, float64(s.Series))
+
+	if flows != nil {
+		f := flows.Stats()
+		m.Set(MetricFlowEventsDropped, nil, float64(f.Dropped))
+		m.Set(MetricFlowQueueDepth, nil, float64(f.Queued))
+		m.Set(MetricFlowsStopped, nil, float64(f.Broken+f.Quarantined))
+	}
 
 	if devices == nil {
 		return

@@ -66,6 +66,26 @@ forever). An empty string is legal (a freshly created, not-yet-drawn flow). Vali
 save (`Create`/`Update`) and again at compile (`flow_runtime.go.md`'s `compileFlow`), so a bad
 graph can neither be stored nor run.
 
+`parseGraph` validates the graph's SHAPE only. Its SCRIPTS are validated separately, by
+`checkScripts` below — a graph can be a valid DAG of known node types and still contain a function
+node whose JavaScript has a syntax error.
+
+## Key Function: nodeScript / checkScripts — compiling scripts at save
+
+```go
+func nodeScript(n *flowNode) (string, bool) // the JS body a code-bearing node compiles to, and whether it has one
+func checkScripts(g *flowGraph) error       // compiles every code-bearing node in a throwaway sandbox
+```
+
+`nodeScript` is the ONE definition of what a `function`/`expression`/`switch` node's script IS —
+`flow_runtime.go.md`'s `compileFlow` calls the same function to build the sandbox that actually
+runs the flow, so the save-time check and the runtime can never drift apart. `checkScripts` walks
+every code-bearing node, compiles it in a throwaway `jsSandbox`, and returns the first compile
+error. `Create` and `Update` both call `parseGraph` then `checkScripts` before persisting: a
+function node with a typo used to save, enable, and list as enabled while failing to compile on
+the worker with nothing but an INFO log line as a trace — a missed alert is the one failure this
+product may not have, so the typo is refused where the author is still looking at it.
+
 ## Key Type: FlowService (CRUD)
 
 ```go

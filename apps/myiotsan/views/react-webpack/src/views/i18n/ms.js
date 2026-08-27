@@ -67,6 +67,8 @@ export default {
   'flows.status': 'Status',
   'flows.on': 'Hidup',
   'flows.off': 'Mati',
+  'flows.stateError': 'Tidak berjalan',
+  'flows.stateStopped': 'Dihentikan',
   'flows.builtin': 'contoh',
   'flows.template': 'templat',
   'flows.enable': 'Dayakan',

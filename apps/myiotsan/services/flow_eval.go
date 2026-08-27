@@ -1,7 +1,9 @@
 package services
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/dop251/goja"
@@ -20,6 +22,24 @@ import (
 //     `while(true){}` cannot wedge the flow worker. The runtime is cleared and reused afterwards.
 //   - A script cannot actuate. It only transforms a message; only an OUTPUT node acts, and the
 //     command output routes through CommandService.Issue. This file never calls the actuation layer.
+
+// scriptTimeoutMessage is what the watchdog interrupts a script with. The runtime distinguishes a
+// TIMED-OUT script from one that merely threw: a script that throws on an odd payload is ordinary
+// (and the branch is dropped), while a script that never returns costs the shared worker its whole
+// budget on every message, and repeating that is what gets a flow quarantined.
+const scriptTimeoutMessage = "flow: script exceeded time budget"
+
+// isScriptTimeout reports whether an error from run() is the watchdog rather than the script.
+func isScriptTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	var interrupted *goja.InterruptedError
+	if errors.As(err, &interrupted) {
+		return true
+	}
+	return strings.Contains(err.Error(), scriptTimeoutMessage)
+}
 
 // flowMessage is the unit that travels along a wire. Payload is the value most nodes care about
 // (a number after decoding, but a script may set it to a string or bool); the rest is provenance a
@@ -119,9 +139,18 @@ func (s *jsSandbox) run(nodeID string, in *flowMessage, timeout time.Duration) (
 	}
 	arg := s.rt.ToValue(in.toJS())
 
+	// Start clean. The watchdog below runs on another goroutine, and timer.Stop() does not wait
+	// for a func that has already begun — so a script finishing in the same instant the watchdog
+	// fires can leave an Interrupt pending on the runtime AFTER this call has cleared it. Nothing
+	// notices until the next message, which is then killed for a budget it never came close to
+	// using: one silently lost reading, on a flow that is working perfectly. Clearing on the way
+	// IN as well as on the way out closes that window — a pending interrupt can only ever belong
+	// to a call that has already finished.
+	s.rt.ClearInterrupt()
+
 	// Watchdog: Interrupt is meant to be called from another goroutine — that is exactly what it
 	// is for. If the script finishes first, Stop() cancels the timer before it can fire.
-	timer := time.AfterFunc(timeout, func() { s.rt.Interrupt("flow: script exceeded time budget") })
+	timer := time.AfterFunc(timeout, func() { s.rt.Interrupt(scriptTimeoutMessage) })
 	ret, err := fn(goja.Undefined(), arg)
 	timer.Stop()
 	s.rt.ClearInterrupt() // leave the runtime clean for the next message even if we interrupted

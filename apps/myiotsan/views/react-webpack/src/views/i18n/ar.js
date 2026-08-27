@@ -67,6 +67,8 @@ export default {
   'flows.status': 'الحالة',
   'flows.on': 'تشغيل',
   'flows.off': 'إيقاف',
+  'flows.stateError': 'لا يعمل',
+  'flows.stateStopped': 'متوقف',
   'flows.builtin': 'نموذج',
   'flows.template': 'قالب',
   'flows.enable': 'تفعيل',

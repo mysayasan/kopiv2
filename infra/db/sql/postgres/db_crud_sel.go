@@ -105,16 +105,16 @@ func (m *dbCrud) genSelSqlStrWithJoinSpecs(props reflect.Value, limit uint64, of
 func (m *dbCrud) SelectJoin(ctx context.Context, model interface{}, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter, datasrc string, joins ...dbsql.JoinSpec) ([]map[string]interface{}, uint64, error) {
 	props := reflect.ValueOf(model)
 	colCnt, sqlStr := m.genSelSqlStrWithJoinSpecs(props, limit, offset, filters, sorters, datasrc, joins...)
-	return m.selectWithSQL(ctx, model, colCnt, sqlStr)
+	return m.selectWithSQL(ctx, model, colCnt, sqlStr, limit)
 }
 
 func (m *dbCrud) Select(ctx context.Context, model interface{}, limit uint64, offset uint64, filters []sqldataenums.Filter, sorters []sqldataenums.Sorter, datasrc string, joinsrc ...string) ([]map[string]interface{}, uint64, error) {
 	props := reflect.ValueOf(model)
 	colCnt, sqlStr := m.genSelSqlStr(props, limit, offset, filters, sorters, datasrc, joinsrc...)
-	return m.selectWithSQL(ctx, model, colCnt, sqlStr)
+	return m.selectWithSQL(ctx, model, colCnt, sqlStr, limit)
 }
 
-func (m *dbCrud) selectWithSQL(ctx context.Context, model interface{}, colCnt int, sqlStr string) ([]map[string]interface{}, uint64, error) {
+func (m *dbCrud) selectWithSQL(ctx context.Context, model interface{}, colCnt int, sqlStr string, limit uint64) ([]map[string]interface{}, uint64, error) {
 	props := reflect.ValueOf(model)
 	rows := &sql.Rows{}
 	var err error
@@ -150,7 +150,8 @@ func (m *dbCrud) selectWithSQL(ctx context.Context, model interface{}, colCnt in
 		return nil, 0, errors.New("different length between db columns prop field")
 	}
 
-	maxRowCnt := uint64(100)
+	// Take what the caller asked for, not a hidden hundred. See dbsql.ScanRowLimit.
+	maxRowCnt := dbsql.ScanRowLimit(limit)
 	rowCnt := uint64(0)
 	totalCnt := uint64(0)
 	hasRowsCount := len(cols) > 0 && cols[len(cols)-1] == "x_rows_cnt"
