@@ -165,6 +165,38 @@ same six gates above:
 - See `entities/profile_command.go.md` for the full `Kind` list and `services/profile_catalog.go.md`
   for `smart-lamp`, the shipped worked example.
 
+## The Modbus write, verified against real plant
+
+`sendModbus` is exercised end to end by `tools/fleetbench/bench_iotsan_modbus.py` against
+`tools/sunspec-sim`, and the bench deliberately does not take the app's word for any of it.
+
+`WriteConfirm` confirms a write by **reading back the register it just wrote**, which is the right
+design and is also self-certifying: a write that went to the wrong register, the wrong unit, or with
+the wrong sign confirms itself exactly as happily as a correct one. So the bench brings its own
+Modbus client, reads the simulator directly, and checks three separate things for every write — the
+app's status, the raw register on the wire, and what the PLANT then does, read back through the
+product's own telemetry.
+
+What is now proven rather than assumed:
+
+- a curtailment command reaches the real holding register, reports `confirmed`, and the inverter
+  really throttles (its SunSpec operating state changes to THROTTLED and its AC power drops below
+  the cap);
+- the **sign convention** — a setpoint of `-40` on an `i16` register is `65496` on the wire, not
+  clamped and not refused, and a `0.1`-scaled `-12.5` is `65411` (`raw = round(value / scale)`,
+  then two's complement);
+- every gate holds on the Modbus transport, and a refused command leaves the register **untouched**
+  — which only a read of the wire can show;
+- a write that cannot land (an unmapped register, an unreachable device) ends `failed`, says plainly
+  that it was not confirmed, and is recorded **exactly once** — nothing retries it;
+- the same path works for a NON-SunSpec device through a hand-authored register map.
+
+One documented behaviour the bench pins deliberately: a command whose device requires a separate
+ENABLE register still reports `confirmed` when only the value register is written, because
+confirmed means "the device reported the value back", which is true. The shipped deye/sungrow
+profiles carry the same shape ("solar sell must be on before the export limit matters"). The bench
+asserts the honest reading of that status rather than a stronger one.
+
 ## The reserved-topic guard — what keeps the gates from being decoration
 
 Every gate above is worth exactly as much as the claim that there is **no other way** to reach a

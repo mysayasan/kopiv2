@@ -112,3 +112,27 @@ fn 4 instead of fn 3. `ptypeOf` maps the profile's string `RegKind`
   `TestBuiltinRegmapProfilesBuildValidMaps` — every builtin register-map profile (including the
   three new ones) must build a non-empty, valid `RegisterMap` via `registerMapFromKeys`, catching a
   typo'd `RegKind` or an unmapped key at test time rather than only when a real device is polled.
+
+## A profile that could never store anything is refused, in BOTH modes
+
+`planFor` refuses a device whose profile cannot produce a storable reading, and it now does so for
+either Modbus mode rather than only one:
+
+- **regmap** has always refused a profile with no Modbus-bound keys (`registerMapFromKeys`:
+  "register-map profile declares no Modbus-bound keys") — a register map with nothing mapped can
+  never yield a reading.
+- **sunspec** used to accept a profile with no keys at all. A SunSpec profile DISCOVERS its
+  datapoints, so it needs no register bindings — but a sample whose key the profile does not
+  declare is dropped (`ingest.go.md`, `handleSamples`), so a profile declaring **no** keys read the
+  device perfectly and stored nothing whatsoever.
+
+That second case was completely silent, which is what made it worth fixing: the poller logged
+`polling <device> ... every 2s`, the device's **Last seen kept advancing** (liveness is recorded
+before the keys are consulted, deliberately — a device reporting an unchanged value is alive), no
+error was raised anywhere, and the only trace was `decoded: 0` in `GET /api/devices/stats`. An
+integrator sees a connected inverter with an empty chart and nothing to explain it.
+
+Both modes now refuse with a message naming what to fix. The `len(binds.keys) == 0` guard in
+`HandlePolled` stays as defence in depth.
+
+Found by `tools/fleetbench/bench_iotsan_modbus.py` — by walking into it while writing the bench.

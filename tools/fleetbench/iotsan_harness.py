@@ -64,6 +64,12 @@ ADMIN_USER = "admin"
 ADMIN_PASS = "admin123"
 BENCH_PASS = "Bench!2345678"
 
+# tools/sunspec-sim runs on the HOST (it is a go binary, not a container), so the app reaches it
+# at the host's LAN address — 127.0.0.1 inside a container is the container. Port 1502 rather than
+# the real 502, which needs root.
+SIM_PORT = 1502
+SIM_ADDR = "%s:%d" % (HOST, SIM_PORT)
+
 
 def app_config():
     cfg = base_config(APP, TLS_PORT)
@@ -121,6 +127,148 @@ def start_app():
        "-e", "%s_HOME=/home/app" % APP.upper(),
        "-e", "%s_DATA=/data" % APP.upper(),
        "-w", "/data", "debian:bookworm-slim", "/bin/app/" + APP)
+
+
+def build_sim():
+    """Build tools/sunspec-sim for the HOST.
+
+    Always built from THIS tree, even under KOPIV2_SKIP_BUILD: the simulator is bench tooling, not
+    the product, so a before/after comparison must hold it constant and vary only the app."""
+    out = os.path.join(ROOT, "bin", "sunspec-sim.exe" if os.name == "nt" else "sunspec-sim")
+    subprocess.run(["go", "build", "-o", out, "./tools/sunspec-sim"], cwd=REPO, check=True)
+    return out
+
+
+def start_sim(scenario="sunny", speed=1, tick_ms=500, pv=10000, extra=None):
+    """Run the simulator on the host, serving all four units.
+
+    `speed=1` (realtime) is the default HERE, unlike the simulator's own 1800: a write bench asserts
+    on a register it just wrote and on the plant's response to it, and a compressed day moves the
+    physics far enough between two reads to make a comparison meaningless. Benches that want to
+    fast-forward a schedule pass their own speed."""
+    args = [os.path.join(ROOT, "bin", "sunspec-sim.exe" if os.name == "nt" else "sunspec-sim"),
+            "-addr", ":%d" % SIM_PORT, "-scenario", scenario,
+            "-speed", str(speed), "-tick", str(tick_ms), "-pv", str(pv), "-quiet"]
+    if extra:
+        args += list(extra)
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+    # A STALE simulator from a previous run keeps the port, so this one dies on bind while the
+    # port still answers — and the bench then measures the OLD binary, at the OLD time of day,
+    # with none of the flags it just asked for, reporting nothing wrong. Cost a run to learn: the
+    # start is not complete until the process we launched is alive AND serving.
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            raise SystemExit("the simulator exited immediately — most likely another one still "
+                             "holds :%d. Its output:\n%s" % (SIM_PORT, proc.stdout.read()))
+        try:
+            Modbus(port=SIM_PORT).read_holding(1, 40000, 2)
+            return proc
+        except Exception:
+            time.sleep(0.3)
+    proc.kill()
+    raise SystemExit("the simulator did not start serving on :%d" % SIM_PORT)
+
+
+def stop_sim(proc):
+    if proc is None:
+        return
+    try:
+        proc.kill()
+        proc.wait(timeout=10)
+    except Exception:
+        pass
+
+
+class Modbus:
+    """A minimal Modbus TCP client — the bench's OWN eyes on the wire.
+
+    This exists so a write can be verified INDEPENDENTLY of the thing that made it. myiotsan's own
+    WriteConfirm reads the register back, so asking the app whether the write landed is asking the
+    accused to testify: a confirm that never wrote, or wrote elsewhere, would answer exactly the
+    same. This client reads the simulator directly.
+
+    Stdlib sockets only, same reasoning as the simulator itself carrying no Modbus dependency."""
+
+    def __init__(self, host=HOST, port=SIM_PORT, timeout=5.0):
+        self.host, self.port, self.timeout = host, port, timeout
+        self._tid = 0
+
+    def _txn(self, unit, pdu):
+        import socket
+        import struct
+
+        self._tid = (self._tid + 1) % 0xFFFF
+        frame = struct.pack(">HHHB", self._tid, 0, len(pdu) + 1, unit) + pdu
+        sock = socket.create_connection((self.host, self.port), self.timeout)
+        try:
+            sock.settimeout(self.timeout)
+            sock.sendall(frame)
+            head = self._recv(sock, 8)
+            length = struct.unpack(">H", head[4:6])[0]
+            body = self._recv(sock, length - 2) if length > 2 else b""
+            resp = head[7:8] + body
+        finally:
+            sock.close()
+        if resp[0] & 0x80:
+            raise ModbusError("modbus exception %d on unit %d" % (resp[1], unit))
+        return resp
+
+    @staticmethod
+    def _recv(sock, n):
+        buf = b""
+        while len(buf) < n:
+            chunk = sock.recv(n - len(buf))
+            if not chunk:
+                raise ModbusError("the simulator closed the connection")
+            buf += chunk
+        return buf
+
+    def read_holding(self, unit, addr, qty=1):
+        import struct
+
+        resp = self._txn(unit, struct.pack(">BHH", 3, addr, qty))
+        count = resp[1]
+        return list(struct.unpack(">%dH" % (count // 2), resp[2:2 + count]))
+
+    def write_single(self, unit, addr, value):
+        import struct
+
+        self._txn(unit, struct.pack(">BHH", 6, addr, value & 0xFFFF))
+
+
+class ModbusError(Exception):
+    pass
+
+
+def as_i16(v):
+    """Read a register as a SIGNED 16-bit value — the sign convention that is this domain's
+    classic footgun. A curtailment written as -40 is 65496 on the wire, and a bench that compares
+    the raw word against -40 reports a correct write as a failure (or the reverse)."""
+    return v - 0x10000 if v >= 0x8000 else v
+
+
+def sunspec_models(mb, unit, base=40000):
+    """Walk a unit's SunSpec chain and return {model id: (first point address, length)}.
+
+    A command's register has to be authored ABSOLUTELY, and a SunSpec model's address depends on
+    the chain in front of it — so the bench discovers the addresses rather than hard-coding
+    arithmetic that a change to the chain would silently invalidate. It also proves, before any
+    write, that the device really is presenting the chain the profile assumes."""
+    marker = mb.read_holding(unit, base, 2)
+    if bytes([marker[0] >> 8, marker[0] & 0xFF, marker[1] >> 8, marker[1] & 0xFF]) != b"SunS":
+        raise ModbusError("unit %d has no SunS marker at %d" % (unit, base))
+    out, cur = {}, base + 2
+    while True:
+        head = mb.read_holding(unit, cur, 2)
+        mid, length = head[0], head[1]
+        if mid == 0xFFFF:
+            return out
+        out[mid] = (cur + 2, length)
+        cur += 2 + length
+        if cur > base + 1000:
+            raise ModbusError("unit %d chain did not terminate" % unit)
 
 
 def teardown():

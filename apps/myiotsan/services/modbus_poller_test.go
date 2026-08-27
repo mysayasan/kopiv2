@@ -113,6 +113,34 @@ func TestGenericSunSpecHasNoRegisterBindings(t *testing.T) {
 	}
 }
 
+// TestSunSpecBuiltinsDeclareKeys guards the other half of the same rule.
+//
+// A SunSpec profile needs no register bindings — it discovers its datapoints — but a sample whose
+// key the profile does not DECLARE is dropped (Ingest.handleSamples), so a profile with no keys
+// reads a device perfectly and stores nothing at all. planFor now refuses such a profile, the way
+// the register-map mode always refused its equivalent. That refusal must never fire on something
+// we ship: a builtin that forgot its keys would become unpollable the moment it was seeded.
+//
+// The silent version of this cost a live run to find (tools/fleetbench/bench_iotsan_modbus.py):
+// the poller logged that it was polling every 2s, Last seen kept advancing, no error appeared, and
+// the only trace was `decoded: 0` in GET /api/devices/stats.
+func TestSunSpecBuiltinsDeclareKeys(t *testing.T) {
+	seen := 0
+	for _, b := range builtinProfiles() {
+		if b.Transport != "modbus" || (b.ModbusMode != "sunspec" && b.ModbusMode != "") {
+			continue
+		}
+		seen++
+		if len(b.Keys) == 0 {
+			t.Errorf("SunSpec profile %q declares no telemetry keys, so nothing it reads could be "+
+				"stored — and planFor now refuses it", b.Slug)
+		}
+	}
+	if seen == 0 {
+		t.Fatal("no SunSpec builtin profiles found — this test would pass on an empty set")
+	}
+}
+
 // TestHuaweiBuiltinDecodes is the hermetic end-to-end proof of the shipped huawei-sun2000 profile:
 // its declared keys become a register map, and that map decodes a bank of Huawei-format raw
 // registers into the right physical values — including the scale and the two's-complement SIGN on a
@@ -142,7 +170,7 @@ func TestHuaweiBuiltinDecodes(t *testing.T) {
 		32085: 4998,                // 49.98 Hz (u16, 0.01)
 		32087: uint16(int16(455)),  // 45.5 C  (i16, 0.1)
 		32106: yHi, 32107: yLo,     // 12345.67 kWh (u32, 0.01)
-		37760: 855,                 // 85.5 %  (u16, 0.1)
+		37760: 855, // 85.5 %  (u16, 0.1)
 		37765: battHi, 37766: battLo,
 		37113: gridHi, 37114: gridLo,
 	}

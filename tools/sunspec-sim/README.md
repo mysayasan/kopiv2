@@ -23,6 +23,33 @@ Units 1–2 exercise the driver's SunSpec walk; unit 3 exercises the manual-regi
 non-compliant device needs. The vendor register contract for unit 3 is documented at the top of
 [`devices.go`](devices.go). Pass `-single` to serve only the unit-1 hybrid.
 
+### Writable controls
+
+A control register only tests something if the physics loop reads it back out — a register the
+simulation ignores lets a client "confirm" a write that achieved nothing, which is precisely the
+failure this simulator exists to make visible. The ones honoured:
+
+| Unit | Register | Effect |
+|-----:|----------|--------|
+| 1 | `123.WMaxLimPct` + `123.WMaxLim_Ena` | export curtailment; the inverter clips to that percent of nameplate and reports operating state THROTTLED. **The enable must be set or the percent means nothing** — the same shape real deye/sungrow inverters have. |
+| 1 | `124.StorCtl_Mod` | battery charge/discharge enable bitfield |
+| 3 | `reg 16` `PowerLimitPct` | export limit on the NON-SunSpec vendor block (100 = unlimited) |
+
+### `-tod`: start at a chosen hour
+
+The simulation starts at **06:00** by default, where an inverter produces almost nothing. Anything
+that needs real production — curtailment, export limiting, a meter with something to meter — should
+pass `-tod 12`, or it will be comparing zero against zero:
+
+```
+go run ./tools/sunspec-sim -tod 12 -speed 1
+```
+
+`setTOD` is part of the `Device` interface rather than a separate one the server type-asserts. It
+began as the latter, and three of the four devices simply did not implement it — so `-tod 12` wound
+one unit, left the rest at dawn, and said nothing, because a failed type assertion is not an error.
+A new device that forgets it now does not compile.
+
 ## Why SunSpec
 
 SunSpec is not a wire protocol — it is a **self-describing data model that rides on plain Modbus**.
