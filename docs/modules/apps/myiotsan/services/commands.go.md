@@ -165,6 +165,42 @@ same six gates above:
 - See `entities/profile_command.go.md` for the full `Kind` list and `services/profile_catalog.go.md`
   for `smart-lamp`, the shipped worked example.
 
+## The reserved-topic guard — what keeps the gates from being decoration
+
+Every gate above is worth exactly as much as the claim that there is **no other way** to reach a
+device. `entities/profile_command.go.md` states that claim outright: there is deliberately no
+"publish this arbitrary payload to that topic" endpoint, because one would be a remote shell for
+the building's electrics.
+
+There was one. The flow canvas's `mqtt_out` node (`services/flow_runtime.go.md`) publishes through
+`broker.Publish` — the **server's own** broker handle, which is subject to no ACL. Pointed at a
+device's own command topic it moved a real relay whose actuation was switched **off**, with a value
+outside the declared safe range, past the duty-cycle limit, and wrote **nothing** in the trail:
+gates 1, 3, 4 and 6 bypassed at once by a node whose stated job is bridging a value out. Found by
+driving a real device on a real broker — `tools/fleetbench/bench_iotsan_actuation.py`.
+
+- **`ReservedTopic(ctx, topic) (deviceKey, command, reserved)`** answers whether a topic is one a
+  real device would act on as a command. `topicShapes` reads every `ProfileCommand` with an MQTT
+  transport and a non-empty `TopicTemplate` and splits it around `{deviceKey}`; `matchReservedTopic`
+  (pure, so it is unit-pinned in `command_topics_test.go.md`) fits a candidate topic to a shape and
+  then requires a **real device** at the key in the middle. A Modbus command reserves nothing — it
+  writes a register, not a topic. A template with no placeholder addresses every device of its type
+  on one fixed topic, so that topic is reserved outright, matched exactly rather than by prefix.
+- The device lookup is what keeps the rule from being over-broad: `bridge/relay-01/state` contains
+  the device key and commands nothing, so it stays publishable. Blocking a legitimate bridge would
+  have replaced one bug with another, and the bench checks that it still publishes.
+- **`RecordOffPathRefusal`** writes the refusal into the same `device_command` trail a refused
+  `Issue` writes, naming the flow as the actor. A refusal nobody can see afterwards is half a fix:
+  "something tried to switch this relay at 03:00" is precisely what must survive.
+- `shapes`/`shapesAt` cache the shape set for `topicCacheTTL` (30s). New **devices** need no
+  invalidation — a shape is matched against the live device table on every check — and a profile
+  edit invalidates explicitly via `InvalidateTopics`, called from `apis/profiles.go.md` on create,
+  update, import and delete. The TTL is the backstop, not the mechanism.
+- The guard is consulted twice, and the runtime one is the authority: `FlowService.checkTopics`
+  refuses at **save** so an author is told plainly, and `doMqttOut` refuses at **run** so a flow
+  saved before this existed — or saved while no such device existed yet — still cannot reach a
+  device. The bench drives exactly that upgrade case.
+
 ## Notes
 
 - `renderPayload`/`trimNum` are pure helpers: `{value}` (and, for `color`, `{r}`/`{g}`/`{b}`)

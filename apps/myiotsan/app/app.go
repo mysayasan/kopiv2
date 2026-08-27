@@ -538,9 +538,16 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	if err := flowService.EnsureBuiltins(ctx); err != nil {
 		deps.Logger.Errorf("myiotsan.flows", "seed builtin flows: %v", err)
 	}
+	// commandService is passed TWICE on purpose: once as the guarded actuation entry point a
+	// command node uses, and once as the topic guard that stops an mqtt_out node from reaching a
+	// device any other way. The second one is what keeps the first one from being optional.
 	flowRuntime := services.NewFlowRuntime(flowService, commandService, notificationService, deviceService, writer, broker.Publish,
+		commandService,
 		func(f string, a ...any) { deps.Logger.Infof("myiotsan.flows", f, a...) })
 	flowService.SetOnChange(flowRuntime.SignalReload)
+	// Save-time explanation for the same rule the runtime enforces: an mqtt_out node may not
+	// address a device's command topic.
+	flowService.SetTopicGuard(commandService)
 	ingest.SetFlows(flowRuntime)
 	safego.Supervise(bgCtx, "myiotsan.flows", func(ctx context.Context) {
 		flowRuntime.Run(ctx, flowReconcileInterval)
@@ -549,7 +556,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	apis.NewDevicesApi(protected, deviceService, telemetry, profileService, ingest)
 	apis.NewDiscoveryApi(protected, enrollment, deviceService, scanService)
 	apis.NewCommandsApi(protected, commandService, deviceService)
-	apis.NewProfilesApi(protected, profileService, ingest)
+	apis.NewProfilesApi(protected, profileService, ingest, commandService)
 	apis.NewRulesApi(protected, ruleService)
 	apis.NewScenesApi(protected, sceneService)
 	apis.NewSchedulesApi(protected, scheduleService)

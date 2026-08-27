@@ -13,11 +13,16 @@ import (
 type profilesApi struct {
 	profiles *services.ProfileService
 	ingest   *services.Ingest
+	// commands is here for ONE reason: a profile is where a command's topic is declared, so
+	// editing a profile changes which topics are reserved to the guarded actuation path. The
+	// guard caches that set, and a stale cache is a window in which a flow could publish
+	// straight to a freshly declared command topic.
+	commands *services.CommandService
 }
 
 // NewProfilesApi registers the device-type catalog.
-func NewProfilesApi(router *mux.Router, profiles *services.ProfileService, ingest *services.Ingest) {
-	h := &profilesApi{profiles: profiles, ingest: ingest}
+func NewProfilesApi(router *mux.Router, profiles *services.ProfileService, ingest *services.Ingest, commands *services.CommandService) {
+	h := &profilesApi{profiles: profiles, ingest: ingest, commands: commands}
 	g := router.PathPrefix("/profiles").Subrouter()
 	g.HandleFunc("", h.list).Methods("GET")
 	g.HandleFunc("", h.create).Methods("POST")
@@ -61,6 +66,7 @@ func (a *profilesApi) create(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return
 	}
+	a.reservedTopicsChanged()
 	controllers.SendResult(w, detail, "succeed")
 }
 
@@ -80,6 +86,7 @@ func (a *profilesApi) update(w http.ResponseWriter, r *http.Request) {
 	}
 	// An edited deadband must take effect on the NEXT message, not the next restart.
 	a.ingest.InvalidateProfile(id)
+	a.reservedTopicsChanged()
 	controllers.SendResult(w, detail, "succeed")
 }
 
@@ -93,6 +100,7 @@ func (a *profilesApi) remove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.ingest.InvalidateProfile(id)
+	a.reservedTopicsChanged()
 	controllers.SendResult(w, map[string]any{"deleted": id}, "succeed")
 }
 
@@ -128,7 +136,15 @@ func (a *profilesApi) importProfile(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return
 	}
+	a.reservedTopicsChanged()
 	controllers.SendResult(w, detail, "succeed")
+}
+
+// reservedTopicsChanged tells the actuation guard to re-read which topics command a device.
+func (a *profilesApi) reservedTopicsChanged() {
+	if a.commands != nil {
+		a.commands.InvalidateTopics()
+	}
 }
 
 func parseInt(v string) (int64, error) {

@@ -210,7 +210,12 @@ func cfgBool(cfg map[string]any, key string) bool {
 type FlowService struct {
 	flows    dbsql.IGenericRepo[entities.IotFlow]
 	onChange func()
-	logf     func(format string, args ...any)
+	// topics reserves this hub's device command topics. It is consulted when a flow is SAVED, so
+	// an author is told plainly that an mqtt_out node cannot address a device — rather than
+	// drawing a graph that looks right and is refused, silently, on every message. The runtime
+	// refuses independently; this is the explanation, not the enforcement.
+	topics topicGuard
+	logf   func(format string, args ...any)
 }
 
 func NewFlowService(db dbsql.IDbCrud, logf func(string, ...any)) *FlowService {
@@ -225,6 +230,42 @@ func NewFlowService(db dbsql.IDbCrud, logf func(string, ...any)) *FlowService {
 
 // SetOnChange registers the runtime's reload signal. Called once at wiring time.
 func (s *FlowService) SetOnChange(fn func()) { s.onChange = fn }
+
+// SetTopicGuard registers the reserved-topic check used at save time. Called once at wiring time.
+func (s *FlowService) SetTopicGuard(g topicGuard) { s.topics = g }
+
+// checkTopics refuses a graph whose mqtt_out node addresses a device's command topic.
+//
+// This is the same rule the runtime enforces, moved to the point where a human can act on it: the
+// bridge node publishes DATA, and a device is commanded through the guarded path or not at all.
+func (s *FlowService) checkTopics(ctx context.Context, raw string) error {
+	if s.topics == nil {
+		return nil
+	}
+	g, err := parseGraph(raw)
+	if err != nil || g == nil {
+		return err
+	}
+	for _, n := range g.Nodes {
+		if n.Type != nodeMqttOut {
+			continue
+		}
+		topic := strings.TrimSpace(cfgString(n.Config, "topic"))
+		if topic == "" {
+			continue
+		}
+		if devKey, command, reserved := s.topics.ReservedTopic(ctx, topic); reserved {
+			who := devKey
+			if who == "" {
+				who = "a device of that type"
+			}
+			return fmt.Errorf("the MQTT node %q publishes to %q, which is the %q command topic of %s — "+
+				"use a command output to actuate a device, so it goes through the guarded path",
+				n.Id, topic, command, who)
+		}
+	}
+	return nil
+}
 
 func (s *FlowService) changed() {
 	if s.onChange != nil {
@@ -288,6 +329,9 @@ func (s *FlowService) Create(ctx context.Context, req SaveFlowRequest, actor int
 	if _, err := parseGraph(req.Graph); err != nil {
 		return nil, err
 	}
+	if err := s.checkTopics(ctx, req.Graph); err != nil {
+		return nil, err
+	}
 	slug := strings.TrimSpace(req.Slug)
 	if slug == "" {
 		slug = slugify(name)
@@ -319,6 +363,9 @@ func (s *FlowService) Update(ctx context.Context, id int64, req SaveFlowRequest,
 		return nil, fmt.Errorf("a flow needs a name")
 	}
 	if _, err := parseGraph(req.Graph); err != nil {
+		return nil, err
+	}
+	if err := s.checkTopics(ctx, req.Graph); err != nil {
 		return nil, err
 	}
 	existing.Name = name

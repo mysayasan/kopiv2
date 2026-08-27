@@ -69,11 +69,22 @@ type flowDeps struct {
     devices      deviceResolver
     writer       readingSink
     publish      mqttPublish    // broker.Publish seam an mqtt_out node uses (P4)
+    topics       topicGuard     // reserves device command topics to the guarded path
     logf         func(string, ...any)
 }
 
 type mqttPublish func(topic string, payload []byte, retain bool, qos byte) error
+
+type topicGuard interface {
+    ReservedTopic(ctx context.Context, topic string) (deviceKey, command string, reserved bool)
+    RecordOffPathRefusal(ctx context.Context, deviceKey, command, topic, actorName string)
+}
 ```
+
+`topicGuard` is satisfied by `*CommandService`, which `app.go` passes to `NewFlowRuntime` **as well
+as** passing it as the `commandIssuer` — once as the guarded way in, once as the thing that stops
+there being another. A nil guard leaves `mqtt_out` unrestricted, which is right for a unit test with
+no devices and wrong for production, so the live bench is what proves the wiring.
 
 The three collaborators (`flowNotifier`, `deviceResolver`, `readingSink`) are interfaces so the
 runtime is unit-testable with fakes (`flows_test.go.md`); the production types are
@@ -96,10 +107,19 @@ runtime is unit-testable with fakes (`flows_test.go.md`); the production types a
   that wants to alert on its derived value has a threshold->notify branch for exactly that.
 - **`doMqttOut`** (P4) publishes the message payload to an MQTT topic via the `publish` seam
   (`broker.Publish` in production). It publishes DATA outward — a processed value fed to another
-  system or a home-automation subscriber — never a device command, so it does NOT go through the
-  actuation gate; `command` remains the only guarded actuation path. `payloadBytes` renders a number
-  as its shortest decimal, a string as-is, and anything else as JSON. Publishing is one-way OUT of
-  the hub, so it cannot itself loop back into ingest.
+  system or a home-automation subscriber. `payloadBytes` renders a number as its shortest decimal,
+  a string as-is, and anything else as JSON. Publishing is one-way OUT of the hub, so it cannot
+  itself loop back into ingest.
+
+  **It may not publish a COMMAND, and that is enforced rather than assumed.** The `publish` seam is
+  the server's OWN broker handle, subject to no ACL, so an `mqtt_out` node aimed at a device's
+  command topic used to move a real relay whose actuation was switched off, outside the declared
+  bounds, past the duty-cycle limit, with nothing written down — every gate in
+  `services/commands.go.md` bypassed at once by the one node in the palette whose job is not
+  actuation. `doMqttOut` now asks `topicGuard.ReservedTopic` first and, on a reserved topic,
+  refuses and records the attempt (`RecordOffPathRefusal`, actor `flow:<name>`) instead of
+  publishing. `command` is the only way a flow actuates a device. Found live —
+  `tools/fleetbench/bench_iotsan_actuation.py`.
 
 ## Key Type: debugRing (inspector)
 

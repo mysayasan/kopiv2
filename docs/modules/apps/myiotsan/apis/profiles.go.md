@@ -25,3 +25,11 @@ Registers the device-type catalog under `/api/profiles`.
 - Importing a profile whose slug already exists is REPORTED as a `400`, never silently
   overwritten — see `services/profile_transfer.go.md` for why a silent overwrite would be data
   corruption dressed as a successful import.
+
+## Why this handler knows about `CommandService`
+
+A profile is where a command's **topic** is declared, so editing one changes which topics are
+reserved to the guarded actuation path (`services/commands.go.md`). Create, update, import and
+delete therefore call `reservedTopicsChanged()` -> `CommandService.InvalidateTopics()`, alongside the
+existing `ingest.InvalidateProfile(id)`. The guard also carries a 30s TTL; this is what makes a
+freshly declared command topic protected immediately rather than eventually.

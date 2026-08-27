@@ -64,6 +64,10 @@ type CommandService struct {
 	// rate limits the physical duty cycle, per device.
 	mu       sync.Mutex
 	lastSent map[int64]time.Time
+	// the reserved-topic set: which MQTT topics a real device would act on as a command. See
+	// ReservedTopic — it is what keeps the gates above from being decoration.
+	shapes   []commandTopicShape
+	shapesAt time.Time
 }
 
 const (
@@ -106,10 +110,10 @@ func NewCommandService(
 		// The production guarded-write: dial the device (over its transport), write the register,
 		// confirm by read-back. WriteConfirm's signature is exactly modbusWriteFunc.
 		modbusWrite: modbus.WriteConfirm,
-		audit:    audit,
-		metrics:  metrics,
-		logf:     logf,
-		lastSent: map[int64]time.Time{},
+		audit:       audit,
+		metrics:     metrics,
+		logf:        logf,
+		lastSent:    map[int64]time.Time{},
 	}
 }
 
@@ -533,6 +537,166 @@ func (s *CommandService) SweepUnconfirmed(ctx context.Context) {
 			map[string]any{"deviceId": c.DeviceId, "command": c.Name, "commandId": c.Id})
 		s.logf("command %d unconfirmed after %s — failed, NOT retried", c.Id, confirmTimeout)
 	}
+}
+
+// --- the escape-hatch guard -----------------------------------------------------------------
+//
+// Every gate above is worth exactly as much as the claim that there is no OTHER way to reach a
+// device. The profile-command entity states that claim outright: there is deliberately no
+// "publish this arbitrary payload to that topic" endpoint, because one would be a remote shell
+// for the building's electrics.
+//
+// The flow canvas has an mqtt_out node, which exists for a good reason — bridging a processed
+// value OUT to another system — and it publishes through the SERVER's own broker handle, which
+// answers to no ACL. Pointed at a device's own command topic, it is that escape hatch: the relay
+// moves with actuation switched off, outside the declared bounds, past the duty-cycle limit, and
+// with nothing written down. So a topic that a device would act on is RESERVED to the guarded
+// path, and everything else on the broker stays open.
+
+// commandTopicShape is one declared command topic split around the {deviceKey} placeholder, so a
+// candidate topic can be matched back to the device it would command.
+type commandTopicShape struct {
+	prefix, suffix string
+	placeholder    bool
+	command        string
+}
+
+// topicCacheTTL bounds how stale the reserved-topic set may be. Only a PROFILE edit (an admin
+// action) can add a shape, and profiles.Update invalidates the cache explicitly — the TTL is the
+// backstop, not the mechanism. New DEVICES need no invalidation at all: a shape is matched against
+// the live device table on every check, so a device created a second ago is protected immediately.
+const topicCacheTTL = 30 * time.Second
+
+// InvalidateTopics drops the cached reserved-topic set. Called when a profile changes, because a
+// profile is where a command topic is declared.
+func (s *CommandService) InvalidateTopics() {
+	s.mu.Lock()
+	s.shapes = nil
+	s.shapesAt = time.Time{}
+	s.mu.Unlock()
+}
+
+func (s *CommandService) topicShapes(ctx context.Context) []commandTopicShape {
+	s.mu.Lock()
+	if s.shapes != nil && time.Since(s.shapesAt) < topicCacheTTL {
+		out := s.shapes
+		s.mu.Unlock()
+		return out
+	}
+	s.mu.Unlock()
+
+	rows, _, err := s.profileCmd.Get(ctx, "", 2000, 0, nil, nil)
+	if err != nil && !isNoResultErr(err) {
+		// Fail CLOSED is not an option here (it would block every bridge publish on a database
+		// blip), so the honest thing is to say so and reuse whatever was last known.
+		s.logf("command topic guard: could not read the declared commands: %v", err)
+		s.mu.Lock()
+		out := s.shapes
+		s.mu.Unlock()
+		return out
+	}
+	shapes := make([]commandTopicShape, 0, len(rows))
+	for _, c := range rows {
+		if c == nil {
+			continue
+		}
+		// A Modbus command writes a register; it has no topic to reserve.
+		if !strings.EqualFold(strings.TrimSpace(c.Transport), "") &&
+			!strings.EqualFold(strings.TrimSpace(c.Transport), "mqtt") {
+			continue
+		}
+		tpl := strings.TrimSpace(c.TopicTemplate)
+		if tpl == "" {
+			continue
+		}
+		if i := strings.Index(tpl, "{deviceKey}"); i >= 0 {
+			shapes = append(shapes, commandTopicShape{
+				prefix:      tpl[:i],
+				suffix:      tpl[i+len("{deviceKey}"):],
+				placeholder: true,
+				command:     c.Name,
+			})
+			continue
+		}
+		// A template with no placeholder addresses every device of that type on one fixed topic.
+		shapes = append(shapes, commandTopicShape{prefix: tpl, command: c.Name})
+	}
+	s.mu.Lock()
+	s.shapes = shapes
+	s.shapesAt = time.Now()
+	s.mu.Unlock()
+	return shapes
+}
+
+// ReservedTopic reports whether `topic` is a topic some real device would act on as a command,
+// and names the device and command if so. It satisfies the flow runtime's topic guard.
+func (s *CommandService) ReservedTopic(ctx context.Context, topic string) (deviceKey, command string, reserved bool) {
+	return matchReservedTopic(s.topicShapes(ctx), topic, func(key string) bool {
+		dev, err := s.devices.GetByKey(ctx, key)
+		return err == nil && dev != nil
+	})
+}
+
+// matchReservedTopic is the matching itself, kept free of the database so it can be pinned by a
+// unit test. `exists` answers whether a real device answers to a key.
+//
+// The device lookup is what keeps this from being over-broad: a topic that merely has the same
+// prefix and suffix as a command template commands nothing unless a real device sits at the key in
+// the middle, so an ordinary bridge topic stays publishable — which is the whole point of the node
+// being guarded rather than removed.
+func matchReservedTopic(shapes []commandTopicShape, topic string, exists func(key string) bool) (deviceKey, command string, reserved bool) {
+	topic = strings.TrimSpace(topic)
+	if topic == "" {
+		return "", "", false
+	}
+	for _, sh := range shapes {
+		if !sh.placeholder {
+			// A template with no placeholder addresses every device of that type on one fixed
+			// topic, so the topic itself is reserved and there is no key to resolve.
+			if topic == sh.prefix {
+				return "", sh.command, true
+			}
+			continue
+		}
+		if len(topic) <= len(sh.prefix)+len(sh.suffix) {
+			continue
+		}
+		if !strings.HasPrefix(topic, sh.prefix) || !strings.HasSuffix(topic, sh.suffix) {
+			continue
+		}
+		key := topic[len(sh.prefix) : len(topic)-len(sh.suffix)]
+		if key != "" && exists != nil && exists(key) {
+			return key, sh.command, true
+		}
+	}
+	return "", "", false
+}
+
+// RecordOffPathRefusal writes the refusal of an attempt to reach a device's command topic by a
+// route that is not the guarded one. It is the same kind of row a refused Issue writes, for the
+// same reason: "something tried to switch this relay at 03:00 and was refused" is exactly the
+// thing that must not be thrown away because it did not succeed.
+func (s *CommandService) RecordOffPathRefusal(ctx context.Context, deviceKey, command, topic, actorName string) {
+	reason := fmt.Sprintf("refused: %q is a device command topic and may only be reached through the guarded command path", topic)
+	cmd := entities.DeviceCommand{
+		Name:            command,
+		Value:           0,
+		Status:          "failed",
+		Error:           reason,
+		RequestedByName: actorName,
+		RequestedAt:     time.Now().Unix(),
+	}
+	if dev, err := s.devices.GetByKey(ctx, deviceKey); err == nil && dev != nil {
+		cmd.DeviceId = dev.Id
+		cmd.DeviceName = dev.Name
+	}
+	if id, err := s.commands.Create(ctx, "", cmd); err == nil {
+		cmd.Id = int64(id)
+	}
+	s.audit(ctx, fmt.Sprintf("REFUSED: %s tried to publish straight to %q, which commands %q", actorName, topic, cmd.DeviceName),
+		map[string]any{"deviceId": cmd.DeviceId, "command": command, "topic": topic, "actor": actorName})
+	s.countCommand("refused")
+	s.logf("off-path publish to %q by %s REFUSED — that topic commands device %q", topic, actorName, deviceKey)
 }
 
 // countCommand records one command outcome. Kept off the publish path (commands are rare) so it

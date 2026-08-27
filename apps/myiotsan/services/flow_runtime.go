@@ -53,7 +53,18 @@ type readingSink interface {
 }
 
 // mqttPublish is the broker publish seam an mqtt_out node uses (Broker.Publish satisfies it).
+//
+// Note what that seam IS: the server's own broker handle, which answers to no ACL. It can publish
+// anywhere, including a topic one of this hub's own devices is waiting for a command on — which is
+// why an mqtt_out node is checked against topicGuard before it is allowed to use it.
 type mqttPublish func(topic string, payload []byte, retain bool, qos byte) error
+
+// topicGuard tells the runtime whether a topic is one a real device would act on as a COMMAND.
+// *CommandService satisfies it; it is an interface so the runtime stays unit-testable with a fake.
+type topicGuard interface {
+	ReservedTopic(ctx context.Context, topic string) (deviceKey, command string, reserved bool)
+	RecordOffPathRefusal(ctx context.Context, deviceKey, command, topic, actorName string)
+}
 
 // flowDeps are what a node's OUTPUTS reach for. A transform node touches none of it.
 type flowDeps struct {
@@ -62,7 +73,11 @@ type flowDeps struct {
 	devices      deviceResolver
 	writer       readingSink
 	publish      mqttPublish
-	logf         func(format string, args ...any)
+	// topics reserves the device command topics to the guarded path. A nil guard leaves mqtt_out
+	// unrestricted, which is right for a unit test that has no devices and wrong for production —
+	// so app.go passes the CommandService, and the actuation bench proves it did.
+	topics topicGuard
+	logf   func(format string, args ...any)
 }
 
 // --- compiled form --------------------------------------------------------------------------
@@ -251,7 +266,7 @@ func (cf *compiledFlow) exec(ctx context.Context, node *flowNode, in *flowMessag
 		return nil, false
 
 	case nodeMqttOut:
-		cf.doMqttOut(node, in)
+		cf.doMqttOut(ctx, node, in)
 		return nil, false
 
 	default:
@@ -354,10 +369,17 @@ func (cf *compiledFlow) doDerived(ctx context.Context, node *flowNode, in *flowM
 }
 
 // doMqttOut publishes the message payload to an MQTT topic — the bridge OUT of the hub (feed a
-// processed value to another system, or drive a home-automation subscriber). It publishes data, not
-// a device command, so it does not go through the actuation gate; a command output is the guarded
-// path for actuating a myiotsan device.
-func (cf *compiledFlow) doMqttOut(node *flowNode, in *flowMessage) {
+// processed value to another system, or drive a home-automation subscriber). It publishes DATA.
+//
+// It may not publish a COMMAND. The topics this hub's own devices act on are reserved to the
+// guarded path, and an mqtt_out node aimed at one is refused and written down. That is not a
+// nicety: this node publishes through the server's own broker handle, which is subject to no ACL,
+// so without the check it would move a relay whose actuation is switched off, with a value outside
+// the declared safe range, past the duty-cycle limit, leaving nothing in the trail — every gate in
+// CommandService.Issue bypassed at once by a node whose stated job is to bridge a value out.
+//
+// A command output node is the way to actuate a myiotsan device, and it is the only way.
+func (cf *compiledFlow) doMqttOut(ctx context.Context, node *flowNode, in *flowMessage) {
 	if cf.deps.publish == nil {
 		return
 	}
@@ -365,6 +387,12 @@ func (cf *compiledFlow) doMqttOut(node *flowNode, in *flowMessage) {
 	if topic == "" {
 		cf.deps.logf("flow %q mqtt node %q missing topic", cf.name, node.Id)
 		return
+	}
+	if cf.deps.topics != nil {
+		if devKey, command, reserved := cf.deps.topics.ReservedTopic(ctx, topic); reserved {
+			cf.deps.topics.RecordOffPathRefusal(ctx, devKey, command, topic, "flow:"+cf.name)
+			return
+		}
 	}
 	qos := byte(0)
 	if q, ok := cfgFloat(node.Config, "qos"); ok {
@@ -472,13 +500,13 @@ type FlowRuntime struct {
 	dropped int64 // events shed under backpressure (for logging)
 }
 
-func NewFlowRuntime(svc *FlowService, issuer commandIssuer, notif flowNotifier, devices deviceResolver, writer readingSink, publish mqttPublish, logf func(string, ...any)) *FlowRuntime {
+func NewFlowRuntime(svc *FlowService, issuer commandIssuer, notif flowNotifier, devices deviceResolver, writer readingSink, publish mqttPublish, topics topicGuard, logf func(string, ...any)) *FlowRuntime {
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
 	return &FlowRuntime{
 		svc:      svc,
-		deps:     &flowDeps{issuer: issuer, flowNotifier: notif, devices: devices, writer: writer, publish: publish, logf: logf},
+		deps:     &flowDeps{issuer: issuer, flowNotifier: notif, devices: devices, writer: writer, publish: publish, topics: topics, logf: logf},
 		events:   make(chan flowEvent, flowEventQueue),
 		reloadCh: make(chan struct{}, 1),
 		compiled: map[int64]*compiledFlow{},
