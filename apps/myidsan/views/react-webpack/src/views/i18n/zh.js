@@ -70,6 +70,7 @@ export default {
   'mfa.title': '双重身份验证',
   'mfa.subtitle': '为您的账户添加第二重验证因素。仅当此身份服务器自行验证凭据时才需要。',
   'mfa.notEnrolled': '您的账户仅受密码保护。添加身份验证器应用以获得第二重验证因素。',
+  'mfa.notEnrolledHasKey': '你的账户受密码和安全密钥保护。你还可以添加验证器应用，这样即使丢失密钥也不会被锁在门外。',
   'mfa.enable': '启用双重验证',
   'mfa.deviceLabel': '设备名称（可选）',
   'mfa.deviceLabelHint': '例如 Pixel 8',

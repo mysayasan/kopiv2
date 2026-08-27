@@ -84,6 +84,7 @@ python tools/fleetbench/bench_idsan_lockout.py # the lockout, against a real 2-n
 python tools/fleetbench/bench_idsan_session_revoke.py # does a revoke reach the RELYING app?
 node   tools/fleetbench/uicheck_idsan_admin.js .artifacts/fleetbench en  # myidsan's FIRST screen check
 node   tools/fleetbench/uicheck_idsan_admin.js .artifacts/fleetbench ar  # (also ms, zh)
+node   tools/fleetbench/uicheck_idsan_webauthn.js .artifacts/fleetbench  # a REAL FIDO2 ceremony
 python tools/fleetbench/bench_myseliasan_lockout.py  # myseliasan's lockout — it had NONE
 ```
 
@@ -266,6 +267,35 @@ Traps, each of which produced a wrong answer first:
 - **To bench the UNFIXED bundle**, run `idsan_harness.py` from a `git worktree` at `main` with
   `KOPIV2_BENCH_DIR` pointed at your existing artifacts dir: the harness bind-mounts
   `REPO/apps/myidsan`, so that mounts main's built bundle while reusing your binaries and cert.
+
+`uicheck_idsan_webauthn.js` drives the security keys end to end with a **real WebAuthn
+ceremony**. Chrome's DevTools `WebAuthn` domain installs a virtual CTAP2 authenticator — real
+key material, real signatures, real client-data hashing — so `navigator.credentials` runs the
+genuine ceremony, the server verifies a genuine attestation, and the app's own client code
+(`lib/webauthn.js`) is what drives it. Nothing is stubbed. **19/19 against the fix, 18/19
+against main.**
+
+It covers enrolment, the audit entry, a key-only account still being CHALLENGED at sign-in
+(the MFA-bypass shape the server-rendered login page once had), the key completing that
+challenge, rename, and removal — including that removal demands the password, refuses a wrong
+one, and is throttled (`401`×8 then `429`), which is PR #206's fix proven live from a browser.
+
+Traps:
+
+- **`localhost`, NOT `127.0.0.1`.** WebAuthn requires the relying-party id to be a registrable
+  domain and a bare IP is not one: Chrome refuses with `SecurityError: This is an invalid
+  domain.` The first run clicked "Add a security key", saw nothing happen, and reported the
+  enrolment as broken. The harness certificate already names `localhost` and myidsan derives
+  its RP id from the request host, so no product change is needed — just reach it by name.
+- `isUserVerified: true` **and** `automaticPresenceSimulation: true` on the virtual
+  authenticator, or the ceremony waits forever for a human to touch a key.
+- **A check that passes on an empty result is not a check** (the third time here): "the key is
+  gone from the list" passed on the run where nothing had ever been enrolled. It is now
+  conditioned on the removal having returned 200.
+- The security-key card sits **below the fold** on the Profile page — scroll it into view
+  before clicking, or the screenshot shows the top of the page and tells you nothing.
+- `WebAuthn.getCredentials` is the independent witness: it asks the AUTHENTICATOR what it
+  holds, rather than asking the server whether it thinks a key exists.
 
 `bench_idsan_mfa.py` needs a **freshly stood-up harness**: it enrols a second factor on the
 stock superadmin, and its first check is that the account starts without one. Run

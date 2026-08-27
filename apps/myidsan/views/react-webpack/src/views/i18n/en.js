@@ -75,6 +75,7 @@ export default {
   'mfa.title': 'Two-Factor Authentication',
   'mfa.subtitle': 'Add a second factor to your account. It is required only for the credentials this identity server verifies itself.',
   'mfa.notEnrolled': 'Your account is protected by a password only. Add an authenticator app for a second factor.',
+  'mfa.notEnrolledHasKey': 'Your account is protected by a password and a security key. You can also add an authenticator app, so a lost key does not lock you out.',
   'mfa.enable': 'Enable two-factor',
   'mfa.deviceLabel': 'Device name (optional)',
   'mfa.deviceLabelHint': 'e.g. Pixel 8',
