@@ -242,6 +242,15 @@ a breaker, sets a thermostat to 200°C.
    an operator who has no account on this node — the row still names them by name (e.g.
    `cp:admin`), not just a local user id that would otherwise read as `0`/"System".
 
+A Modbus command is **live-verified** against `tools/sunspec-sim` by
+`tools/fleetbench/bench_iotsan_modbus.py`, which reads the simulator with its own Modbus client
+rather than believing the app: the curtailment lands in the real register, the inverter really
+throttles, a negative setpoint is written as two's complement with the scale applied in reverse, a
+refused command leaves the register untouched, and a write that cannot land fails once and is never
+retried. Note one honest limit it pins: a device whose control needs a separate ENABLE register
+still reports `confirmed` when only the value register is written — "confirmed" means the device
+reported the value back, which is true, and not that the setting took effect.
+
 **Two transports, one set of gates.** A device profile's command declares a `transport`: `mqtt`
 (default) publishes the payload template below to the broker, same as always; `modbus` WRITES a
 holding register on the polled device instead, using a guarded write-then-read-back

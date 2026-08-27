@@ -31,12 +31,12 @@ const (
 
 // Inverter operating state (SunSpec model 103 "St" enum).
 const (
-	stOff      = 1
-	stSleeping = 2
-	stStarting = 3
-	stMPPT     = 4 // producing normally
+	stOff       = 1
+	stSleeping  = 2
+	stStarting  = 3
+	stMPPT      = 4 // producing normally
 	stThrottled = 5 // curtailed by a WMaxLimPct write
-	stStandby  = 8
+	stStandby   = 8
 )
 
 // Battery charge status (SunSpec model 124 "ChaSt" enum).
@@ -69,10 +69,10 @@ type CommonInfo struct {
 
 // Plant holds the placed models and the mutable simulation state.
 type Plant struct {
-	unitID                   byte
-	b                        *Bank
+	unitID                     byte
+	b                          *Bank
 	common, inv, ctl, sto, mtr *Model
-	cfg                      Config
+	cfg                        Config
 
 	tod   float64 // time of day, hours [0,24)
 	soc   float64 // battery state of charge, %
@@ -124,6 +124,8 @@ func (p *Plant) label() string {
 	return fmt.Sprintf("unit %d  hybrid inverter (%s %s)", p.unitID, p.cfg.Common.Mfg, p.cfg.Common.Model)
 }
 func (p *Plant) describe(addr int) string { return p.describeAddr(addr) }
+
+func (p *Plant) setTOD(t float64) { p.tod = t }
 
 // chainTop returns the address just past the terminator, for logging the served range.
 func chainTop(base int) int {
@@ -348,7 +350,7 @@ func (p *Plant) pvCurve() float64 {
 // loadCurve is a baseline plus a morning and an evening bump.
 func (p *Plant) loadCurve() float64 {
 	l := p.cfg.LoadBaseW
-	l += 700 * gauss(p.tod, 7.5, 1.5)  // breakfast
+	l += 700 * gauss(p.tod, 7.5, 1.5)   // breakfast
 	l += 1400 * gauss(p.tod, 19.5, 2.0) // evening peak
 	return l + noise(30)
 }

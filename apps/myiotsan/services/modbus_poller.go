@@ -171,6 +171,21 @@ func (p *ModbusPoller) planFor(ctx context.Context, d *entities.IotDevice) (modb
 	case "", "sunspec":
 		conf.Mode = modbus.ModeSunSpec
 		mode = "sunspec"
+		// A SunSpec profile DISCOVERS its datapoints, so it needs no register bindings — but a
+		// sample whose key the profile does not declare is dropped (Ingest.handleSamples), so a
+		// profile that declares NO keys reads the device perfectly and stores nothing at all.
+		//
+		// Without this check that failure is completely silent: the poller logs that it is polling
+		// every few seconds, the device's Last seen keeps advancing because liveness is recorded
+		// before the keys are consulted, no error is raised anywhere, and the only trace is
+		// `decoded: 0` in GET /api/devices/stats. An integrator sees a connected inverter with an
+		// empty chart. The register-map mode has always refused the equivalent profile out loud
+		// ("declares no Modbus-bound keys") — this is the same refusal for the other mode.
+		if len(detail.Keys) == 0 {
+			return modbusPlan{}, false, fmt.Errorf(
+				"SunSpec profile %q declares no telemetry keys, so nothing it reads could be stored — "+
+					"declare the datapoints worth keeping (see the generic-sunspec-solar builtin)", prof.Slug)
+		}
 	case "regmap":
 		conf.Mode = modbus.ModeRegMap
 		m, err := registerMapFromKeys(detail.Keys)

@@ -44,6 +44,9 @@ func main() {
 	mfg := flag.String("mfg", "SunSpec Sim", "device manufacturer (Common model)")
 	model := flag.String("model", "Hybrid-10K", "device model (Common model)")
 	serial := flag.String("serial", "SIM-0001", "device serial number (Common model)")
+	tod := flag.Float64("tod", 6, "simulated time of day to START at, hours (0..24). The default 6 is dawn, "+
+		"where an inverter produces almost nothing — a bench that needs real production (curtailment, "+
+		"export limiting) should start near 12")
 	single := flag.Bool("single", false, "serve only the hybrid inverter (unit 1); omit for the full 3-device site")
 	quiet := flag.Bool("quiet", false, "suppress the per-tick status line")
 	verbose := flag.Bool("v", false, "log every Modbus request")
@@ -74,6 +77,15 @@ func main() {
 			buildVendor(3, *pv*0.5),
 			buildHuawei(4, *pv, *load, *batt, *soc))
 	}
+	// Wind EVERY device to the requested hour before serving. setTOD is part of the Device
+	// interface, so this cannot quietly skip one.
+	if *tod < 0 || *tod >= 24 {
+		log.Fatalf("-tod must be in [0,24), got %v", *tod)
+	}
+	for _, d := range devices {
+		d.setTOD(*tod)
+	}
+
 	byUnit := map[byte]Device{}
 	for _, d := range devices {
 		byUnit[d.unit()] = d
@@ -85,7 +97,9 @@ func main() {
 	}
 	log.Printf("  hybrid SunSpec chain: base %d, spans %d..%d (models 1/103/123/124/203)", *base, *base, chainTop(*base))
 	log.Printf("  scenario: %s   speed x%.0f", *scenario, *speed)
-	log.Printf("  writable: unit1 123.WMaxLimPct/WMaxLim_Ena (curtailment), 124.StorCtl_Mod (batt mode)")
+	log.Printf("  writable: unit1 123.WMaxLimPct/WMaxLim_Ena (curtailment), 124.StorCtl_Mod (batt mode), "+
+		"unit3 reg%d PowerLimitPct (export limit)", vPowerLimit)
+	log.Printf("  starting at %02d:%02d", int(*tod), int((*tod-float64(int(*tod)))*60))
 
 	srv := &Server{
 		devices: byUnit,

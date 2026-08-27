@@ -24,6 +24,15 @@ type Device interface {
 	status() string
 	label() string
 	describe(addr int) string // human name for a written register, or "" if not a control
+	// setTOD winds this device to a simulated time of day, so `-tod` can start the whole site at
+	// a chosen hour. A bench that asserts on curtailment needs the inverter to be PRODUCING; at
+	// the default dawn it is not.
+	//
+	// It is part of this interface on purpose. It began as a separate one-method interface the
+	// server type-asserted, and three of the four devices simply did not implement it — so
+	// `-tod 12` wound one unit, left the others at 06:00, and said nothing, because a failed type
+	// assertion is not an error. Here a new device that forgets it does not compile.
+	setTOD(t float64)
 }
 
 // --- unit 2: standalone SunSpec meter -------------------------------------------------------
@@ -125,15 +134,21 @@ func (d *MeterDevice) status() string {
 //	reg 12  Temp          u16   0.1 C
 //	reg 13  BatSoc        u16   1 %
 //	reg 14  BatPower      i16   1 W      (+ charging, - discharging)
+//	reg 16  PowerLimitPct u16   1 %      WRITABLE. Clips Pac to this percent of nameplate; 100 = no
+//	                                     limit. Cheap hybrids really do expose a single export-limit
+//	                                     holding register like this (the shipped deye/sungrow
+//	                                     profiles bind the same shape), and it is what makes a write
+//	                                     to a NON-SunSpec device observable rather than merely
+//	                                     stored: the physics loop reads it back out below.
 type VendorInverter struct {
-	unitID    byte
-	b         *Bank
-	pvPeak    float64
-	tod       float64
-	etodayWh  float64
-	etotalWh  float64
-	lastPac   float64
-	lastSoc   float64
+	unitID   byte
+	b        *Bank
+	pvPeak   float64
+	tod      float64
+	etodayWh float64
+	etotalWh float64
+	lastPac  float64
+	lastSoc  float64
 }
 
 // Vendor register offsets (holding registers, base 0).
@@ -150,16 +165,33 @@ const (
 	vTemp     = 12
 	vBatSoc   = 13
 	vBatPower = 14
+	// The one CONTROL in the vendor block. It sits above the telemetry the physics loop rewrites
+	// every tick, so a written value survives — which is the whole point of a control register.
+	vPowerLimit = 16
 )
 
 func buildVendor(unit byte, pvPeak float64) *VendorInverter {
-	return &VendorInverter{unitID: unit, b: newBank(32), pvPeak: pvPeak, tod: 6.0, lastSoc: 40}
+	d := &VendorInverter{unitID: unit, b: newBank(32), pvPeak: pvPeak, tod: 6.0, lastSoc: 40}
+	// 100% = unlimited. A limit register that powered up at 0 would look like a dead inverter.
+	d.b.set(vPowerLimit, 100)
+	return d
 }
 
-func (d *VendorInverter) unit() byte           { return d.unitID }
-func (d *VendorInverter) bank() *Bank          { return d.b }
-func (d *VendorInverter) label() string        { return fmt.Sprintf("unit %d  vendor inverter (non-SunSpec register map)", d.unitID) }
-func (d *VendorInverter) describe(addr int) string { return "" }
+func (d *VendorInverter) setTOD(t float64) { d.tod = t }
+
+func (d *MeterDevice) setTOD(t float64) { d.tod = t }
+
+func (d *VendorInverter) unit() byte  { return d.unitID }
+func (d *VendorInverter) bank() *Bank { return d.b }
+func (d *VendorInverter) label() string {
+	return fmt.Sprintf("unit %d  vendor inverter (non-SunSpec register map)", d.unitID)
+}
+func (d *VendorInverter) describe(addr int) string {
+	if addr == vPowerLimit {
+		return "PowerLimitPct"
+	}
+	return ""
+}
 
 func (d *VendorInverter) update(dt float64) {
 	d.b.mu.Lock()
@@ -168,6 +200,14 @@ func (d *VendorInverter) update(dt float64) {
 
 	pv := d.pvPeak * math.Max(0, math.Sin(math.Pi*(d.tod-6)/12))
 	pac := pv * 0.96
+	// The export limit, honoured. Read from the bank so a client's WRITE actually changes what the
+	// inverter does — a control register the physics ignores would let a bench "confirm" a write
+	// that achieved nothing, which is the failure this simulator exists to make visible.
+	if lim := float64(d.b.raw(vPowerLimit)); lim < 100 {
+		if cap := d.pvPeak * lim / 100; pac > cap {
+			pac = cap
+		}
+	}
 	d.lastPac = pac
 	d.etodayWh += pac * dt
 	d.etotalWh += pac * dt
@@ -255,6 +295,8 @@ const (
 	hBattP  = 37765 // i32 battery power (+charge/-discharge)
 	hTopReg = hBattP + 1
 )
+
+func (d *HuaweiInverter) setTOD(t float64) { d.tod = t }
 
 func buildHuawei(unit byte, pvPeak, loadBase, battWh, initSoC float64) *HuaweiInverter {
 	return &HuaweiInverter{

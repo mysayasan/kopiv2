@@ -91,6 +91,7 @@ python tools/fleetbench/bench_pintusan_door.py  # does the door open for the rig
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o .artifacts/fleetbench/bin/myiotsan ./cmd/myiotsan
 python tools/fleetbench/iotsan_harness.py            # myiotsan + its EMBEDDED broker
 python tools/fleetbench/bench_iotsan_actuation.py    # does anything reach a relay off-path?
+python tools/fleetbench/bench_iotsan_modbus.py       # does a WRITE reach the wire, and move plant?
 ```
 
 `bench_idsan_lockout.py` is the only myidsan bench that stands up a **cluster**: a Postgres
@@ -432,6 +433,53 @@ Facts worth not rediscovering:
 - Isolate before asserting an absence. The bench's own flows are bound to the device's telemetry
   key, so a published reading drives them too — their output is indistinguishable from a rule
   actuating. They are deleted before the rule check runs.
+
+
+## myiotsan: the Modbus write
+
+`bench_iotsan_modbus.py` starts `tools/sunspec-sim` itself and drives myiotsan's guarded
+holding-register write against it — a solar inverter that answers, produces, and can be curtailed.
+
+Why it does not trust the app. `Issue` -> `sendModbus` -> `modbus.WriteConfirm` confirms a write by
+**reading back the register it just wrote**. That is the right design, and it is also
+self-certifying: a write that went to the wrong register, the wrong unit, or with the wrong sign
+confirms itself exactly as happily as a correct one. So the bench carries its own Modbus TCP client
+(`iotsan_harness.Modbus`, stdlib sockets) and reads the simulator directly. And because a register
+is not the point either — a curtailment that lands in the right register and changes nothing is a
+confirmed command that did nothing — every write is checked three ways: the app's status, the raw
+word on the wire, and what the plant does next, read back through the product's own telemetry.
+
+It found one, in the configuration path rather than the write path: a **SunSpec profile that
+declares no telemetry keys** was polled happily and stored nothing at all, silently. Both Modbus
+modes now refuse a profile that could never store a reading. 29/30 against unfixed main, 30/30 with
+the fix.
+
+Facts worth not rediscovering:
+
+- **`-tod` is why this bench works at all.** The simulator starts at 06:00, where the inverter
+  produces almost nothing, so every curtailment assertion would compare zero against zero. The
+  bench starts it at midday, at REALTIME speed — the simulator's own compressed day moves the
+  physics too far between two reads for a before/after comparison to mean anything.
+- **`inv_ac_power` is not the curtailment signal you want.** It is what the inverter puts on the AC
+  bus AFTER the battery takes its share, so at midday a 10 kW plant charging at 5 kW reads ~4.7 kW
+  and a 30% cap has little to bite on. `inv_operating_state` (5 = THROTTLED) is the direct signal
+  and does not move with how the plant splits production.
+- **A reading's numeric value is `num`, not `value`** (`entities.DeviceReading`). Reading the wrong
+  field yields `None`, which `or 0` then turns into a confident 0 W — and every "the plant
+  responded" comparison silently becomes zero-against-zero. This bench only caught it because each
+  check requires the BEFORE value to be high before believing the after.
+- **`GET /api/devices/{id}/latest` answers a MAP** keyed by telemetry key, not the `{items:[...]}`
+  envelope the rest of the app uses. Reaching for `items` gives `{}`, which reads as "the app is
+  not polling" — the wrong conclusion, and it cost a run.
+- **A refused or failed command is NOT echoed in the response body** — the handler answers with the
+  reason alone. Its status has to be read from the recorded row in the command history.
+- A SunSpec model's address depends on the chain in front of it, so the bench WALKS the chain to
+  find models 123/124 rather than doing arithmetic, and asserts each model's length before binding
+  a command to an offset inside it — a changed model shape must fail the bench, not write a
+  curtailment into whatever now lives at that address.
+- A stale simulator holds the port, so the next one dies on bind while the port still answers, and
+  the bench then measures the OLD binary with none of the flags it just asked for. `start_sim`
+  refuses to return until the process IT launched is both alive and serving.
 
 
 ## mypintusan — the first bench of the app that opens doors
