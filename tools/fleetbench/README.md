@@ -88,6 +88,9 @@ node   tools/fleetbench/uicheck_idsan_webauthn.js .artifacts/fleetbench  # a REA
 python tools/fleetbench/bench_myseliasan_lockout.py  # myseliasan's lockout — it had NONE
 python tools/fleetbench/pintusan_harness.py     # mypintusan + a REAL OSDP reader on the bus
 python tools/fleetbench/bench_pintusan_door.py  # does the door open for the right person?
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o .artifacts/fleetbench/bin/myiotsan ./cmd/myiotsan
+python tools/fleetbench/iotsan_harness.py            # myiotsan + its EMBEDDED broker
+python tools/fleetbench/bench_iotsan_actuation.py    # does anything reach a relay off-path?
 ```
 
 `bench_idsan_lockout.py` is the only myidsan bench that stands up a **cluster**: a Postgres
@@ -377,6 +380,59 @@ background moves — see the checklist entry for why both halves matter.
 `uicheck_faceredact.js` drives the export dialog and runs a real face-redacted export from the
 browser, so it is slow (a face pass reads every frame). Run the API bench first — the screen
 check needs a camera with footage on node-a.
+
+## myiotsan: the actuation chokepoint
+
+`iotsan_harness.py` stands up myiotsan the way a site runs it — no redis, no postgres, sqlite and
+the in-process cache, the shipped defaults — and, crucially, **publishes its embedded MQTT broker**
+so a real device can sit on the wire. `bench_iotsan_actuation.py` then drives every path in the app
+that can move a physical device.
+
+Why this shape. myiotsan's whole safety story is one function, `CommandService.Issue`, and six
+ordered gates behind it (read-only by default, admin only, only-what-the-profile-declares,
+server-side bounds, a per-device duty cycle, an audit row for every attempt **including every
+refusal**). A chokepoint is a claim about the whole program, and no unit test can check it: each
+caller's own test can pass while a caller nobody wrote a test for reaches the wire another way. So
+the bench enumerates them — the direct API, a scene, a schedule (test-fired **and** fired by the
+clock), a flow's command node, a flow's `mqtt_out` node, and the rule engine — and drives each for
+real.
+
+What makes the assertions mean anything: a `paho` client authenticated as the **real provisioned
+device**, confined by the **real broker ACL**, sits on that device's command topic for the whole
+run. "Refused" means the API said no AND nothing arrived on that wire. Every negative assertion is
+conditioned on a positive that ran first on the same wire.
+
+It found one, and it is the one that mattered: the flow canvas's `mqtt_out` node publishes through
+`broker.Publish` — the server's OWN handle, subject to no ACL. Aimed at a device's command topic it
+moved a relay whose actuation was switched **off**, with a value outside the declared safe range,
+past the duty-cycle limit, and left nothing in the trail. Four gates bypassed at once, by the one
+node in the palette whose stated job is bridging a value out. 41/45 against unfixed main, 45/45
+against the fix.
+
+Facts worth not rediscovering:
+
+- The bootstrap admin is **must-change**; everything but `/api/auth/session` and
+  `/api/auth/change-password` 403s until it is rotated. The session probe is
+  `GET /api/auth/session` — not myseliasan's `/api/auth/local-login`, not myidsan's
+  `/api/login/default`.
+- `mqtt.addr` must be `0.0.0.0:1883` **and** the port published, or a device on the host connects
+  to nothing and every wire assertion silently passes on an empty result — which is
+  indistinguishable from the gate having refused.
+- The broker ACL confines a client to topics **containing its own key**, so a bench device may
+  subscribe to `iot/cmd/<key>/#` and to a bridge topic under its own name, and to nothing else.
+- `UpdateDeviceRequest` REPLACES rather than patches and rejects unknown fields (there is no
+  `protocol` on it): resend `profileId` or the device silently loses its type and every later
+  command is refused for the wrong reason.
+- The device's broker password is returned **once**, at provisioning. A re-run against a surviving
+  instance rotates it (`POST /api/devices/{id}/password`) rather than trying to read it back.
+- The six shipped **builtin** solar flows cannot be deleted by design. Counting them as leftovers
+  makes a cleanup check fail for a reason that has nothing to do with the bench.
+- The scheduler ticks on the minute, so the clock-fired check costs up to two minutes. It is worth
+  it: that is the path with no user behind it, and the one where a trail can quietly read "System".
+- Isolate before asserting an absence. The bench's own flows are bound to the device's telemetry
+  key, so a published reading drives them too — their output is indistinguishable from a rule
+  actuating. They are deleted before the rule check runs.
+
 
 ## mypintusan — the first bench of the app that opens doors
 

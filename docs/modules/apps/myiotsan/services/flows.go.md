@@ -114,3 +114,15 @@ A flow with no slots cannot be instantiated ("copy it instead").
   to `strconv.ParseFloat` when the raw value isn't already numeric; payload coercion (`coerceFloat`)
   deliberately stays strict, only config reading is this lenient.
 - See `flows_test.go.md` for the pure unit coverage (propagation, sandbox containment, slots).
+
+## Save-time topic check
+
+`SetTopicGuard` registers the reserved-topic check (`*CommandService`) and `checkTopics` runs it on
+every `Create` and `Update` — and therefore on `Import` and `Instantiate`, which both route through
+`Create`. A graph whose `mqtt_out` node addresses a real device's command topic is refused with a
+message naming the topic, the command and the device, and pointing at the `command` output instead.
+
+This is the **explanation**, not the enforcement: `doMqttOut` refuses independently at run time
+(`flow_runtime.go.md`), which is what covers a flow saved before this check existed or saved while
+no device answered to that key yet. Refusing only here would have been a frontend-validates-it
+safety property, which is to say none.

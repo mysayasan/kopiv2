@@ -225,7 +225,12 @@ a breaker, sets a thermostat to 200°C.
    turned on for it (per device, in its Settings). Adoption never turns it on.
 2. **Admin only.** Not an operator power, and this rule predates the command path itself.
 3. **Only what the device's profile declares.** There is no "publish an arbitrary payload to any
-   topic" endpoint anywhere in the app.
+   topic" endpoint anywhere in the app — and that is now enforced rather than merely intended. The
+   flow canvas's `mqtt_out` node publishes through the server's own broker handle, which is subject
+   to no ACL; pointed at a device's command topic it moved a real relay whose actuation was switched
+   off, outside the declared bounds, past the rate limit, with nothing written down. A topic a real
+   device would act on as a command is now reserved to the guarded path, refused at save and again
+   at run time, and the refused attempt is recorded in that device's command history like any other.
 4. **Bounds are server-side.** A setpoint outside its declared `min..max` is refused in the
    service, never merely blocked in the UI. A setpoint that declares no range at all (`min` and
    `max` both `0`) refuses every value — an omission is read as "no", not "anything goes".
@@ -380,8 +385,11 @@ predicate — plus a plain `scale`/`threshold`/`deadband`/`throttle` (rate-limit
 seconds); and outputs: `debug` for the inspector, `notify` to raise an alert, `command` to actuate,
 `derived_metric` to persist a computed value as a new telemetry series, `mqtt_out` to publish the
 payload to an MQTT topic on the embedded broker) joined by wires, drawn and saved as one document.
-`mqtt_out` publishes data outward, never a device command, so it does not go through the actuation
-gate below.
+`mqtt_out` publishes data outward — a processed value fed to another system or a home-automation
+subscriber — and it **may not publish a device command**: the topics this hub's own devices act on
+are reserved to the guarded path, so an `mqtt_out` node aimed at one is refused when the flow is
+saved and refused again at run time, with the attempt written into that device's command history.
+Any other topic stays publishable, which is what the node is for.
 
 **The safety design is the point.** A `function`/`expression`/`switch` node runs in an embedded,
 sandboxed JavaScript interpreter with **no host bindings at all** — no filesystem, no network, no

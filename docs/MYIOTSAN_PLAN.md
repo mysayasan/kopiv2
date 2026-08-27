@@ -1270,9 +1270,19 @@ even reading a flow's graph reveals what it could do, and test-firing it can act
 - **`mqtt_out` output node.** Publishes the message payload to an MQTT topic via the embedded
   broker (`broker.Publish`, now passed into `NewFlowRuntime` as a new `mqttPublish` dep). It
   publishes DATA outward — feed a processed value to another system, or drive a home-automation
-  subscriber — never a device command, so it does **not** go through the actuation gate; `command`
-  remains the sole guarded actuation path. Publishing is one-way out of the hub, so it cannot loop
-  back into ingest.
+  subscriber. Publishing is one-way out of the hub, so it cannot loop back into ingest.
+  **CORRECTED, 2026-08-27, by the first live bench of this app.** This node was written on the
+  assumption that it "never publishes a device command, so it does not go through the actuation
+  gate" — but nothing stopped it being pointed at one. `broker.Publish` is the SERVER's handle and
+  answers to no ACL, so an `mqtt_out` node aimed at a device's command topic moved a real relay
+  whose `actuationEnabled` was **off**, with a value outside the declared `min..max`, past the 2s
+  duty cycle, and wrote no `device_command` row: four of §3.4's gates bypassed at once, by the one
+  node in the palette whose job is not actuation. A topic a real device would act on as a command
+  is now **reserved** — refused at save (`FlowService.checkTopics`) and, authoritatively, at run
+  time (`doMqttOut` -> `CommandService.ReservedTopic`), with the attempt recorded in that device's
+  command history naming `flow:<name>`. Any other topic still publishes, which is what the node is
+  for. `command` really is the sole guarded actuation path now; before, that was an intention.
+  See `tools/fleetbench/bench_iotsan_actuation.py` (45/45 with the fix, 41/45 without).
 - **`cfgFloat` leniency.** Now also parses a string-encoded config value — a `<select>` field (the
   `mqtt_out` QoS picker) stores its option value as text — falling back to `strconv.ParseFloat`.
   Payload coercion stays strict; only config reading is this lenient.
