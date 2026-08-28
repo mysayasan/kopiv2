@@ -17,9 +17,17 @@ import (
 // into the SAME quarantined candidate an announcing device becomes. So a scan never adds a device —
 // it only proposes candidates an admin then adopts, exactly like the announce path.
 //
-// It is deliberately conservative: opt-in (an admin triggers it), bounded (host cap + per-scan
-// timeout), READ-ONLY (no scanner here writes to a device), and audited. Scanning an industrial
-// network can perturb fragile gear, so nothing here broadcasts a write or a control command.
+// It is deliberately conservative: opt-in (an admin triggers it), LAN-local (discover.Hosts refuses
+// a sweep target outside private address space — including the appliance's own loopback), bounded
+// (host cap + per-scan timeout), READ-ONLY (no scanner here writes to a device), and audited.
+// Scanning an industrial network can perturb fragile gear, so nothing here broadcasts a write or a
+// control command.
+//
+// Live-measured, for whoever tunes these next: a sweep of 256 unreachable hosts costs about 6.4s at
+// the shipped 800ms/host and 32-way concurrency, so the 1024-host cap is roughly 26s, and the full
+// cap with all five scanners selected measured 41.7s. That fits only because myiotsan's shipped
+// config disables the HTTP write timeout; the host cap and that timeout are two numbers that have
+// to be changed together.
 type ScanService struct {
 	candidates dbsql.IGenericRepo[entities.DiscoveredDevice]
 	profiles   *ProfileService

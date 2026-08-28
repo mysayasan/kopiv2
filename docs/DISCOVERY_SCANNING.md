@@ -14,11 +14,29 @@ Opt-in (admin-triggered), bounded (host cap `1024`, per-scan timeout, concurrenc
 (no scanner writes to a device), LAN-local (subnet sweep or link-local multicast, no cloud), and
 audited to the notification feed. Nothing here broadcasts a write or a control command.
 
+**LAN-local is enforced, not just stated** — `discover.Hosts` (the one funnel every sweep target
+passes through, including the Modbus sweep's admin-typed CIDR) refuses anything outside private
+address space (RFC 1918, RFC 6598 CGNAT, RFC 3927 link-local, IPv6 ULA/link-local), plus loopback,
+unspecified and multicast addresses. This was a live-found gap, closed 2026-08-28: before the fix, a
+sweep of `192.0.2.0/24` (public TEST-NET-1) or `127.0.0.1/32` (the appliance's own loopback) was
+accepted and really ran, making the scan endpoint a general-purpose port scanner pointed wherever the
+appliance had a route. A hostname target is resolved and every address it yields must qualify; an
+unresolvable target is refused (fail closed), and a list with one bad target is refused whole. See
+`tools/fleetbench/bench_iotsan_discovery.py` and `infra/iot/discover/discover_test.go`.
+
+**An honest limit, not a defect**: the scan is synchronous and holds its HTTP request open for its
+whole duration. Live-measured: 256 unreachable hosts cost 6.4s at the shipped 800ms/host and 32-way
+concurrency, so the 1024-host cap is roughly 26s, and the full cap with all five scanners selected
+measured 41.7s. That only completes because myiotsan's shipped `config.json` disables the write
+timeout (`writeTimeoutSeconds: 0`); apphost's default of 30s when the key is absent would be
+exceeded. The host cap and that timeout are two numbers that must be changed together.
+
 ## Shipped
 
 | Phase | Scanner | Transport | How verified |
 |---|---|---|---|
 | P1 | **Modbus** (`infra/iot/discover/modbus.go`) | TCP + RTU-over-TCP; SunSpec auto-ID, unidentified fallback | Live-boot against a SunSpec mock: scan → identify → candidate (endpoint/unit prefilled, generic-sunspec suggested) → adopt → device |
+| — | **Safety posture (all scanners)** | READ-ONLY / LAN-local / bounded / cancellable / proposes-never-adds / opt-in / audited | `tools/fleetbench/bench_iotsan_discovery.py`, 38/38 with the LAN-local fix (36/38 against unfixed main) — see the note above |
 | P2 | **mDNS/DNS-SD** (`mdns.go`) | UDP 5353 multicast (`go.bug.st` n/a; uses `hashicorp/mdns`) | Runs in live-boot without error; finds Chromecast/HomeKit/Shelly/printers on a real LAN |
 | P2 | **SSDP/UPnP** (`ssdp.go`) | UDP 1900 M-SEARCH | Runs in live-boot; header parser unit-tested |
 | P3 | **EtherNet/IP** (`ethernetip.go`) | UDP 44818 ListIdentity broadcast | Identity-reply parser unit-tested (vendor id + product name) |

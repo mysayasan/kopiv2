@@ -13,6 +13,17 @@ builds synthetic input in memory, which is why this package's live-boot verifica
 - `TestHostsExpandsAndCaps` — `Hosts` expands a `/30` to its 4 addresses plus a bare host passed
   through unchanged (5 total, in order), and refuses (does not silently truncate) a `/8` under a
   1000-host cap.
+- `TestHostsRefusesPublicAddressSpace` — a public CIDR/host (TEST-NET-1, TEST-NET-2, a real public
+  `/32`, and `172.32.0.0/16` — just outside the RFC 1918 `172.16/12` boundary) is refused.
+- `TestHostsRefusesTheApplianceOwnInterior` — `127.0.0.1/32`, `127.0.0.1`, `0.0.0.0` and `::1` are
+  all refused: loopback is not a LAN.
+- `TestHostsAllowsEveryRangeASiteActuallyNumbersEquipmentOut_Of` — every real private range (RFC
+  1918 x3, RFC 6598 CGNAT, RFC 3927 link-local) still expands to a non-empty host list — the guard
+  must constrain, not blanket-refuse.
+- `TestHostsRefusesAMixedListRatherThanScanningTheGoodHalf` — one public target in an otherwise
+  private list refuses the whole request rather than silently scanning the LAN half.
+- `TestHostsRefusesATargetItCannotCheck` — an unresolvable hostname is refused, not scanned
+  (fail closed: a target that cannot be checked is not scanned).
 - `TestParseENIPIdentity` — builds a synthetic ListIdentity reply byte-for-byte per the CIP
   encapsulation spec (protocol version, socket address, vendor id, device type, product code,
   revision, status, serial, length-prefixed product name, state) and asserts
