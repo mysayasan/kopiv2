@@ -67,14 +67,20 @@ READER_ADDR = 1
 SITE_KEY = "a0a1a2a3a4a5a6a7b0b1b2b3b4b5b6b7"
 
 
-def app_config(reader_scbk=None, reader_requires_sc=False):
+def app_config(reader_scbk=None, reader_requires_sc=False, offline=False):
     """The app's config for one boot.
 
     reader_scbk / reader_requires_sc are parameters because **buses are seeded from config on
     FIRST BOOT ONLY** — there is no API to change a reader's key or its Secure Channel policy
     afterwards. A bench that wants to ask "what happens when the site key is wrong?" or "what
     happens when this reader MUST have an encrypted session?" has to boot a fresh app to ask it,
-    and passing None for the key is how you get a reader with no key at all."""
+    and passing None for the key is how you get a reader with no key at all.
+
+    `offline` is a parameter for a related but WORSE reason. `access.offline` is what puts the
+    controller into cached-replica mode — the whole of `Decide()`'s GATE 10 — and it is not on the
+    Settings screen at all, so config.json's first boot is the ONLY way a site can turn it on. It
+    is also read once, at process start, into the runtime; there is no live reload. So a bench that
+    wants a controller in offline mode has to ask for one at boot."""
     cfg = base_config(APP, TLS_PORT)
     cfg["localAuth"] = {"enabled": True, "username": ADMIN_USER, "password": ADMIN_PASS}
     # Multicast discovery finds nothing in docker and logs about it forever.
@@ -84,7 +90,7 @@ def app_config(reader_scbk=None, reader_requires_sc=False):
         "timezone": "UTC",       # so a bench asserting "outside the schedule" is not fighting an offset
         "tickSeconds": 1,
         "pinWindowSeconds": 15,
-        "offline": False,
+        "offline": bool(offline),
     })
     # ONE bus, pointed at the simulator on the host.
     reader = {"address": READER_ADDR, "requireSecureChannel": bool(reader_requires_sc)}
@@ -230,7 +236,7 @@ def admin():
     return c
 
 
-def boot(reader_scbk=None, reader_requires_sc=False, build_app=True):
+def boot(reader_scbk=None, reader_requires_sc=False, build_app=True, offline=False):
     """Tear down and stand up a FRESH app with the given bus config, returning when it serves.
 
     Fresh every time, deliberately: the data dir carries the seeded bus, so reusing it would
@@ -249,7 +255,8 @@ def boot(reader_scbk=None, reader_requires_sc=False, build_app=True):
     io.open(os.path.join(certs, "key.pem"), "wb").write(io.open(key, "rb").read())
 
     write(os.path.join(data, "config.json"),
-          app_config(reader_scbk=reader_scbk, reader_requires_sc=reader_requires_sc))
+          app_config(reader_scbk=reader_scbk, reader_requires_sc=reader_requires_sc,
+                     offline=offline))
     start_app()
     if not wait_up(BASE + "/api/auth/config", timeout=180):
         print(sh("docker", "logs", "--tail", "40", NAME, check=False))

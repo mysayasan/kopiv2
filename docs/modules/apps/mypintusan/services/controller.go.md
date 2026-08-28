@@ -29,13 +29,27 @@ runtime and the only consumer of the bus's event channel. It also owns lockdown,
   a reader going out of service, door-forced, door-held-open — the `Alarm*` constants), routed
   separately from the access log because these need to reach a human now.
 - `ControllerConfig` — `BusPort`, `Location`, `Offline`/`CacheAge` (describe whether this
-  controller runs on a cached replica; a live controller leaves them zero), `Now` (injectable),
+  controller runs on a cached replica; a live controller leaves them nil). **`Offline` is now
+  `func() bool`, not `bool`** — a live question an operator can flip after installation, not a
+  fact fixed at process start; see `offline()` below and `app/runtime.go.md`'s `runtime.offline`.
+  `CacheAge func() time.Duration` comes from `services.CacheClock` (`services/cache_clock.go.md`),
+  which measures the time since anything entitled to change the access rules last reached this
+  controller — nil (or unassigned) means "no staleness known", which was every install's actual
+  state until the first live bench of offline mode found `CacheAge` was never wired to anything
+  outside a unit test, so `Snapshot.CacheAge` was always zero and `offline-cache-expired` could not
+  be produced. `Now` (injectable),
   `TickInterval` (default 1s — bounds how LATE a relock/held-open alarm can be, not whether it
   fires), `PINWindow` (default 15s — deliberately SHORT: a PIN left buffered indefinitely would
   be picked up by whoever badges next, misattributing a duress alarm or opening the door on a
   credential that never authenticated), `Decisions` (**new**, nil-safe — when set, told about
   every access decision after `record` writes it, feeding the notification stream the fleet
   control plane correlates across nodes; see below).
+- `offline()` — **new** unexported method: `c.cfg.Offline != nil && c.cfg.Offline()`. Every place
+  in this file that used to read `c.cfg.Offline` directly (`OperatorUnlock`, `handleCard`,
+  `snapshot`) now calls `c.offline()` instead, so a `ControllerConfig` built with no `Offline` func
+  at all (every existing unit test) behaves exactly as a live database always has.
+- `AlarmDegraded = "degraded"` — **new** alarm kind, raised not from here but from
+  `app/runtime.go.md`'s `runtime.SetOffline` (site-wide, not per-bus); see `services/alarm.go.md`.
 - `NewController` / `Machine(ctx, doorId)` — lazily creates and caches one `DoorMachine` per
   door, loaded from `Store.Door`.
 - `ContactChanged(ctx, doorId, open)` — the seam that turns "we energised the strike" into
@@ -165,3 +179,16 @@ PIN grants while raising a critical alarm, and the operator unlock is recorded w
 Note that `Snapshot.AntiPassbackViolation` is still never computed here — anti-passback is a
 declared-but-unbuilt P3 feature, correctly hardcoded off at door creation and exposed nowhere,
 so `Decide()`'s GATE 9 cannot currently fire.
+
+## What the third live bench confirmed — offline mode and the cache TTL
+
+`tools/fleetbench/bench_pintusan_offline.py` (19/19; 12/19 against the unfixed app) asks the
+question no unit test of `Decide()`'s GATE 10 can: on a running appliance, does any of it actually
+happen? It found that `CacheAge` was nil in production (this file's `Offline`/`CacheAge` doc
+above), so `s.CacheAge > ttl` was always false and the reason code `offline-cache-expired` could
+not be produced on any install — measured, a door 20 seconds past a 2-second TTL still granted.
+Fixed by `services.CacheClock` (`services/cache_clock.go.md`) plus wiring in `app/runtime.go.md`
+and `app/app.go.md`. GATE 10 itself, and the gate ordering (a stale cache never masks a real
+revocation), are unchanged by this fix — the bug was entirely in what fed the gate its number, not
+in the gate. The bench's positive control — a critical door denying `offline-not-allowed` for a
+holder not flagged `OfflineAllowed` — is what proves GATE 10 runs on a live controller at all.

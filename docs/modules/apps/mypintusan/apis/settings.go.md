@@ -20,7 +20,12 @@ SPA's Settings page (`views/react-webpack/src/views/Settings.js`).
   settings, since a wrong entry here does not produce a bad reading, it produces a door that opens
   for the wrong person or an alarm that never comes. A validation failure is returned as a 400 with
   the plain-language reason (e.g. "two readers at address 1"), because the person reading it is the
-  one who has to go change a DIP switch.
+  one who has to go change a DIP switch. A save that turns `offline` on or off now reaches the
+  RUNNING controllers immediately (`services/runtime_settings.go.md`'s `IAccessSettingsService.
+  OnChange` → `app/runtime.go.md`'s `runtime.ApplySettings`) — before this, the setting persisted
+  and read back correctly while every door carried on deciding under the old value until the
+  process restarted. Every other field on this page (buses, readers, tick, PIN window, timezone)
+  still needs a restart.
 - `reset` (`POST`) — admin-only, same reasoning as `save`. Restores the `config.json` seed; the
   recovery path for an edit that stopped the controller working, so a mistyped timezone does not
   need a site visit with database access.

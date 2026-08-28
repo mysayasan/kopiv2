@@ -26,7 +26,7 @@ attack surface, and the honest thing is not to have one.
 ## `buildFleet`
 
 ```go
-func buildFleet(api *mux.Router, deps apphost.Dependencies, appVersion string, cipher *atrest.Cipher, notificationService *notification.Service) fleet
+func buildFleet(api *mux.Router, deps apphost.Dependencies, appVersion string, cipher *atrest.Cipher, notificationService *notification.Service, cacheClock *services.CacheClock) fleet
 ```
 
 - Resolves `httpsPort` from the first configured TLS port (advertised in discovery announces).
@@ -35,6 +35,14 @@ func buildFleet(api *mux.Router, deps apphost.Dependencies, appVersion string, c
 - Builds `control` (`fleetnode.NewControlChannelManager`) with `dispatch = sharedapis.NewControlDispatcher(api, deps.AccessRoles)` — the dispatcher re-injects a tunnelled command into THIS app's own `/api` router, gated by the node's own authorization against the node's own roles. That matters more here than anywhere else in the suite: a tunnelled command that reached an unguarded path on a door controller could open a door, and the node — not the parent — is the thing that must decide who may do that.
 - Registers `notificationService.Register(fleetnode.NewControlEventSink(control))` — every notification this node raises (a forced door, a duress alarm, a badge decision, a sign-in lockout) also flows up the channel into the control plane's unified feed. The badge **decisions** (`services/alarm.go.md`'s `NotificationAlarmer.Decision`) are the reason the fifth app joins the fleet: once `myseliasan` holds events from camera nodes, sensor nodes AND door nodes, the flagship correlation rule becomes real — motion on a camera AND a door contact opening AND no badge accepted. Neither node can see that on its own.
 - Calls `control.SetMetrics(deps.Metrics)` (W2-6, F-11) — `ForwardEvent`'s two silent-loss paths (channel down / write failed) are now counted as `kopiv2_control_events_dropped_total{kind,reason}`, with successful forwards counted too (`kopiv2_control_events_forwarded_total{kind}`), and the running drop count rides upstream on the node's next control-channel hello (`control.Frame.Dropped`). It matters most here: a door node's events are badge decisions and duress alarms. See `docs/modules/domain/shared/fleetnode/doc.go.md`'s `control_channel.go` row.
+- Calls `control.SetOnContact(func() { cacheClock.Touch(context.Background()) })` — **new**. This is
+  the uplink half of `services/cache_clock.go.md`'s two contact signals: a door controller trusts its
+  cached access rules for as long as something entitled to change them could still reach it, and a
+  live control channel is exactly that. Fired on every successful hello AND on every frame the
+  parent sends afterwards, including the keepalive pong — the only traffic on an otherwise idle
+  channel — because a session that established hours ago and has said nothing since is not evidence
+  that it is still up. See `docs/modules/domain/shared/fleetnode/doc.go.md`'s
+  `ControlChannelManager.SetOnContact`.
 
 ## `fleet.start`
 

@@ -67,14 +67,24 @@ then carry.
   5. Builds the notification service and `services.NewSQLStore(deps.Db)` /
      `services.NewNotificationAlarmer` (`services/alarm.go.md`) — door alarms (duress, tamper,
      forced/held-open, reader offline) land in the same feed an operator already watches.
-  6. Builds and starts the runtime (`newRuntime(deps, live, location, store, alarms,
-     alarms.Decision, store.StrikeFor)` / `runtime.start`, `app/runtime.go.md`) — one supervised
-     goroutine per configured OSDP bus, now driven by the live
+  6. Builds `cacheClock := services.NewCacheClock(dbsql.NewGenericRepo[sharedentities.RuntimeSetting](deps.Db))`
+     (`services/cache_clock.go.md`) — the number `Decide()`'s GATE 10 compares a door's offline TTL
+     against, and nothing computed it anywhere outside a unit test until this change; see that file
+     for what that meant in production. Then builds and starts the runtime (`newRuntime(deps, live,
+     location, store, alarms, alarms.Decision, store.StrikeFor, cacheClock)` / `runtime.start`,
+     `app/runtime.go.md`) — one supervised goroutine per configured OSDP bus, now driven by the live
      `services.AccessSettings`/`BusSettings`, not `*pintuconfig.Config`/`BusConfig`. A boot with
      zero configured buses is not an error: the API comes up so a fresh install can be configured
-     before any reader is wired. `alarms.Decision` (`services/alarm.go.md`) is the new fifth
+     before any reader is wired. `alarms.Decision` (`services/alarm.go.md`) is the fifth
      argument — every access decision the runtime's controllers make now also reaches the
-     notification feed, not just alarms.
+     notification feed, not just alarms. `runtime.SetOffline(ctx, live.Offline)` is called
+     immediately after `start` (not seeded in `newRuntime`) so an appliance whose `config.json`
+     already has `access.offline: true` on first boot raises the degraded-mode alert at BOOT — such
+     a site never crosses the online→offline edge, and would otherwise run from cache forever with
+     nobody told. `settings.OnChange(runtime.ApplySettings)` is then registered — before the API is
+     mounted, so no `PUT /api/settings/access` can slip through unapplied — which is what makes
+     turning offline mode on from the Settings screen reach the RUNNING controllers; see
+     `app/runtime.go.md`'s `ApplySettings`.
   7. Registers `sharedapis.NewLocalLoginApi` on the **public** router (must be mounted before
      the protected subrouter or the auth middleware swallows it), then mounts `protected` with,
      in order, `NewLocalBasicAuth` then `NewRequireRolePermission` — auth before authorization,
@@ -87,17 +97,28 @@ then carry.
      it; no `POST /api/deployment/mode` route exists — see `apis/deployment.go.md`),
      `apis.NewNotificationsApi`, `apis.NewAccessRulesApi`
      (`apis/access_rules.go.md` — groups, schedules and grants, the surface that makes a wizard-issued
-     badge actually open a door) on `protected`.
+     badge actually open a door) on `protected`. Immediately before those registrations,
+     `protected.Use(ruleChangeTouch(cacheClock))` — a middleware that resets the cache clock after
+     every accepted (2xx) `POST`/`PUT`/`PATCH`/`DELETE` under `accessRulePaths` (`/api/doors`,
+     `/api/holders`, `/api/groups`, `/api/schedules`, `/api/grants`, `/api/holidays`,
+     `/api/settings/access`, `/api/lockdown`). This is the second contact signal
+     `services/cache_clock.go.md` describes: an operator who can still administer this appliance IS
+     an authority reaching the controller, even with the fleet uplink cut, so an accepted rule edit
+     must count exactly as a live control-channel connection does. A badge decision is deliberately
+     not in the path list — the whole point of offline mode is that badges keep arriving at a
+     controller nobody can reach — and a refused edit (non-2xx, via `statusRecorder`) does not
+     touch the clock either.
   9. **Wires the fleet**, gated on `boolValue(deps.Config.Pairing.Enabled, true)`: resolves
      `openFleetSecretCipher(deps)` (fails closed — see `app/wire_fleet.go.md`), builds the fleet
-     via `buildFleet(api, deps, appVersion(m), fleetCipher, notifications)`
-     (`app/wire_fleet.go.md`), registers the PUBLIC pairing routes (`sharedapis.NewPairingPublicApi`)
-     on the **unauthenticated** router — before the protected subrouter, or the auth middleware
-     would swallow the adopt call and the node could never be adopted — and the protected pairing
-     routes (`sharedapis.NewPairingApi`) on `protected`, then calls `f.start(bgCtx, deps)`.
-     `bgCtx` (a fresh `context.WithCancel(context.Background())` created at the top of
-     `RegisterAppRoutes`) bounds the fleet workers; the OSDP runtime keeps its own cancel because
-     it predates them and owns its bus supervisors.
+     via `buildFleet(api, deps, appVersion(m), fleetCipher, notifications, cacheClock)`
+     (`app/wire_fleet.go.md` — `cacheClock` is what lets a live control-channel connection reset the
+     clock too, via `control.SetOnContact`), registers the PUBLIC pairing routes
+     (`sharedapis.NewPairingPublicApi`) on the **unauthenticated** router — before the protected
+     subrouter, or the auth middleware would swallow the adopt call and the node could never be
+     adopted — and the protected pairing routes (`sharedapis.NewPairingApi`) on `protected`, then
+     calls `f.start(bgCtx, deps)`. `bgCtx` (a fresh `context.WithCancel(context.Background())`
+     created at the top of `RegisterAppRoutes`) bounds the fleet workers; the OSDP runtime keeps its
+     own cancel because it predates them and owns its bus supervisors.
   10. The returned shutdown func cancels `bgCtx` then calls `runtime.stop()` — cancels every bus
       supervisor.
 - `RegisterWebRoutes(router, deps)` — **new**: serves the SPA shell (`GET /` and `GET /index.html`
@@ -160,6 +181,20 @@ a remote unlock issued through the tunnel audited on the node as `"cp:admin"`.
 - `announceFirstRunAdmin` is defined in this file rather than a separate `firstrun.go` (unlike
   myidsan/myiotsan/myseliasan/mymatasan) — mypintusan has no other first-run concerns yet (no
   wizard-specific banner text, no capacity estimate) to warrant splitting it out.
+- `accessRulePaths`, `ruleChangeTouch(clock)` and `statusRecorder` are new package-level helpers
+  in this file, defined between `RegisterAppRoutes` and `RegisterWebRoutes`. `statusRecorder`
+  wraps `http.ResponseWriter` to remember the status a handler actually wrote (defaulted to `200`,
+  since a handler that never calls `WriteHeader` has written one) so `ruleChangeTouch` can tell an
+  accepted edit from a refused one before deciding whether to call `cacheClock.Touch`.
+- The first live bench of offline mode (`tools/fleetbench/bench_pintusan_offline.py`, 19/19; 12/19
+  against the unfixed app) found that `ControllerConfig.CacheAge` had never been assigned outside a
+  unit test, that `createDoorRequest` had no `offlinePolicy`/`offlineTtlSeconds` fields so `deny`
+  and a real TTL could not be stored on any door, that `access.offline` was read once at process
+  start so a settings-screen edit never reached a running controller, and that nothing raised the
+  degraded-mode alert `docs/MYPINTUSAN_DATA_MODEL.md` §2 has always said offline mode should. All
+  four are fixed by this file plus `app/runtime.go.md`, `services/cache_clock.go.md`,
+  `services/runtime_settings.go.md` and `apis/doors.go.md`. See
+  `docs/MYPINTUSAN_OSDP_PLAN.md` §11.
 - Live-verified: booted against `tools/osdp-sim` — 23 tables created (the shared appliance
   block plus the 12-table access schema, expanding to individual `CREATE TABLE`/index
   statements), roles and the local admin seeded, the configured bus dialled, 191 granted badge

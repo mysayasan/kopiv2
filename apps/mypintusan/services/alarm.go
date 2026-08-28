@@ -183,6 +183,8 @@ func alarmTitle(kind string) string {
 		return "Reader offline — doors out of service"
 	case AlarmSecureChannel:
 		return "Reader secure channel fault"
+	case AlarmDegraded:
+		return "Running from cache — access rules cannot be updated"
 	default:
 		return "Door alarm: " + kind
 	}

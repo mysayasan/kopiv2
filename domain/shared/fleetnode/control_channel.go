@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/mysayasan/kopiv2/infra/control"
-	"github.com/mysayasan/kopiv2/infra/telemetry"
 	"github.com/mysayasan/kopiv2/infra/fleetca"
+	"github.com/mysayasan/kopiv2/infra/telemetry"
 )
 
 const (
@@ -58,6 +58,8 @@ type ControlChannelManager struct {
 	droppedSinceConnect int64
 	// metrics is optional; nil means the node simply does not export these counters.
 	metrics telemetry.Metrics
+	// onContact is fired when the control plane is demonstrably reachable. Optional.
+	onContact func()
 }
 
 // Metric names for control-channel event forwarding. kopiv2_* because this is shared
@@ -75,6 +77,23 @@ const (
 	// a node with nothing to say produced identical telemetry — silence.
 	MetricControlEventsDropped = "kopiv2_control_events_dropped_total"
 )
+
+// SetOnContact registers a callback fired whenever this node is in contact with its control
+// plane — on every successful hello, and on every frame the parent sends afterwards.
+//
+// It exists for mypintusan's offline cache clock: a door controller decides whether to trust its
+// cached access rules by how long it has been since anything entitled to change them could reach
+// it, and a live control channel is exactly that. Optional and nil-safe; a node that does not care
+// registers nothing. Called on the channel's own goroutines, so the callback must not block.
+func (m *ControlChannelManager) SetOnContact(fn func()) {
+	m.onContact = fn
+}
+
+func (m *ControlChannelManager) noteContact() {
+	if m.onContact != nil {
+		m.onContact()
+	}
+}
 
 // SetMetrics attaches a metrics recorder. Optional and nil-safe: a node without one
 // behaves exactly as before. Call once at startup, before Run.
@@ -263,6 +282,7 @@ func (m *ControlChannelManager) connectAndServe(ctx context.Context, st PairingS
 		m.dropMu.Unlock()
 	}
 	m.logf("control channel connected to %s", wsURL)
+	m.noteContact()
 	m.setActive(conn)
 	defer m.clearActive(conn)
 
@@ -276,6 +296,12 @@ func (m *ControlChannelManager) connectAndServe(ctx context.Context, st PairingS
 		if err != nil {
 			return nil // mid-session drop — reconnect (no backoff)
 		}
+		// Every frame the parent sends is fresh evidence the control plane can reach this node —
+		// including the pong that answers the keepalive, which is the only traffic on an idle
+		// channel. A session that established hours ago and has said nothing since is not the same
+		// as one that is still up, and a cache clock that could not tell them apart would be
+		// measuring the handshake rather than the connection.
+		m.noteContact()
 		m.handleFrame(loopCtx, conn, frame)
 	}
 }

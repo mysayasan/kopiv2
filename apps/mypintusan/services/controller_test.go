@@ -861,7 +861,7 @@ func TestEndToEndFailedUnlockIsNotLoggedAsGranted(t *testing.T) {
 // TestEndToEndOfflineCacheExpiry covers the offline policy through the whole stack.
 func TestEndToEndOfflineCacheExpiry(t *testing.T) {
 	r := newRig(t, ControllerConfig{
-		Offline:  true,
+		Offline:  func() bool { return true },
 		CacheAge: func() time.Duration { return 100 * time.Hour }, // past the interior 72h TTL
 	})
 	r.waitOnline()

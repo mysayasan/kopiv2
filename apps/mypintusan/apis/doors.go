@@ -106,6 +106,22 @@ type createDoorRequest struct {
 	// "the caller said false" is distinguishable from "the caller said nothing" — the difference
 	// between an explicit escape hatch and an omission that must inherit the class default.
 	RequireSecureChannel *bool `json:"requireSecureChannel"`
+	// OfflinePolicy and OfflineTTLSeconds are the door's behaviour on a controller running from a
+	// cached replica — `Decide()`'s GATE 10, and the table in docs/MYPINTUSAN_DATA_MODEL.md §2.
+	//
+	// They are accepted HERE because there is no PUT /api/doors: a door is created once and keeps
+	// whatever policy it was born with. Before this, neither field appeared on any request shape at
+	// all, so `OfflinePolicy` was hardcoded to `cached` on every door on every install — the `deny`
+	// policy was a constant nothing could ever store — and `OfflineTTLSeconds` was always 0, which
+	// means the class default of 8, 24 or 72 HOURS. Measured on a running appliance: a door 20
+	// seconds past a 2-second TTL still granted, because no shipped door had a TTL to exceed.
+	//
+	// OfflinePolicy is cached | deny. Anything else is REFUSED rather than coerced: the value an
+	// installer is most likely to invent is some spelling of "allow", and silently storing `cached`
+	// for it would leave them believing they had configured a door that fails open. There is no
+	// fail-open policy in this product, and the API should say so out loud.
+	OfflinePolicy     string `json:"offlinePolicy"`
+	OfflineTTLSeconds int    `json:"offlineTtlSeconds"`
 	// RelayChannel is the output on the reader that fires the strike.
 	RelayChannel int `json:"relayChannel"`
 	// ContactDeviceKey binds a door-position contact. Empty means forced-open and held-open
@@ -170,6 +186,23 @@ func (a *doorApi) create(w http.ResponseWriter, r *http.Request) {
 		requireSC = *body.RequireSecureChannel
 	}
 
+	offlinePolicy := strings.TrimSpace(body.OfflinePolicy)
+	if offlinePolicy == "" {
+		offlinePolicy = entities.OfflineCached
+	}
+	if offlinePolicy != entities.OfflineCached && offlinePolicy != entities.OfflineDeny {
+		controllers.SendError(w, controllers.ErrBadRequest,
+			"the offline policy must be \"cached\" or \"deny\"; there is no fail-open policy — "+
+				"a door that opens because the controller lost its source of truth is the attack, "+
+				"not the feature")
+		return
+	}
+	if body.OfflineTTLSeconds < 0 {
+		controllers.SendError(w, controllers.ErrBadRequest,
+			"the offline cache TTL cannot be negative")
+		return
+	}
+
 	now := time.Now().Unix()
 	door := entities.Door{
 		Name: body.Name, Class: body.Class,
@@ -185,11 +218,13 @@ func (a *doorApi) create(w http.ResponseWriter, r *http.Request) {
 		// here have always defaulted (UnlockSeconds, HeldOpenSeconds, OfflinePolicy); this is the
 		// one SECURITY-relevant field that did not, and there is no PUT /api/doors, so a door
 		// created with the wrong policy kept it for good.
-		RequireSecureChannel:  requireSC,
-		OfflinePolicy:         entities.OfflineCached,
-		AntiPassback:          entities.APBOff,
-		Enabled:               true,
-		CreatedBy:             user.Id, CreatedAt: now, UpdatedBy: user.Id, UpdatedAt: now,
+		RequireSecureChannel: requireSC,
+		OfflinePolicy:        offlinePolicy,
+		// 0 means "use the class default" — see entities.Door.DefaultOfflineTTLSeconds.
+		OfflineTTLSeconds: body.OfflineTTLSeconds,
+		AntiPassback:      entities.APBOff,
+		Enabled:           true,
+		CreatedBy:         user.Id, CreatedAt: now, UpdatedBy: user.Id, UpdatedAt: now,
 	}
 	doorId, err := a.doors.Create(ctx, "", door)
 	if err != nil {

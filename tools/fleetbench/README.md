@@ -90,6 +90,7 @@ python tools/fleetbench/pintusan_harness.py     # mypintusan + a REAL OSDP reade
 python tools/fleetbench/bench_pintusan_door.py  # does the door open for the right person?
 python tools/fleetbench/bench_pintusan_securechannel.py  # can a reader you cannot trust still open a door?
 python tools/fleetbench/bench_pintusan_alarms.py  # which of the six alarms can actually fire?
+python tools/fleetbench/bench_pintusan_offline.py  # offline mode and the cache TTL: does it ever expire?
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o .artifacts/fleetbench/bin/myiotsan ./cmd/myiotsan
 python tools/fleetbench/iotsan_harness.py            # myiotsan + its EMBEDDED broker
 python tools/fleetbench/bench_iotsan_actuation.py    # does anything reach a relay off-path?
@@ -984,6 +985,83 @@ choice `alarm.go` argues for — paging on one flaky segment trains people to ig
 (`Door.ContactDeviceKey`). A site whose contacts terminate on a relay board rather than on the
 reader still has no forced or held-open detection. `Controller.RequestToExit` likewise has no
 caller, so a REX button wired to the reader does not shunt the alarm.
+
+## mypintusan — offline mode and the cache TTL
+
+`bench_pintusan_offline.py`, **19/19** (12/19 against unfixed main). Item 3 of the mypintusan
+hardening register. `Decide()`'s GATE 10 is the app's answer to the oldest attack on an access
+control system, and the code says so in its own words: "past the TTL the door denies... there is
+no allow-all option anywhere in this path: 'fail open on network loss' is a documented attack —
+cut the uplink, walk in." `docs/MYPINTUSAN_DATA_MODEL.md` §2 turns that into a table an installer
+can read — interior serves from cache for 72h, perimeter for 24h and raises a degraded-mode alert
+immediately, critical for 8h and only for holders flagged `OfflineAllowed`. Every line of it is
+implemented in `Decide()`, and its unit tests are good — they even pin the gate ordering. What a
+unit test cannot see is where the numbers it hands the gate come from on a real controller, which
+is exactly the shape #220 found in the alarms: the gate was right, the reason codes were right,
+the translations were right, and nothing fed the gate a number.
+
+**Four defects, all of the same shape — "the code was right and nothing could reach it" — all
+fixed:**
+
+1. **The cache could never expire.** `ControllerConfig.CacheAge` was declared and compared in
+   GATE 10 and never assigned outside a unit test. In production it was nil, so
+   `Snapshot.CacheAge` was always zero, `s.CacheAge > ttl` was always false, and
+   `offline-cache-expired` could not be produced on any install. Measured: a door 20 seconds past a
+   2-second TTL still granted. Fixed by new `services.CacheClock` — persisted (so a reboot mid-
+   outage cannot reset staleness to zero), fed by two contact signals: the fleet control channel
+   being live (`ControlChannelManager.SetOnContact`, fired on hello and on every parent frame
+   including the keepalive pong) and any accepted administrative change to the access rules on the
+   appliance itself (`ruleChangeTouch` middleware, scoped by path prefix and to 2xx responses).
+2. **`offlinePolicy: deny` and `offlineTtlSeconds` were unreachable.** `createDoorRequest` had
+   neither field; the handler hardcoded `cached` at the class default TTL (8/24/72 hours), and
+   there is no `PUT /api/doors`, so every door on every install was born that way and kept it for
+   good. Fixed: both fields accepted on create; `offlinePolicy` is validated to `cached`/`deny` and
+   REFUSED for anything else — notably any spelling of "allow" — rather than coerced, because there
+   is no fail-open policy in this product; a negative TTL is refused too.
+3. **Turning offline mode on did not reach the running controllers.** The runtime read `Offline`
+   once at process start. `PUT /api/settings/access` with `offline: true` persisted, returned 200,
+   read back `true`, and every door carried on deciding as though online. Fixed:
+   `ControllerConfig.Offline` became `func() bool` bound to an atomic on the runtime, and
+   `IAccessSettingsService` gained `OnChange`, published on Save and Reset. Only `offline` applies
+   live — buses, reader keys, timers and the site timezone still need a restart, and the Settings
+   screen's restart note was reworded to say exactly that.
+4. **Nobody was told the site was degraded.** `docs/MYPINTUSAN_DATA_MODEL.md` §2 has said since P1
+   that a controller serving from cache "raises a degraded-mode alert immediately"; nothing raised
+   one, and a cached grant is byte-identical to a live one at the door and on every screen. Fixed:
+   new alarm kind `services.AlarmDegraded` ("degraded"), WARNING, headline "Running from cache —
+   access rules cannot be updated", raised on the transition into offline mode AND at boot for an
+   appliance that starts offline (which never crosses the edge and would otherwise run degraded
+   forever with nobody told).
+
+**Also added, not a defect but a gap:** offline mode had no control on the Settings screen at all,
+so the only way to turn it on was editing `config.json` before an appliance's first boot — on a
+facilities-managed install, never. A checkbox was added
+(`settings.offlineHead`/`offline`/`offlineHint`, translated in en/ms/zh/ar).
+
+**The positive control, and it is load-bearing.** Offline mode changes almost nothing you can see
+— a cached grant looks exactly like a live one. Episode 3 badges at a CRITICAL door with a holder
+who is not flagged `OfflineAllowed` and requires the `offline-not-allowed` denial, which can only
+come from inside GATE 10. Until it is observed, "the TTL did not deny" and "the gate never ran at
+all" are the same observation, and the whole file would be measuring nothing.
+
+Proven good and unchanged: `Holder.OfflineAllowed` was already reachable via `POST /api/holders`
+and works end to end — a holder flagged offline-allowed opens a critical door while offline, one
+who is not is refused; the access log's `offline` flag is set correctly on a cache-served
+decision; a revoked credential is denied `credential-revoked`, not masked by a stale cache — but
+only provably so once the TTL denial above actually fires, so the bench reports this check as
+UNPROVABLE rather than a false pass if it doesn't; and no `allow-all` offline policy can be
+created, before or after the fix.
+
+**Two things deliberately not built, reported rather than papered over:**
+
+- There is still no `PUT /api/doors` and no doors-admin screen — doors are only created by the
+  first-run wizard — so the new offline policy fields are reachable through the API only.
+- There is no replica-refresh mechanism anywhere in this suite: `myseliasan` pushes no access data
+  down, and no other route does either, so the appliance's own database remains its only authority
+  and "offline mode" stays an operator-declared deployment mode rather than something the
+  controller detects for itself. `docs/MYPINTUSAN_DATA_MODEL.md` §2's sentence describing "a full
+  local replica... refreshed on change" described a topology that never existed and has been
+  corrected to say so.
 
 ## `onvifsim.py` — a real ONVIF device, on demand
 

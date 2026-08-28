@@ -61,6 +61,16 @@ an interface specifically so the HTTP layer cannot reach an `osdp.Bus` or a
   the neighbouring defaults (`UnlockSeconds`, `HeldOpenSeconds`, `OfflinePolicy`, all defaulted
   already) because there is no `PUT /api/doors` — a door created with the wrong policy keeps it
   for good.
+- `OfflinePolicy`/`OfflineTTLSeconds` are now accepted on the request struct — `Decide()`'s
+  GATE 10 and the table in `docs/MYPINTUSAN_DATA_MODEL.md` §2. Before this the handler hardcoded
+  `OfflinePolicy: entities.OfflineCached` and left `OfflineTTLSeconds` at 0 (the class default of
+  8/24/72 hours), so `deny` was a policy value nothing could ever store and no door's TTL could be
+  set to anything a real cut-off could exceed — measured live by the first offline-mode bench: a
+  door 20 seconds past a 2-second TTL still granted. `offlinePolicy` is validated to
+  `cached`/`deny` and refused (400) for anything else, including any spelling of "allow" — there is
+  no fail-open policy in this product, and the handler says so explicitly rather than coercing an
+  unrecognised value to `cached`. A negative `offlineTtlSeconds` is refused too. Reachable only at
+  creation, same as `RequireSecureChannel` above — there is still no `PUT /api/doors`.
 - `unlock` — reads the acting `LocalUser` from context (never from the request body — an
   attacker-supplied actor name in the audit log next to a door opening would be worse than no
   name at all, it would be a forged record), resolves the door, then calls `rt.Unlock`. A
@@ -86,6 +96,11 @@ an interface specifically so the HTTP layer cannot reach an `osdp.Bus` or a
   `tools/fleetbench/bench_pintusan_securechannel.py`, which provisions a `critical`/`perimeter`
   door mentioning nothing about Secure Channel and asserts on the STORED door, not just the
   response the handler sent back.
+- `POST /doors`'s `offlinePolicy`/`offlineTtlSeconds` (above) are live-benched by
+  `tools/fleetbench/bench_pintusan_offline.py`, which sets a 2-second TTL on a real door and
+  badges 20 seconds later, and creates a `deny`-policy door and confirms it refuses while
+  offline. Also asserts an `offlinePolicy: "allow-all"` create is refused (or coerced to a real
+  value) rather than stored — the invariant the design is built around.
 - `POST /doors` was exercised the same way, driven through the wizard's door step
   (`views/react-webpack/src/views/Wizard.js`) rather than by a direct API call. That path is what
   first exposed the shared SPA's request-double-encoding bug (`lib/api.js` — every write in the

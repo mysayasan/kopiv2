@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/mysayasan/kopiv2/apps/mypintusan/services"
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
 	"github.com/mysayasan/kopiv2/domain/notification"
 	sharedapis "github.com/mysayasan/kopiv2/domain/shared/apis"
@@ -51,6 +52,7 @@ func buildFleet(
 	appVersion string,
 	cipher *atrest.Cipher,
 	notificationService *notification.Service,
+	cacheClock *services.CacheClock,
 ) fleet {
 	httpsPort := 0
 	if len(deps.Config.Server.TLSPorts) > 0 {
@@ -96,6 +98,15 @@ func buildFleet(
 	// nothing to say produced identical telemetry. It matters most here: a door node's
 	// events are badge decisions and duress alarms.
 	control.SetMetrics(deps.Metrics)
+
+	// A live control channel resets this node's offline cache clock.
+	//
+	// This is the uplink half of what staleness means on a door controller. The offline TTL exists
+	// because a node its control plane cannot reach is a node a REVOCATION cannot reach; while the
+	// channel is up, it can, so the rules this node holds are not stale. Every frame counts, not
+	// just the handshake — including the pong on an idle channel — because a session that
+	// established this morning and has said nothing since is not evidence of anything today.
+	control.SetOnContact(func() { cacheClock.Touch(context.Background()) })
 
 	// Every notification this node raises — a forced door, a duress alarm, a badge decision, a
 	// sign-in lockout — also flows up the channel into the control plane's unified feed.
