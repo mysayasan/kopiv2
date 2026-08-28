@@ -28,8 +28,19 @@ type runtime struct {
     // decisions receives every access decision for the notification feed (and, through it, the
     // fleet uplink). Nil when nothing consumes decisions.
     decisions func(ctx context.Context, ev appentities.AccessEvent)
+    // cache measures how stale this controller's replica is. See services.CacheClock: without it
+    // Decide()'s TTL comparison has no number to compare and can never deny.
+    cache *services.CacheClock
 
     cancel context.CancelFunc
+
+    // offline is the LIVE answer to "is this controller serving from a cached replica?", held as
+    // an atomic.Bool rather than copied into each controller — controllers are rebuilt on every
+    // bus reconnect, and a value captured at process start cannot follow a setting an operator
+    // changes afterwards. Before this the flag was read once at boot: turning offline mode on from
+    // the settings API persisted the change, returned 200, read back as true, and every door
+    // carried on deciding as though online.
+    offline atomic.Bool
 
     mu       sync.RWMutex
     lockdown bool
@@ -40,10 +51,37 @@ type runtime struct {
 `lockdown` is held **here**, not only inside a `Controller`, because a controller is rebuilt on
 every reconnect — keeping the flag on the runtime is what stops unplugging a USB adapter from
 quietly lifting a lockdown. `live` maps a bus port to its current controller; the entry is
-replaced wholesale on each reconnect.
+replaced wholesale on each reconnect. `offline` follows the identical reasoning, one level up: a
+`Controller` reads `ControllerConfig.Offline` as a `func() bool` bound to `runtime.Offline`
+(below), not a value baked in at `runBus` time.
 
 ## Responsibilities
 
+- `newRuntime(deps, cfg, loc, store, alarms, decisions, strikes, cache)` — gained an eighth
+  parameter, `cache *services.CacheClock` (`services/cache_clock.go.md`), threaded straight
+  through into every `Controller`'s `ControllerConfig.CacheAge`. `offline` is deliberately **not**
+  seeded here; the caller (`app/app.go.md`'s `RegisterAppRoutes`) applies it through `SetOffline`
+  so a site whose `config.json` already has `access.offline: true` on first boot gets the
+  degraded-mode alert like any other transition.
+- `SetOffline(ctx, on)` — puts the site into, or takes it out of, cached-replica mode and raises
+  (or clears) `services.AlarmDegraded`. A no-op if the value did not change (`r.offline.Swap(on) ==
+  on`), so re-saving the same settings does not re-alert. **The alert is the point**: a cached
+  grant is indistinguishable from a live one at the door, on the activity screen and in the access
+  log's decision column — the only difference is a boolean nobody reads — and
+  `docs/MYPINTUSAN_DATA_MODEL.md` §2 has always said a controller running degraded "raises a
+  degraded-mode alert immediately." Before this method existed, nothing raised one; the first
+  visible sign that a site was degraded was a door refusing a valid badge once its TTL ran out,
+  hours or days later, reported by whoever was standing outside it.
+- `Offline()` — reports the live cached-replica state (`r.offline.Load()`); this is the function
+  bound into `ControllerConfig.Offline` for every controller `runBus` builds.
+- `ApplySettings(ctx, s)` — the listener registered via `settings.OnChange` in `app/app.go.md`.
+  Carries a settings edit into the RUNNING controllers, and is explicit about which parts of the
+  edit it could NOT carry: only `s.Offline` takes effect live (`r.SetOffline(ctx, s.Offline)`). The
+  bus list, reader keys, tick interval and site timezone are all read while building a bus
+  supervisor and a controller, and re-reading them live would mean tearing down every segment on
+  the site mid-save — on a door controller, every door going dead for the length of a reconnect
+  because somebody renamed a reader. The Settings screen's restart note (`settings.restartNote`)
+  names exactly these fields for the same reason.
 - `start(ctx)` — spawns `superviseBus` (via `safego.Go`) for every configured bus whose `Port`
   is non-empty. Zero configured buses is not an error — logged, not failed — since a fresh
   install has none until somebody wires a reader; the API still comes up.
@@ -59,7 +97,9 @@ replaced wholesale on each reconnect.
   reader with a missing or malformed SCBK — a mistyped key must never silently become a
   cleartext session on a door configured to require encryption), builds a fresh
   `services.Controller` (`services.BusActuator{Bus: bus, Resolve: r.strikes}`, with
-  `ControllerConfig.Decisions: r.decisions` — see `services/controller.go.md`'s
+  `ControllerConfig.Decisions: r.decisions`, `ControllerConfig.Offline: r.Offline` (a live
+  question, not the config value captured at boot — see `services/controller.go.md`'s `offline()`)
+  and `ControllerConfig.CacheAge: r.cache.AgeFunc()` — see `services/controller.go.md`'s
   `DoorStrike`/`StrikeResolver`/`Decisions`), records it in `r.live`, **carries
   the site's current lockdown state into the new session before polling starts** (`ctrl.
   SetLockdown` ahead of `ctrl.Run`, closing the window in which a reconnected bus could honour a
@@ -93,6 +133,14 @@ replaced wholesale on each reconnect.
   passes `alarms.Decision` (`services/alarm.go.md`), so every controller this runtime builds
   publishes badge decisions into the notification feed, which the fleet control channel then
   forwards to an adopted `myseliasan` (`app/wire_fleet.go.md`).
+- The first live bench of offline mode found that turning `access.offline` on from the settings API
+  persisted, returned `200`, read back `true`, and left every door deciding as though it were
+  online — `ControllerConfig.Offline` was a plain `bool` copied out of `r.cfg` at `runBus` time,
+  and `r.cfg` was never updated after boot. Fixed by making it `func() bool` bound to the new
+  `runtime.offline atomic.Bool` (`SetOffline`/`Offline` above), reached live via
+  `IAccessSettingsService.OnChange` (`services/runtime_settings.go.md`) →
+  `runtime.ApplySettings` → `runtime.SetOffline`. See `docs/MYPINTUSAN_OSDP_PLAN.md` §11 and
+  `tools/fleetbench/bench_pintusan_offline.py`.
 - Both bugs this app shipped with were found by booting the binary, not by a unit test: the bus
   never reconnecting (fixed by this file's supervise loop plus `infra/access/osdp/bus.go.md`'s
   `failPort`), and `BusActuator` addressing the wrong number (fixed in

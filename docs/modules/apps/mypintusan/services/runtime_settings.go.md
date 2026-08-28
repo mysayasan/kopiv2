@@ -18,7 +18,7 @@ type AccessSettings struct {
     Timezone         string
     TickSeconds      int
     PINWindowSeconds int
-    Offline          bool
+    Offline          bool // the only field that applies to a running controller without a restart — see OnChange below
     Buses            []BusSettings
 }
 type BusSettings struct {
@@ -52,6 +52,16 @@ is an `AccessSettings`, not a `*pintuconfig.Config`, and `superviseBus`/`runBus`
   the UI can nag a reader that is technically "encrypted" but not actually secure.
 - `NewAccessSettingsService(repo, defaults)` — `IAccessSettingsService`'s only implementation.
   `defaults` is the config.json-derived seed (`app/app.go.md`'s `settingsFromConfig`).
+- `OnChange(fn)` / `publish(ctx, in)` — **new**. `OnChange` registers a listener, held in
+  `s.listeners` under `s.mu`; `Save` and `Reset` both call `publish` after a successful `write`,
+  fanning the new settings out to every registered listener. Before this the service was a place
+  values were STORED, not a place they took effect — the first live bench of offline mode turned
+  `access.offline` on through the API, read it back `true`, and watched every door carry on
+  granting as though it were online, because the running `runtime` (`app/runtime.go.md`) had read
+  the value once at process start and nothing ever told it otherwise. `app/app.go.md`'s
+  `RegisterAppRoutes` registers `runtime.ApplySettings` before the API is mounted, so no `PUT
+  /api/settings/access` can slip through unapplied. `Reset` publishes too, deliberately — it is the
+  recovery path, so it is the LAST place a stale runtime value should be allowed to survive.
 - `Get(ctx)` — reads the `"access"` row via `GetByUnique(ctx, "", "key", accessSettingsKey)` and
   seeds it on first call if absent. Deliberately **not** a `GetById`/unfiltered lookup: this file's
   own comment calls out the `GetByUnique`-against-a-real-`ukey` requirement by name, referencing
@@ -95,3 +105,9 @@ is an `AccessSettings`, not a `*pintuconfig.Config`, and `superviseBus`/`runBus`
   type: nothing in the running app reads them after `app/app.go.md`'s `settingsFromConfig` converts
   them into an `AccessSettings` at first boot. See that file's Notes for what changed.
 - Covered by `services/runtime_settings_test.go`.
+- The Settings screen (`views/react-webpack/src/views/Settings.js`) gained an Offline mode
+  checkbox — before this change `access.offline` had no control on the screen at all, so the only
+  way to turn it on was editing `config.json` before an appliance's first boot, which on a
+  facilities-managed install means never. `settings.restartNote` was reworded to name exactly which
+  fields still need a restart (reader cables, site timezone, timers) now that offline is the one
+  exception.

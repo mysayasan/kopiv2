@@ -137,8 +137,35 @@ network loss" setting is a documented attack (cut the uplink, walk in), and offe
 checkbox means someone will tick it. Free egress is unaffected by any of this because egress
 is hardware (see the hardware plan §6).
 
-The cache is a full local replica of the credential/schedule set for *that controller's*
-doors, refreshed on change, sealed at rest with the existing `infra/atrest` machinery.
+**Correction (2026-08-28), after the first live bench of this section
+(`tools/fleetbench/bench_pintusan_offline.py`, `docs/MYPINTUSAN_OSDP_PLAN.md` §11):** the sentence
+that used to stand here — "the cache is a full local replica of the credential/schedule set for
+that controller's doors, refreshed on change, sealed at rest with the existing `infra/atrest`
+machinery" — describes a topology this suite does not build. There is no replica-refresh
+mechanism anywhere: `myseliasan` pushes no access data down to `mypintusan`, and no myidsan/myiotsan
+route pushes one either. The appliance's own SQLite database, populated by whoever administers it
+directly (`apis/access_rules.go.md`, `apis/holders.go.md`, `apis/doors.go.md`), *is* the record —
+there is nothing to "refresh from". "Offline mode" is therefore not something a controller detects
+about itself; it is an operator-declared deployment mode (`AccessSettings.Offline`,
+`GET`/`PUT /api/settings/access`), and the table above describes what a door does once that flag is
+on, not a state the controller notices on its own. At rest, both the live and the "cached" data are
+the identical database rows — there are not two copies, so there is nothing extra to seal.
+
+What *is* real, and was not until the bench above: a controller can now actually tell how long it
+has been running in that mode. `services.CacheClock` (`apps/mypintusan/services/cache_clock.go.md`)
+measures the time since anything entitled to change the access rules last reached this controller —
+either the fleet control channel being live, or an accepted administrative edit made on the
+appliance itself — persisted so a reboot cannot reset staleness to zero. Before this,
+`ControllerConfig.CacheAge` was declared and compared in `Decide()`'s GATE 10 but nothing ever
+assigned it outside a unit test, so the "past TTL, the door denies" row above could not happen on
+any installation; a door 20 seconds past a 2-second TTL still granted. Turning offline mode on now
+also raises a `degraded` alarm (`AlarmDegraded`, WARNING) immediately, as the perimeter row above
+has always promised — previously nothing did, and the first visible sign a site was degraded was a
+door refusing a valid badge once its TTL ran out, hours or days later.
+
+`OfflinePolicy`/`OfflineTTLSeconds` are createable via `POST /api/doors` as of the same bench; there
+is still no `PUT /api/doors` and no doors-admin screen, so a door's offline policy is set once, at
+creation, and kept for good — same as `RequireSecureChannel` (§9 in `MYPINTUSAN_OSDP_PLAN.md`).
 
 ---
 

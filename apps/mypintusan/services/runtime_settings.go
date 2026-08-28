@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
@@ -106,16 +107,47 @@ type IAccessSettingsService interface {
 	Get(ctx context.Context) (AccessSettings, error)
 	Save(ctx context.Context, s AccessSettings, actor int64) (AccessSettings, error)
 	Reset(ctx context.Context, actor int64) (AccessSettings, error)
+	// OnChange registers a listener told about every settings edit that is accepted, so a running
+	// controller can pick up the parts of the edit that do not need a restart.
+	//
+	// Without it this service was a place values were STORED, not a place they took effect. The
+	// first live bench of offline mode turned the flag on through the API, read it back as true,
+	// and watched every door carry on granting as though it were online — because the runtime had
+	// read the value once at process start and nothing ever told it otherwise.
+	OnChange(fn func(ctx context.Context, s AccessSettings))
 }
 
 type accessSettingsService struct {
-	repo     dbsql.IGenericRepo[sharedentities.RuntimeSetting]
-	defaults AccessSettings
+	repo      dbsql.IGenericRepo[sharedentities.RuntimeSetting]
+	defaults  AccessSettings
+	mu        sync.RWMutex
+	listeners []func(ctx context.Context, s AccessSettings)
 }
 
 // NewAccessSettingsService creates the service seeded with the config.json defaults.
 func NewAccessSettingsService(repo dbsql.IGenericRepo[sharedentities.RuntimeSetting], defaults AccessSettings) IAccessSettingsService {
 	return &accessSettingsService{repo: repo, defaults: normalizeAccessSettings(defaults)}
+}
+
+// OnChange registers a listener. Called on Save and on Reset — a reset is an edit like any other,
+// and it is the recovery path, so it is the LAST place a stale runtime value should survive.
+func (s *accessSettingsService) OnChange(fn func(ctx context.Context, s AccessSettings)) {
+	if fn == nil {
+		return
+	}
+	s.mu.Lock()
+	s.listeners = append(s.listeners, fn)
+	s.mu.Unlock()
+}
+
+func (s *accessSettingsService) publish(ctx context.Context, in AccessSettings) {
+	s.mu.RLock()
+	listeners := make([]func(ctx context.Context, s AccessSettings), len(s.listeners))
+	copy(listeners, s.listeners)
+	s.mu.RUnlock()
+	for _, fn := range listeners {
+		fn(ctx, in)
+	}
 }
 
 // Get returns the live settings, seeding them from config.json on first call.
@@ -173,7 +205,11 @@ func (s *accessSettingsService) Save(ctx context.Context, in AccessSettings, act
 		return AccessSettings{}, err
 	}
 
-	return s.write(ctx, in, actor)
+	out, err := s.write(ctx, in, actor)
+	if err == nil {
+		s.publish(ctx, out)
+	}
+	return out, err
 }
 
 func (s *accessSettingsService) write(ctx context.Context, in AccessSettings, actor int64) (AccessSettings, error) {
@@ -208,7 +244,11 @@ func (s *accessSettingsService) write(ctx context.Context, in AccessSettings, ac
 // Reset restores the config.json seed. It is the recovery path for a settings edit that made the
 // controller unable to start — without it, a bad timezone would need a database edit.
 func (s *accessSettingsService) Reset(ctx context.Context, actor int64) (AccessSettings, error) {
-	return s.write(ctx, s.defaults, actor)
+	out, err := s.write(ctx, s.defaults, actor)
+	if err == nil {
+		s.publish(ctx, out)
+	}
+	return out, err
 }
 
 // rawSettings is the persisted form: the real struct, with keys intact.

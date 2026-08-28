@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -181,14 +182,29 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		return nil, fmt.Errorf("access settings timezone %q: %w", live.Timezone, err)
 	}
 
+	// How stale this controller's access rules are allowed to get before its doors stop honouring
+	// them. `Decide()` has always compared a cache age against each door's TTL; nothing ever
+	// computed the age, so the comparison was against zero on every install and the whole offline
+	// design's "past the TTL the door denies" could not happen. See services.CacheClock.
+	cacheClock := services.NewCacheClock(dbsql.NewGenericRepo[sharedentities.RuntimeSetting](deps.Db))
+
 	// One controller per RS-485 bus. Each owns its port for the life of the process — a CP holds
 	// the port open and polls continuously, unlike the open/poll/close of the Modbus driver.
 	// Badge decisions flow into the notification feed alongside the alarms — that stream is what
 	// the fleet control plane correlates across nodes once this node is adopted.
-	runtime := newRuntime(deps, live, location, store, alarms, alarms.Decision, store.StrikeFor)
+	runtime := newRuntime(deps, live, location, store, alarms, alarms.Decision, store.StrikeFor, cacheClock)
+	// Applied through SetOffline rather than seeded in the constructor, so an appliance installed
+	// with `access.offline` already true in config.json raises the degraded-mode alert at BOOT.
+	// Such a site never crosses the edge from online to offline, and would otherwise run from cache
+	// forever with nobody told — which is the case the alert most needs to cover.
+	runtime.SetOffline(ctx, live.Offline)
 	if err := runtime.start(ctx); err != nil {
 		return nil, err
 	}
+	// A settings edit has to reach the RUNNING controllers, not just the database. Only `offline`
+	// can be applied without a restart; the runtime says so for the rest. Registered before the API
+	// is mounted, so no save can slip through unapplied.
+	settings.OnChange(runtime.ApplySettings)
 
 	// bgCtx bounds the fleet workers (discovery responder, enrollment, control channel); the OSDP
 	// runtime keeps its own cancel because it predates them and owns its bus supervisors. Created
@@ -227,6 +243,19 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 
 	sharedapis.NewLocalAuthApi(protected, authCfg, localUser)
 
+	// Every accepted administrative change to the access rules resets the offline cache clock.
+	//
+	// This is the second half of what "the cache is stale" means, and without it the idea is
+	// absurd. A controller cut off from its control plane cannot be TOLD that a credential was
+	// revoked — that is what the TTL defends against. But an operator who can still sign in to this
+	// appliance and revoke the credential here IS an authority reaching the controller, and a door
+	// that locked out a site being actively administered would be enforcing a staleness that does
+	// not exist. So a rule edit counts as contact, exactly as a control-plane connection does.
+	//
+	// Scoped by PATH and by 2xx: a badge decision is not contact (the whole point is that badges
+	// keep arriving at a controller nobody can reach), and a refused edit is not contact either.
+	protected.Use(ruleChangeTouch(cacheClock))
+
 	apis.NewSettingsApi(protected, settings)
 	apis.NewDoorApi(protected, store, runtime, deps.Db)
 	apis.NewHolderApi(protected, deps.Db)
@@ -255,7 +284,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 			runtime.stop()
 			return nil, cerr
 		}
-		f := buildFleet(api, deps, appVersion(m), fleetCipher, notifications)
+		f := buildFleet(api, deps, appVersion(m), fleetCipher, notifications, cacheClock)
 
 		// The PUBLIC pairing routes (adopt / release / self-drop) authenticate with the FLEET KEY,
 		// not a user session — a control plane adopting a node has no user behind it. They must be
@@ -301,6 +330,70 @@ func (m *module) RegisterWebRoutes(router *mux.Router, deps apphost.Dependencies
 	router.HandleFunc("/", serveIndex).Methods("GET")
 	router.HandleFunc("/index.html", serveIndex).Methods("GET")
 	return nil
+}
+
+// accessRulePaths are the API prefixes whose mutations are a change to who may enter. Settings is
+// included: the offline flag and the bus layout are as much a part of the access decision as a
+// grant is, and an operator on that screen is as present as one on any other.
+var accessRulePaths = []string{
+	"/api/doors", "/api/holders", "/api/groups", "/api/schedules", "/api/grants",
+	"/api/holidays", "/api/settings/access", "/api/lockdown",
+}
+
+// accessRuleExcluded are mutations under those prefixes that operate a door rather than change the
+// rules. A remote unlock is the one that matters: it is a POST under /api/doors, and it is an
+// OPERATION, not a statement about who may enter. Counting it would let the act of using the site
+// keep its own staleness clock at zero, which is precisely the thing the clock is supposed to
+// measure independently of.
+var accessRuleExcluded = []string{"/unlock"}
+
+// ruleChangeTouch resets the offline cache clock after an accepted change to the access rules.
+func ruleChangeTouch(clock *services.CacheClock) mux.MiddlewareFunc {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+			default:
+				next.ServeHTTP(w, r)
+				return
+			}
+			matched := false
+			for _, p := range accessRulePaths {
+				if strings.HasPrefix(r.URL.Path, p) {
+					matched = true
+					break
+				}
+			}
+			for _, suffix := range accessRuleExcluded {
+				if strings.HasSuffix(r.URL.Path, suffix) {
+					matched = false
+					break
+				}
+			}
+			if !matched {
+				next.ServeHTTP(w, r)
+				return
+			}
+			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+			next.ServeHTTP(rec, r)
+			if rec.status >= 200 && rec.status < 300 {
+				clock.Touch(r.Context())
+			}
+		})
+	}
+}
+
+// statusRecorder remembers the status code so the middleware can tell an accepted edit from a
+// refused one. A handler that never calls WriteHeader has written 200, which is why the zero value
+// is not left as the default.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	s.status = code
+	s.ResponseWriter.WriteHeader(code)
 }
 
 // loginGuardConfig translates the shared login-security block into the guard's shape.

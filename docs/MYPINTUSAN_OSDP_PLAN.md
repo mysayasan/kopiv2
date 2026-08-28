@@ -393,3 +393,79 @@ grants and no alarms, which reads exactly like a reader that came up and whose a
 no path in, so a site whose contacts terminate on a relay board rather than on the reader still has
 no forced or held-open detection. `Controller.RequestToExit` likewise has no caller, so a REX
 button wired to the reader does not shunt the forced alarm.
+
+---
+
+## 11. Offline mode and the cache TTL (added 2026-08-28)
+
+`tools/fleetbench/bench_pintusan_offline.py`, **19/19**; 12/19 against the unfixed app. Item 3 of
+the mypintusan hardening register, after Secure Channel (§9) and the six alarms (§10). §2 of
+`docs/MYPINTUSAN_DATA_MODEL.md` is the app's answer to the oldest attack on an access control
+system — "past the TTL the door denies... there is no allow-all option... 'fail open on network
+loss' is a documented attack." Every line of it is implemented in `Decide()`'s GATE 10. This bench
+asks whether any of it can actually happen on a running appliance, and finds four ways the answer
+was no, all of the same shape as §10: the gate was right and nothing fed it.
+
+1. **The cache could never expire.** `ControllerConfig.CacheAge` has always been declared and
+   compared against a door's TTL; nothing assigned it outside a unit test. In production it was
+   nil, `Snapshot.CacheAge` was always zero, `s.CacheAge > ttl` was always false, and
+   `offline-cache-expired` could not be produced on any install. Measured: a door 20 seconds past a
+   2-second TTL still granted. Fixed by `services.CacheClock`
+   (`docs/modules/apps/mypintusan/services/cache_clock.go.md`), which persists the time since the
+   last contact with an authority over the access data — the fleet control channel connecting
+   (`ControlChannelManager.SetOnContact`, `docs/modules/domain/shared/fleetnode/doc.go.md`), or an
+   accepted administrative edit made on the appliance itself (`app.go`'s `ruleChangeTouch`
+   middleware, scoped to `POST`/`PUT`/`PATCH`/`DELETE` under the access-rule paths and to a 2xx
+   response). Persisted, deliberately: a reboot mid-outage must not hand a week-stale replica a
+   fresh 72 hours.
+2. **`offlinePolicy: deny` and `offlineTtlSeconds` were unreachable.** `createDoorRequest` had
+   neither field; the handler hardcoded `OfflinePolicy: entities.OfflineCached` and left the TTL at
+   the class default (8/24/72 hours). There is no `PUT /api/doors`, so every door on every install
+   was born `cached` at the class default and kept it for good. Fixed: both fields are now accepted
+   on create, `offlinePolicy` is validated to `cached`/`deny` and REFUSED (400) for anything else —
+   an installer's likeliest invented value is some spelling of "allow", and coercing it to `cached`
+   silently would leave them believing they had configured a fail-open door that does not exist —
+   and a negative TTL is refused.
+3. **Turning offline mode on did not reach the running controllers.** `AccessSettings.Offline` was
+   read once at process start. `PUT /api/settings/access` with `offline: true` persisted, returned
+   200, read back `true`, and every door kept deciding as though online. Fixed:
+   `ControllerConfig.Offline` is now `func() bool` backed by an atomic on the runtime
+   (`app/runtime.go.md`'s `runtime.offline`/`SetOffline`/`Offline`), and
+   `IAccessSettingsService.OnChange` (`docs/modules/apps/mypintusan/services/runtime_settings.go.md`)
+   publishes on `Save`/`Reset` to `runtime.ApplySettings`. Only `offline` applies live; the bus
+   list, reader keys, tick and site timezone still need a restart, and the Settings screen's
+   restart note now names exactly which fields that covers.
+4. **Nobody was told the site was degraded.** §2 has said since P1 that a controller serving from
+   cache "raises a degraded-mode alert immediately"; nothing raised one, and a cached grant is
+   byte-identical to a live one at the door and on every screen. Fixed: new alarm kind
+   `services.AlarmDegraded` ("degraded", WARNING, headline "Running from cache — access rules
+   cannot be updated"), raised from `runtime.SetOffline` on the transition into offline mode AND at
+   boot for an appliance that starts offline — a site that never crosses the online→offline edge
+   would otherwise run from cache forever with nobody told.
+
+**Also fixed, not a defect but a gap:** offline mode had no control on the Settings screen at all,
+so the only way to turn it on was editing `config.json` before an appliance's first boot — on a
+facilities-managed install, never. A checkbox was added
+(`views/react-webpack/src/views/Settings.js`, `settings.offlineHead`/`offline`/`offlineHint`,
+translated in en/ms/zh/ar).
+
+Proven good and unchanged, recorded rather than reported as fixed: GATE 10 does run on a live
+controller — the bench's positive control is a critical door denying `offline-not-allowed` for a
+holder not flagged `OfflineAllowed`, since that reason code comes from nowhere else; the gate
+ordering holds (a revoked credential is denied `credential-revoked`, not masked by a stale cache);
+`Holder.OfflineAllowed` was already reachable via `POST /api/holders` and opens a critical door
+while offline; the access log's `offline` flag is set correctly on a cache-served decision; and no
+`allow-all` offline policy can be created, before or after the fix — the invariant §2 argues for
+held throughout.
+
+**Two things deliberately not built, reported rather than papered over:**
+
+- There is still no `PUT /api/doors` and no doors-admin screen (doors are only created by the
+  first-run wizard), so `offlinePolicy`/`offlineTtlSeconds` above are reachable through the API
+  only.
+- There is no replica-refresh mechanism anywhere in this suite — `myseliasan` pushes no access data
+  down to a node, and no other route does either — so the appliance's own database remains its
+  only authority and "offline mode" stays an operator-declared deployment mode rather than
+  something a controller detects for itself. `docs/MYPINTUSAN_DATA_MODEL.md` §2's old sentence
+  describing "a full local replica... refreshed on change" described a topology that never existed;
+  it has been corrected to say so.

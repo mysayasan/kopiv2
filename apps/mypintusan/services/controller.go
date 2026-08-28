@@ -66,6 +66,15 @@ const (
 	AlarmSecureChannel = "secure-channel"
 	AlarmDoorForced    = "door-forced"
 	AlarmDoorHeldOpen  = "door-held-open"
+	// AlarmDegraded says the site is running on a cached replica.
+	//
+	// It is the only warning an operator gets that offline mode is on, and it is the alarm the
+	// design always specified and nothing raised: docs/MYPINTUSAN_DATA_MODEL.md §2 has said since
+	// P1 that a controller serving from cache "raises a degraded-mode alert immediately". A cached
+	// grant is byte-for-byte a normal grant at the door and on the activity screen, so without this
+	// the first observable sign that a site is degraded is a door refusing a valid badge once its
+	// TTL runs out — hours or days later, and reported by whoever is standing outside it.
+	AlarmDegraded = "degraded"
 )
 
 // Controller options.
@@ -73,8 +82,19 @@ type ControllerConfig struct {
 	BusPort  string
 	Location *time.Location
 	// Offline and CacheAge describe whether this controller is running on a cached replica. A
-	// controller with a live database leaves them zero.
-	Offline  bool
+	// controller with a live database leaves them nil.
+	//
+	// Offline is a QUESTION, not a fact, because it is an operator setting that can be turned on
+	// after installation — and until it was one, a controller read it once at process start and a
+	// site that switched offline mode on from the settings screen carried on deciding as though it
+	// had not, with the screen reporting a protection the doors were not applying.
+	//
+	// CacheAge is how stale the replica is. It comes from services.CacheClock, which measures the
+	// time since anything entitled to change the access rules last reached this controller. Leaving
+	// it nil means "no staleness known", which is the right answer for a controller with a live
+	// database and the WRONG one to reach by accident: it was nil on every install until the first
+	// live bench of offline mode found that `offline-cache-expired` could not be produced at all.
+	Offline  func() bool
 	CacheAge func() time.Duration
 	// Now is injectable so schedule behaviour is testable without waiting for Tuesday.
 	Now func() time.Time
@@ -95,6 +115,12 @@ type ControllerConfig struct {
 	// correlates across nodes; door-state audit rows (forced, held-open) are NOT decisions and do
 	// not pass through here — they raise their own alarms. Nil-safe: standalone tests leave it unset.
 	Decisions func(ctx context.Context, ev entities.AccessEvent)
+}
+
+// offline reports whether this controller is currently serving from a cached replica. Nil-safe:
+// a controller with no answer configured is a controller with a live database.
+func (c *Controller) offline() bool {
+	return c.cfg.Offline != nil && c.cfg.Offline()
 }
 
 // Controller drives one bus.
@@ -287,7 +313,7 @@ func (c *Controller) OperatorUnlock(ctx context.Context, door entities.Door, act
 	now := c.cfg.Now()
 	ev := entities.AccessEvent{
 		At: now.Unix(), DoorId: door.Id, HolderId: actor, HolderName: actorName,
-		RawCredential: "operator", Decision: entities.DecisionDenied, Offline: c.cfg.Offline,
+		RawCredential: "operator", Decision: entities.DecisionDenied, Offline: c.offline(),
 	}
 
 	// Lockdown outranks an operator too. Someone who can lift lockdown can open the door; someone
@@ -470,7 +496,7 @@ func (c *Controller) handleCard(ctx context.Context, ev osdp.Event) {
 		At:            now.Unix(),
 		RawCredential: card.Raw,
 		Decision:      entities.DecisionDenied,
-		Offline:       c.cfg.Offline,
+		Offline:       c.offline(),
 	}
 
 	reader, err := c.store.ReaderByBus(ctx, c.cfg.BusPort, int(ev.Address))
@@ -570,7 +596,7 @@ func (c *Controller) snapshot(ctx context.Context, now time.Time, door entities.
 		ReaderOnline:  st.online,
 		ReaderSecure:  st.secure,
 		Lockdown:      lockdown,
-		Offline:       c.cfg.Offline,
+		Offline:       c.offline(),
 		RawCredential: card.Raw,
 		PresentedPIN:  c.takePIN(uint8(reader.OsdpAddress), now),
 	}

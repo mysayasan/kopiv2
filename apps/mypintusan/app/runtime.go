@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	appentities "github.com/mysayasan/kopiv2/apps/mypintusan/entities"
@@ -26,8 +27,20 @@ type runtime struct {
 	// decisions receives every access decision for the notification feed (and, through it, the
 	// fleet uplink). Nil when nothing consumes decisions.
 	decisions func(ctx context.Context, ev appentities.AccessEvent)
+	// cache measures how stale this controller's replica is. See services.CacheClock: without it
+	// `Decide()`'s TTL comparison has no number to compare and can never deny.
+	cache *services.CacheClock
 
 	cancel context.CancelFunc
+
+	// offline is the live answer to "is this controller serving from a cached replica?".
+	//
+	// ATOMIC AND HELD HERE, not copied into each controller, for the same reason lockdown is:
+	// controllers are rebuilt on every bus reconnect, and a value captured at process start cannot
+	// follow a setting an operator changes afterwards. Before this the flag was read once at boot,
+	// so turning offline mode on from the settings API persisted the change, returned 200, read
+	// back as true — and every door carried on deciding as though it were online.
+	offline atomic.Bool
 
 	mu sync.RWMutex
 	// lockdown is held HERE rather than only inside a controller, because controllers are rebuilt
@@ -41,12 +54,64 @@ type runtime struct {
 func newRuntime(deps apphost.Dependencies, cfg services.AccessSettings, loc *time.Location,
 	store services.Store, alarms services.Alarmer,
 	decisions func(ctx context.Context, ev appentities.AccessEvent),
-	strikes services.StrikeResolver) *runtime {
-	return &runtime{
+	strikes services.StrikeResolver, cache *services.CacheClock) *runtime {
+	r := &runtime{
 		deps: deps, cfg: cfg, location: loc, store: store, alarms: alarms, decisions: decisions,
-		strikes: strikes,
-		live:    map[string]*services.Controller{},
+		strikes: strikes, cache: cache,
+		live: map[string]*services.Controller{},
 	}
+	// offline is deliberately NOT seeded here. The caller applies it through SetOffline so that a
+	// site configured offline from first boot gets the degraded-mode alert like any other.
+	return r
+}
+
+// SetOffline puts the site into — or takes it out of — cached-replica mode, and tells somebody.
+//
+// THE ALERT IS THE POINT. A cached grant is indistinguishable from a live one at the door, on the
+// activity screen and in the access log's decision column; the only visible difference is a boolean
+// on each row that nobody reads. docs/MYPINTUSAN_DATA_MODEL.md §2 has always said a controller
+// running degraded "raises a degraded-mode alert immediately", and nothing raised one. A site can
+// be running on rules it can no longer be told have changed, and until now the first sign of it
+// would have been a door refusing a badge after the TTL expired, with no earlier warning at all.
+//
+// COMING BACK is logged, not alarmed. An alarm's headline is fixed by its kind, so an all-clear
+// raised as a `degraded` alarm would arrive on somebody's phone titled "Running from cache" while
+// saying the opposite in its body. This app has no alarm-clear concept to hang it on, and a
+// contradictory 3am notification is worse than a journal line.
+func (r *runtime) SetOffline(ctx context.Context, on bool) {
+	if r.offline.Swap(on) == on {
+		return
+	}
+	if !on {
+		r.deps.Logger.Infof("mypintusan.access",
+			"offline mode is off; this controller is back on a live source of truth")
+		return
+	}
+	r.deps.Logger.Warnf("mypintusan.access",
+		"offline mode is ON; access decisions are being served from the cached replica")
+	if r.alarms == nil {
+		return
+	}
+	r.alarms.Raise(ctx, services.AlarmDegraded,
+		appentities.AccessEvent{At: time.Now().Unix()},
+		"this controller is serving access decisions from its cached replica; changes made "+
+			"elsewhere cannot reach it, and each door denies once its offline cache TTL expires")
+}
+
+// Offline reports the live cached-replica state.
+func (r *runtime) Offline() bool { return r.offline.Load() }
+
+// ApplySettings carries a settings edit into the RUNNING controllers, and says plainly which parts
+// of the edit it could not carry.
+//
+// Only `offline` takes effect live. The bus list, the reader keys, the tick and the site timezone
+// are all read while building a bus supervisor and a controller, and re-reading them would mean
+// tearing down every segment on the site mid-save — which on a door controller means every door on
+// the site going dead for the length of a reconnect because somebody renamed a reader. The Settings
+// screen carries a restart note for exactly that reason; this log line is its counterpart for an
+// operator reading the journal.
+func (r *runtime) ApplySettings(ctx context.Context, s services.AccessSettings) {
+	r.SetOffline(ctx, s.Offline)
 }
 
 // start supervises every configured bus until the context is cancelled.
@@ -166,9 +231,11 @@ func (r *runtime) runBus(ctx context.Context, cfg services.BusSettings) error {
 	ctrl := services.NewController(r.store, bus, services.BusActuator{
 		Bus: bus, Resolve: r.strikes,
 	}, r.alarms, services.BcryptPIN, services.ControllerConfig{
-		BusPort:      cfg.Port,
-		Location:     r.location,
-		Offline:      r.cfg.Offline,
+		BusPort:  cfg.Port,
+		Location: r.location,
+		// A live question, not the value at process start — see runtime.offline.
+		Offline:      r.Offline,
+		CacheAge:     r.cache.AgeFunc(),
 		TickInterval: time.Duration(r.cfg.TickSeconds) * time.Second,
 		PINWindow:    time.Duration(r.cfg.PINWindowSeconds) * time.Second,
 		Decisions:    r.decisions,

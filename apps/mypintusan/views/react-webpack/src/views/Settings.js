@@ -120,8 +120,25 @@ export default function Settings({ toast }) {
           </label>
         </div>
 
-        <h2 className="section-head">{t('settings.buses')}</h2>
         <p className="muted small">{t('settings.restartNote')}</p>
+
+        {/* Offline mode had no control on this screen at all, so the only way to turn it on was to
+            edit config.json before the appliance's first boot — which on an appliance sold to a
+            facilities team means it could not be turned on at all. It is a checkbox rather than a
+            hidden setting because it changes what every door on the site does when a badge is
+            presented, and because turning it on raises a degraded-mode alert somebody has to see. */}
+        <h2 className="section-head">{t('settings.offlineHead')}</h2>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={!!form.offline}
+            onChange={e => setForm({ ...form, offline: e.target.checked })}
+          />
+          <span>{t('settings.offline')}</span>
+        </label>
+        <small className="muted">{t('settings.offlineHint')}</small>
+
+        <h2 className="section-head">{t('settings.buses')}</h2>
 
         {(form.buses || []).map((bus, bi) => (
           <fieldset className="bus-box" key={bi}>
