@@ -22,7 +22,16 @@ produces a door that opens for the wrong person.
 - `ScbkState` — `default`/`rekeyed`/`failed`. A reader still on the well-known default base key
   (SCBK-D) is not secure whatever else it claims — that key is printed in every vendor's manual
   — and is capped at `interior` doors until a `KEYSET` lands (see
-  `docs/MYPINTUSAN_OSDP_PLAN.md` §2.3).
+  `docs/MYPINTUSAN_OSDP_PLAN.md` §2.3). **Written once, at `POST /doors` reader creation, as
+  `ScbkDefault`, and never updated again** — `ScbkRekeyed`/`ScbkFailed` are declared and used
+  nowhere else in `apps/mypintusan`. The signal that could drive it already exists one layer
+  down: `infra/access/osdp` answers a PDCAP capability request and carries the result as
+  `Event.DefaultKey`/`Event.DefaultKeySession` (`cp.go.md`), but nothing in this app reads
+  either field, so the interior-until-rekeyed cap this field exists to support is not enforced.
+  Confirmed live by `tools/fleetbench/bench_pintusan_securechannel.py`'s `default-scbk` episode —
+  every reader reports `default` regardless of what the simulated PD actually claims. Direction
+  of the gap is the safe one (the app never CLAIMS a reader is rekeyed without evidence), but it
+  cannot yet distinguish a factory-keyed reader from a properly keyed one.
 - `LastSeenAt`, `TamperState` (`ok`/`tamper`/`offline`), `Enabled`, audit fields.
 
 ## Fields — `ReaderProfile`

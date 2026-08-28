@@ -94,6 +94,26 @@ const (
 // DefaultOfflineTTLSeconds returns the cache lifetime for a door class when the door does not
 // override it. Past the TTL the door denies — the cache keeps a network blip from stranding staff
 // outside a building, but "works offline" must never mean "stops checking".
+// SecureChannelDefault reports whether a door of this class should require an encrypted reader
+// session when nobody said either way.
+//
+// The rule was written down long before it was applied: RequireSecureChannel's own comment has
+// always said it "defaults on for perimeter and critical", and the create path passed the request
+// body straight through — so a critical door created without mentioning it got FALSE. Measured on
+// a running appliance: a card on a plaintext reader opened a `critical` door, because the field
+// documenting the default was the only thing implementing it.
+//
+// Interior is deliberately excluded. A cupboard on a spur of cheap non-SC readers is the case the
+// escape hatch exists for, and defaulting it on would take those doors out of service on upgrade.
+func SecureChannelDefault(class string) bool {
+	switch class {
+	case ClassPerimeter, ClassCritical:
+		return true
+	default:
+		return false
+	}
+}
+
 func (d Door) DefaultOfflineTTLSeconds() int {
 	if d.OfflineTTLSeconds > 0 {
 		return d.OfflineTTLSeconds

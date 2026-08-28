@@ -102,8 +102,10 @@ type createDoorRequest struct {
 	BusPort     string `json:"busPort"`
 	OsdpAddress int    `json:"osdpAddress"`
 	ReaderName  string `json:"readerName"`
-	// RequireSecureChannel is the door's policy, not the reader's capability.
-	RequireSecureChannel bool `json:"requireSecureChannel"`
+	// RequireSecureChannel is the door's policy, not the reader's capability. A POINTER so that
+	// "the caller said false" is distinguishable from "the caller said nothing" — the difference
+	// between an explicit escape hatch and an omission that must inherit the class default.
+	RequireSecureChannel *bool `json:"requireSecureChannel"`
 	// RelayChannel is the output on the reader that fires the strike.
 	RelayChannel int `json:"relayChannel"`
 	// ContactDeviceKey binds a door-position contact. Empty means forced-open and held-open
@@ -163,6 +165,11 @@ func (a *doorApi) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	requireSC := entities.SecureChannelDefault(body.Class)
+	if body.RequireSecureChannel != nil {
+		requireSC = *body.RequireSecureChannel
+	}
+
 	now := time.Now().Unix()
 	door := entities.Door{
 		Name: body.Name, Class: body.Class,
@@ -174,7 +181,11 @@ func (a *doorApi) create(w http.ResponseWriter, r *http.Request) {
 		HeldOpenSeconds:       orDefault(body.HeldOpenSeconds, 30),
 		RelayChannel:          body.RelayChannel,
 		ContactDeviceKey:      strings.TrimSpace(body.ContactDeviceKey),
-		RequireSecureChannel:  body.RequireSecureChannel,
+		// Omitted means the class decides — see entities.SecureChannelDefault. Its neighbours
+		// here have always defaulted (UnlockSeconds, HeldOpenSeconds, OfflinePolicy); this is the
+		// one SECURITY-relevant field that did not, and there is no PUT /api/doors, so a door
+		// created with the wrong policy kept it for good.
+		RequireSecureChannel:  requireSC,
 		OfflinePolicy:         entities.OfflineCached,
 		AntiPassback:          entities.APBOff,
 		Enabled:               true,

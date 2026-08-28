@@ -67,7 +67,14 @@ READER_ADDR = 1
 SITE_KEY = "a0a1a2a3a4a5a6a7b0b1b2b3b4b5b6b7"
 
 
-def app_config():
+def app_config(reader_scbk=None, reader_requires_sc=False):
+    """The app's config for one boot.
+
+    reader_scbk / reader_requires_sc are parameters because **buses are seeded from config on
+    FIRST BOOT ONLY** — there is no API to change a reader's key or its Secure Channel policy
+    afterwards. A bench that wants to ask "what happens when the site key is wrong?" or "what
+    happens when this reader MUST have an encrypted session?" has to boot a fresh app to ask it,
+    and passing None for the key is how you get a reader with no key at all."""
     cfg = base_config(APP, TLS_PORT)
     cfg["localAuth"] = {"enabled": True, "username": ADMIN_USER, "password": ADMIN_PASS}
     # Multicast discovery finds nothing in docker and logs about it forever.
@@ -80,15 +87,15 @@ def app_config():
         "offline": False,
     })
     # ONE bus, pointed at the simulator on the host.
+    reader = {"address": READER_ADDR, "requireSecureChannel": bool(reader_requires_sc)}
+    key = SITE_KEY if reader_scbk is None else reader_scbk
+    if key:
+        reader["scbk"] = key
     cfg["buses"] = [{
         "port": SIM_ADDR,
         "slotMillis": 200,
         "replyTimeoutMillis": 1000,
-        "readers": [{
-            "address": READER_ADDR,
-            "scbk": SITE_KEY,
-            "requireSecureChannel": False,
-        }],
+        "readers": [reader],
     }]
     return cfg
 
@@ -221,6 +228,33 @@ def admin():
     if must:
         c.rotate()
     return c
+
+
+def boot(reader_scbk=None, reader_requires_sc=False, build_app=True):
+    """Tear down and stand up a FRESH app with the given bus config, returning when it serves.
+
+    Fresh every time, deliberately: the data dir carries the seeded bus, so reusing it would
+    quietly ignore the config just handed over — which reads as "the setting had no effect"."""
+    teardown()
+    os.makedirs(os.path.join(ROOT, "bin"), exist_ok=True)
+    sh("docker", "network", "create", NET, check=False)
+    if build_app:
+        build()
+
+    data = os.path.join(ROOT, NAME)
+    certs = os.path.join(data, "certs")
+    os.makedirs(certs, exist_ok=True)
+    crt, key = make_cert(WORK)
+    io.open(os.path.join(certs, "cert.pem"), "wb").write(io.open(crt, "rb").read())
+    io.open(os.path.join(certs, "key.pem"), "wb").write(io.open(key, "rb").read())
+
+    write(os.path.join(data, "config.json"),
+          app_config(reader_scbk=reader_scbk, reader_requires_sc=reader_requires_sc))
+    start_app()
+    if not wait_up(BASE + "/api/auth/config", timeout=180):
+        print(sh("docker", "logs", "--tail", "40", NAME, check=False))
+        raise SystemExit("mypintusan did not come up")
+    return True
 
 
 def main():

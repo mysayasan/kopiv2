@@ -143,15 +143,18 @@ var scenarios = map[string]scenario{
 		func(c config) (*Bus, []func(*Bus)) {
 			pd := osdp.NewPD(1)
 			pd.Faults.RefuseSecureChannel = true
-			return NewBus(c.log, c.verbose, pd), nil
+			// A card loop, because "must fail closed" is a claim about what happens WHEN SOMEBODY
+			// BADGES. Without one this scenario can only show that a session was refused, which is
+			// the easy half; the half that matters is whether the door then opens anyway.
+			return NewBus(c.log, c.verbose, pd), []func(*Bus){cardLoop(c, 1)}
 		},
 	},
 	"no-sc": {
-		"reader cannot do Secure Channel at all (PDCAP drops the AES-128 bit)",
+		"reader cannot do Secure Channel at all (PDCAP drops the AES-128 bit), and badges anyway",
 		func(c config) (*Bus, []func(*Bus)) {
 			pd := osdp.NewPD(1)
 			pd.Faults.NoSecureChannel = true
-			return NewBus(c.log, c.verbose, pd), nil
+			return NewBus(c.log, c.verbose, pd), []func(*Bus){cardLoop(c, 1)}
 		},
 	},
 	"secure": {
@@ -184,7 +187,7 @@ var scenarios = map[string]scenario{
 			other := c.siteKey
 			other[0] ^= 0xFF
 			pd.SCBK = other
-			return NewBus(c.log, c.verbose, pd), nil
+			return NewBus(c.log, c.verbose, pd), []func(*Bus){cardLoop(c, 1)}
 		},
 	},
 	"default-scbk": {

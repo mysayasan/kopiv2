@@ -268,3 +268,55 @@ its first port failure.
 5. **Reader firmware pinning.** `ReaderProfile.VerifiedFirmware` exists (hardware plan §2)
    but nothing yet *checks* the `PDID` reply against it at runtime. Cheap to add, and it is
    what turns a verified profile from a claim into an enforced one.
+6. ~~**SCBK-D never checked at runtime**~~ — partially resolved 2026-08-28. See §9.
+
+---
+
+## 9. First live bench of Secure Channel (added 2026-08-28)
+
+The §4.1 fault table's two "security-critical" rows — refuse Secure Channel, and establish-then-
+drop mid-session — had never actually been driven against a live appliance; `tools/osdp-sim`'s
+`refuse-sc`/`no-sc`/`wrong-key` scenarios presented no card at all, so they could show a session
+being refused but not what a badge does next, which is the half of "must fail closed" that
+matters. `tools/osdp-sim/main.go` now runs a `cardLoop` for `refuse-sc`, `no-sc` and `wrong-key`
+the same way `secure`/`sc-drop`/`default-scbk` already did.
+`tools/fleetbench/bench_pintusan_securechannel.py` (18 checks) then drives all six Secure Channel
+scenarios against a real appliance, one fresh boot per episode — a reader's key and its
+`RequireSecureChannel` policy are seeded from config on **first boot only**, with no API to
+change either afterwards, so a question like "what happens with the wrong site key" can only be
+asked of a new appliance.
+
+Two real defects, both fixed:
+
+1. **A session that established and then dropped left the door granting on cleartext.**
+   `infra/access/osdp/bus.go`'s `secureChannelLost` re-announced the downgrade only from
+   `StatusSecuring` (a handshake that never came up); a reader already `StatusOnline` when its
+   session died produced no event, so every consumer kept the `SecureSession: true` it was told
+   at handshake, permanently. Measured against `sc-drop`: a door requiring an encrypted session
+   went on granting badges on a reader whose session had died — the exact RS-485 tap this
+   mechanism exists to defeat. Fixed by re-announcing from `StatusOnline` too (see
+   `docs/modules/infra/access/osdp/bus.go.md`).
+2. **A `critical`/`perimeter` door created without mentioning Secure Channel did not get one.**
+   §3.2's stated default (on for `perimeter`/`critical`) was documented on
+   `entities.Door.RequireSecureChannel`'s own comment and applied nowhere — the create handler
+   passed the request body's boolean straight through. Measured live: a card on a plaintext
+   reader opened a `critical` door. Fixed with `entities.SecureChannelDefault(class)` and a
+   `*bool` on the create request so an explicit `false` (the interior escape hatch) is
+   distinguishable from silence. This one mattered more than an ordinary defaulting bug because
+   there is no `PUT /api/doors` — a door created with the wrong policy keeps it for good. See
+   `docs/modules/apps/mypintusan/entities/door.go.md` and `.../apis/doors.go.md`.
+
+Proven good and unchanged: a healthy session grants; `no-sc`/`refuse-sc` both deny for the
+specific `secure-channel-failed` reason, not a vaguer one; a door that does **not** require SC
+still works with a reader that cannot do it; a key mismatch never becomes a cleartext session and
+is alarmed (`access.secure-channel`).
+
+**Still a gap, found not built:** the SCBK-D row in the fault table above ("still on SCBK-D →
+door capped to `interior`, UI nag") remains unenforced. `Reader.ScbkState` is written once at
+creation and never updated; `infra/access/osdp` already carries the signal
+(`Event.DefaultKey`/`DefaultKeySession`, via `PDCAP`) but nothing in `apps/mypintusan` reads it.
+See `docs/modules/apps/mypintusan/entities/reader.go.md` and
+`docs/MYPINTUSAN_HARDWARE_PLAN.md` §3.1.
+
+18/18 checks pass with both fixes; 13/18 against the unfixed app (the simulator's card-loop
+change is bench tooling and was held constant across both runs).

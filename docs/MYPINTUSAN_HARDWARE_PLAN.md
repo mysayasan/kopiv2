@@ -181,17 +181,27 @@ Two extra caps, independent of the table:
 - A profile whose only `CardFormats` entry is `raw-uid` is capped at `interior` regardless
   of verification. UID-only credentials clone with a £20 phone app; verification of the
   *driver* says nothing about the weakness of the *credential*.
-- `ShipsWithDefaultSCBK` + not yet rekeyed is capped at `interior` until the rekey lands.
+- `ShipsWithDefaultSCBK` + not yet rekeyed is capped at `interior` until the rekey lands. **Still
+  unenforced, and now measured rather than merely asserted:** `Reader.ScbkState` is written once
+  at creation and never updated, and nothing in `apps/mypintusan` reads the `PDCAP`-derived
+  default-key signal `infra/access/osdp` already carries (`Event.DefaultKey`/`DefaultKeySession`).
+  See `tools/fleetbench/bench_pintusan_securechannel.py`'s `default-scbk` episode and
+  `docs/MYPINTUSAN_OSDP_PLAN.md` §9.
 
 ### 3.2 Secure Channel is a door policy, not a reader property
 
 The profile *declares* `SupportsSecureChannel`. The **door** decides `RequireSecureChannel`
-(default: on for `perimeter` and `critical`, off for `interior`).
+(default: on for `perimeter` and `critical`, off for `interior`) — enforced at door creation
+since 2026-08-28 (`entities.SecureChannelDefault`, see `docs/MYPINTUSAN_OSDP_PLAN.md` §9); before
+that fix the default existed only as this paragraph and a door created without mentioning Secure
+Channel silently got none.
 
 **The security-critical rule:** if a door requires Secure Channel and the session fails to
 establish — or drops mid-session — the reader is taken **out of service and alarmed**. It
 does not silently fall back to cleartext. A downgrade-to-plaintext fallback is exactly the
-attack an RS-485 tap wants, and "the door kept working" is how it goes unnoticed for a year.
+attack an RS-485 tap wants, and "the door kept working" is how it goes unnoticed for a year. The
+drop-mid-session half of this was unenforced until the same fix — see
+`docs/MYPINTUSAN_OSDP_PLAN.md` §9.
 
 This mirrors the fail-closed posture already taken in the suite for the
 `GetById` superadmin guard: when the trust input is missing, refuse rather than assume.

@@ -76,7 +76,15 @@ establishes a session and immediately loses it), `EventBuffer` (256).
 - `secureChannelLost(pd, reason)` — the security-critical rule from the hardware plan §3.2, made
   concrete: on a door that `requireSC`, there is **no cleartext fallback, ever** — the reader goes
   out of service and alarms (`EventOffline`). Where the door does not require it, the failure is
-  surfaced (`EventFault`) but the reader is not taken down.
+  surfaced (`EventFault`) but the reader is not taken down. Re-announces the downgrade from
+  **either** `StatusSecuring` (a handshake that never came up) **or `StatusOnline`** (a session
+  that established and then dropped mid-conversation). Only the former was covered originally;
+  a reader already `StatusOnline` produced no event on loss, so every consumer kept the
+  `SecureSession: true` it was told at handshake, permanently — measured against
+  `tools/osdp-sim`'s `sc-drop` scenario, where a door requiring an encrypted session went on
+  granting badges on a reader whose session had died. The PD's own comment calls this "the
+  harder half": refusing a handshake is caught at enrolment, but losing a session mid-conversation
+  happens to a reader that is already trusted and already bound to a live door.
 - `checkSupervision`/`fail` — the two paths to `StatusOffline`. `fail` counts consecutive
   transaction failures (`OfflineAfter` threshold); `checkSupervision` catches the case
   `OfflineAfter` cannot — a reader that keeps answering (NAK/BUSY/out-of-sequence forever) but
@@ -104,6 +112,11 @@ establishes a session and immediately loses it), `EventBuffer` (256).
 - `Status`/`Stats`/`Secure`/`Dropped` are read-only snapshots for callers/UI.
 - Depends on `frame.go` (framing), `cp.go` (`pdState`, parsers), `transport.go` (`Transport`,
   `countingReader`, `sleepCtx`), `securechannel.go` (session establishment/seal/unseal).
+- `secureChannelLost`'s `StatusOnline` branch (above) is live-benched, not just unit-tested:
+  `tools/fleetbench/bench_pintusan_securechannel.py` drives `sc-drop` against a real appliance
+  and asserts on the resulting access decision, since a unit test over `Bus` alone cannot show
+  what a consumer three layers up does with the event it receives (or, before the fix, does not
+  receive).
 - Covered by `bus_test.go`, including `TestBusRunReturnsWhenThePortDies` — the regression test
   for the reconnect fix above, exercised two ways: the peer closing its end of a `net.Pipe`, and
   a transport whose every `Write` fails (`deadTransport`). Both assert `Run` returns a non-nil
