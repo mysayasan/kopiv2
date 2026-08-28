@@ -1,6 +1,8 @@
 // ms locale dictionary. Code-split: loaded on demand except en.
 export default {
   'auth.subSignin': 'Log masuk ke hab penderia',
+  'auth.subNoAccess': 'Akaun ini tidak boleh menggunakan hab penderia',
+  'auth.noAccessBody': 'Anda telah log masuk, tetapi akaun anda belum diberi akses kepada aplikasi ini. Pentadbir boleh memberikannya melalui Tetapan.',
   'auth.username': 'Nama pengguna',
   'auth.password': 'Kata laluan',
   'auth.signingIn': 'Sedang log masuk…',
@@ -517,6 +519,8 @@ export default {
   'devices.readingsFailed': 'Tidak dapat memuatkan bacaan.',
   'devices.noReadings': 'Peranti ini belum melaporkan apa-apa.',
   'devices.noSeries': 'Tiada bacaan dalam tempoh ini.',
+  'devices.historyNotPermitted': 'Akaun anda tidak boleh melihat sejarah bacaan.',
+  'devices.historyNotPermittedHint': 'Anda boleh melihat nilai semasa setiap kunci, tetapi bukan sejarahnya — itu memerlukan peranan yang lebih tinggi. Ini had kebenaran, bukan penderia yang senyap.',
   'devices.suspect': 'Di luar julat munasabah',
   'devices.chartSubtitle': '{range} terakhir',
   'devices.chartSubtitleUnit': '{unit} · {range} terakhir',

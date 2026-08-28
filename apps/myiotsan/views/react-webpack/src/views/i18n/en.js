@@ -2,6 +2,8 @@
 export default {
   // Sign-in / forced password change
   'auth.subSignin': 'Sign in to the sensor hub',
+  'auth.subNoAccess': 'This account cannot use the sensor hub',
+  'auth.noAccessBody': 'You are signed in, but your account has not been granted access to this application. An administrator can grant it from Settings.',
   'auth.username': 'Username',
   'auth.password': 'Password',
   'auth.signingIn': 'Signing in…',
@@ -526,6 +528,8 @@ export default {
   'devices.readingsFailed': 'Could not load the readings.',
   'devices.noReadings': 'This device has not reported anything yet.',
   'devices.noSeries': 'No readings in this period.',
+  'devices.historyNotPermitted': 'Your account cannot see reading history.',
+  'devices.historyNotPermittedHint': 'You can see each key\'s current value, but not its history — that needs a higher role. This is a permission limit, not a silent sensor.',
   'devices.suspect': 'Outside the plausible range',
   'devices.chartSubtitle': 'Last {range}',
   'devices.chartSubtitleUnit': '{unit} · last {range}',

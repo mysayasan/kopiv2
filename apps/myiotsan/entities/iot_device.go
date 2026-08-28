@@ -12,7 +12,11 @@ type IotDevice struct {
 	Name string `json:"name" form:"name" query:"name" validate:"required"`
 	// DeviceKey is the device's wire identity (MQTT client id / topic segment).
 	DeviceKey string `json:"deviceKey" form:"deviceKey" query:"deviceKey" ukey:"device_key" validate:"required"`
-	// Protocol is how readings arrive: "mqtt" (the device publishes) or "http" (it POSTs).
+	// Protocol is how readings arrive: "mqtt" (the device dials in and publishes) or "modbus"
+	// (the hub dials out and polls). It is a LABEL — no code branches on it; the broker admits a
+	// device on its credentials and the poller decides from the profile's transport — which is
+	// why services.supportedProtocols guards what may be written here. It once documented an
+	// "http" option that no route in this app has ever been able to receive.
 	Protocol string `json:"protocol" form:"protocol" query:"protocol"`
 	// Endpoint and Unit address a POLLED device — one whose profile has Transport == "modbus".
 	// A Modbus device does not dial into the broker; the app dials OUT to it, so unlike an MQTT

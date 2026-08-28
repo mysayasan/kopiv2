@@ -103,8 +103,14 @@ func (i *Ingest) SetTwin(c *CommandService) { i.twin = c }
 // the flow engine is simply not consulted.
 func (i *Ingest) SetFlows(f *FlowRuntime) { i.flows = f }
 
-// Handle processes one payload. It satisfies mqtt.MessageHandler and is also the entry point
-// for the HTTP ingest route, so a device that cannot speak MQTT has the same pipeline behind it.
+// Handle processes one payload. It satisfies mqtt.MessageHandler, and it is the ONLY way a
+// pushed payload enters this pipeline.
+//
+// This comment used to say it was "also the entry point for the HTTP ingest route" — there is no
+// such route, and there never has been. The module doc for this file said so honestly ("the entry
+// point future HTTP ingest WOULD call") while the code said it in the present tense, and the
+// device form offered an HTTP protocol on the strength of it. If HTTP ingest is ever built, it
+// arrives here; until then a device speaks MQTT to the broker, or it is polled.
 func (i *Ingest) Handle(ctx context.Context, p iotmqtt.Principal, clientId, topic string, payload []byte) {
 	// THE QUARANTINE. An enrolling client is a stranger that presented an open window's key. What
 	// it says is recorded as a CANDIDATE and goes no further: no telemetry row, no rule

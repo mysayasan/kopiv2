@@ -10,9 +10,11 @@ sensor or actuator.
 - Identity: `Id`, `Name`, `DeviceKey` (unique — the device's MQTT client id and the variable
   segment of its topic; what makes the inventory record ALSO the credential record — a device
   not in this table cannot connect to the broker, see `infra/iot/mqtt`).
-- Wiring: `Protocol` (`"mqtt"` or `"http"`), `ProfileId` (points at the `DeviceProfile` that
-  declares this device's telemetry keys — without one, a device can connect but nothing it
-  publishes can be decoded, indexed via `idx:"profile"`).
+- Wiring: `Protocol` (`"mqtt"` — the device dials in and publishes — or `"modbus"` — the hub
+  dials out and polls; a LABEL only, read by no code, guarded at write time by
+  `services.supportedProtocols` — see `services/device.go.md`), `ProfileId` (points at the
+  `DeviceProfile` that declares this device's telemetry keys — without one, a device can connect
+  but nothing it publishes can be decoded, indexed via `idx:"profile"`).
 - **`Endpoint`/`Unit` (P5)** — address a POLLED device, one whose profile has `Transport ==
   "modbus"`. A Modbus device does not dial into the broker; the app dials OUT to it, so unlike an
   MQTT device its network location is its own per-instance property (two identical inverters

@@ -61,6 +61,19 @@ const operatorDescription = "Day-to-day operator: monitor devices, review teleme
 func Policy() []PolicyRule {
 	return []PolicyRule{
 		// --- Everyone signed in ---------------------------------------------------------
+		//
+		// THE SESSION PROBE IS LOAD-BEARING. The SPA asks this on boot to learn who it is
+		// talking to, and treats any non-OK answer as "nobody is signed in" — so leaving it out
+		// of this catalog did not merely hide a feature, it made the entire application
+		// unreachable for every non-admin: sign in succeeds, the probe is refused, the login
+		// card comes back, forever. The comment above this function predicted exactly that —
+		// "a route missing from this catalog is a route nobody can see they are not granting" —
+		// and it went unnoticed because every account anybody had tested with was an admin, and
+		// an admin bypasses the matrix entirely.
+		//
+		// Read, not write: it answers "who am I", which is the least an authenticated session
+		// can be allowed to ask.
+		{Path: "/api/auth/session", Description: "See who you are signed in as", Viewer: read, Operator: read},
 		{Path: "/api/auth/change-password", Description: "Change your own password", Viewer: write, Operator: write},
 
 		// --- Watching the estate ----------------------------------------------------------

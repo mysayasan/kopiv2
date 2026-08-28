@@ -1,6 +1,8 @@
 // ar locale dictionary. Code-split: loaded on demand except en.
 export default {
   'auth.subSignin': 'تسجيل الدخول إلى مركز المستشعرات',
+  'auth.subNoAccess': 'لا يمكن لهذا الحساب استخدام مركز المستشعرات',
+  'auth.noAccessBody': 'لقد سجّلت الدخول، لكن حسابك لم يُمنح صلاحية استخدام هذا التطبيق. يمكن للمسؤول منحها من الإعدادات.',
   'auth.username': 'اسم المستخدم',
   'auth.password': 'كلمة المرور',
   'auth.signingIn': 'جارٍ تسجيل الدخول…',
@@ -517,6 +519,8 @@ export default {
   'devices.readingsFailed': 'تعذّر تحميل القراءات.',
   'devices.noReadings': 'لم يبلّغ هذا الجهاز بأي شيء بعد.',
   'devices.noSeries': 'لا توجد قراءات في هذه الفترة.',
+  'devices.historyNotPermitted': 'لا يمكن لحسابك عرض سجل القراءات.',
+  'devices.historyNotPermittedHint': 'يمكنك رؤية القيمة الحالية لكل مؤشر، لكن ليس سجله — يتطلب ذلك دورًا أعلى. هذا قيد صلاحيات، وليس مستشعرًا صامتًا.',
   'devices.suspect': 'خارج النطاق المعقول',
   'devices.chartSubtitle': 'آخر {range}',
   'devices.chartSubtitleUnit': '{unit} · آخر {range}',
