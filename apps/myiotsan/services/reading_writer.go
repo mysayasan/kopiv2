@@ -118,9 +118,16 @@ func (w *ReadingWriter) Run(ctx context.Context) {
 			if len(batch) == 0 {
 				return
 			}
-			n, err := w.repo.CreateMultiple(context.WithoutCancel(ctx), "", batch)
-			if err != nil {
-				w.opts.Logf("telemetry batch write failed (%d readings lost): %v", len(batch), err)
+			// COUNT THE ROWS WE HANDED OVER, not the repo's return value. CreateMultiple
+			// returns the driver's LAST INSERT ID (that is what Create's callers want from
+			// it), and adding an id to a running total produces a number that grows with the
+			// size of the table rather than with the work done: 2,666 readings reported as
+			// 3,555,111 written on a bench, because that is the sum of 1..2666. `written` is
+			// the counter an operator compares against `stored` to see whether the batcher is
+			// keeping up, and a garbage number there is worse than no number.
+			n := len(batch)
+			if _, err := w.repo.CreateMultiple(context.WithoutCancel(ctx), "", batch); err != nil {
+				w.opts.Logf("telemetry batch write failed (%d readings lost): %v", n, err)
 			} else {
 				w.mu.Lock()
 				w.written += int64(n)

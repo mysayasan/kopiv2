@@ -10,6 +10,7 @@ package config
 import (
 	"encoding/json"
 	"strings"
+	"time"
 )
 
 // Config is myiotsan's slice of config.json.
@@ -47,6 +48,12 @@ type TelemetryConfig struct {
 	// rows on purpose: the rollups are what make last summer comparable to this one, at a
 	// fraction of the size.
 	RollupRetentionDays int `json:"rollupRetentionDays"`
+	// RollupIntervalMs is how often the rollup-and-retention worker runs. An hour is right for
+	// a running site and is the default; it is settable because a background job with no way to
+	// make it run is a job nobody has ever watched do its work. It is deliberately here in
+	// config rather than in the Settings screen: it is a maintenance cadence, not an operator
+	// tuning knob, and the rollups it builds are what a wide chart falls back to.
+	RollupIntervalMs int `json:"rollupIntervalMs"`
 }
 
 // Load decodes myiotsan's blocks from the raw config document, then applies defaults.
@@ -82,5 +89,8 @@ func (c *Config) normalize() {
 	}
 	if c.Telemetry.RollupRetentionDays <= 0 {
 		c.Telemetry.RollupRetentionDays = 400
+	}
+	if c.Telemetry.RollupIntervalMs <= 0 {
+		c.Telemetry.RollupIntervalMs = int(time.Hour / time.Millisecond)
 	}
 }

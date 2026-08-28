@@ -34,7 +34,13 @@ func (w *ReadingWriter) Stats() (written, dropped int64, queued int)
 - `Wait(timeout)` blocks the caller (the app's shutdown func) until the drain above completes.
 - `Stats()` — `Dropped` is the number that matters: non-zero and growing means ingest is
   outrunning the disk, and either the deadbands need widening or the hardware needs to be
-  faster. Surfaced via `GET /api/devices/stats`.
+  faster. `Written` counts the rows HANDED to a batch (`len(batch)`), not the repo's return
+  value: `CreateMultiple` returns the driver's LAST INSERT ID (what its other callers want from
+  it), and summing that across batches produced a number that grows with the size of the table
+  rather than with the work done — a bench that stored 2,666 readings once reported `written`
+  as 3,555,111 (the sum of 1..2666). `Written` is the counter an operator compares against
+  `stored` to see whether the batcher is keeping up, so it has to count rows. Surfaced via
+  `GET /api/devices/stats`.
 
 ## Key Type: ReadingWriterOptions
 

@@ -446,7 +446,14 @@ function DeviceReadings({ device }) {
     const numeric = keyList.filter((k) => k.dataType !== 'string');
     const results = await Promise.all(numeric.map(async (k) => {
       const r = await api(`/api/devices/${device.id}/readings?key=${encodeURIComponent(k.key)}&from=${from}&to=${to}`);
-      return [k.key, r.ok ? (r.body?.items || []) : []];
+      // `span` and `truncated` travel with the points: over a wide window these are rollup
+      // buckets rather than the sensor's own samples, and a chart that does not say so is
+      // presenting an hourly summary as if it were the trace.
+      return [k.key, {
+        items: r.ok ? (r.body?.items || []) : [],
+        span: r.ok ? (r.body?.span || 'raw') : 'raw',
+        truncated: r.ok ? Boolean(r.body?.truncated) : false,
+      }];
     }));
     setSeries(Object.fromEntries(results));
   }, [device.id, rangeSecs]);
@@ -536,12 +543,24 @@ function DeviceReadings({ device }) {
       {chartKeys
         .filter((k) => k.dataType !== 'string')
         .map((k) => {
-          const points = (series[k.key] || []).map((r) => ({ t: r.ts, v: r.num, suspect: r.suspect }));
+          const got = series[k.key] || {};
+          const points = (got.items || []).map((r) => ({ t: r.ts, v: r.num, suspect: r.suspect }));
+          // Say what the points ARE. A window too dense to draw is served from the rollups, and
+          // a truncated one is only the recent slice of the range the label claims.
+          const base = k.unit
+            ? t('devices.chartSubtitleUnit', { unit: k.unit, range: t(`range.${range}`) })
+            : t('devices.chartSubtitle', { range: t(`range.${range}`) });
+          let subtitle = base;
+          if (got.span === '1m' || got.span === '1h') {
+            subtitle = `${base} · ${t(`devices.chartSpan.${got.span}`)}`;
+          } else if (got.truncated) {
+            subtitle = `${base} · ${t('devices.chartTruncated')}`;
+          }
           return (
             <ChartCard
               key={k.key}
               title={k.label || k.key}
-              subtitle={k.unit ? t('devices.chartSubtitleUnit', { unit: k.unit, range: t(`range.${range}`) }) : t('devices.chartSubtitle', { range: t(`range.${range}`) })}
+              subtitle={subtitle}
             >
               <LineChart
                 points={points}

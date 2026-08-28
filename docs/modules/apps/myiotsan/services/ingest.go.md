@@ -25,7 +25,19 @@ func (i *Ingest) Handle(ctx context.Context, p iotmqtt.Principal, clientId, topi
 func (i *Ingest) HandlePolled(ctx context.Context, dev *entities.IotDevice, samples []codec.Sample)
 func (i *Ingest) InvalidateProfile(profileId int64)
 func (i *Ingest) Stats() IngestStats
+func (i *Ingest) ForgetDevice(deviceId int64)
 ```
+
+`ForgetDevice` (called from `apis.devicesApi.remove` on `DELETE /devices/{id}` — `apis/devices.go.md`)
+drops the deadband gate's baseline for a deleted device (`gate.Forget`). The gate map is the one
+structure in the ingest path this file calls unbounded — `Size()` is exposed to `IngestStats.Series`
+precisely so it can be watched — and until this was wired in, `DeadbandGate.Forget` had a comment
+stating exactly why it exists and zero production callers, only its own unit test. Two consequences
+of not calling it: the map grows forever (a site that replaces sensors over ten years accumulates a
+baseline for every device it has ever had), and on a database that hands out row ids as max+1, a
+replacement device can land on a deleted one's id — its first reading would then be compared against
+a stranger's last value and could be suppressed as "unchanged", which is the one sample that must
+never be dropped.
 
 `SetEnrollment` wires the enrollment window in (`app.go`, after construction) so a quarantined
 client's payloads become candidates instead of telemetry.
