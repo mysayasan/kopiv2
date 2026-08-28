@@ -289,6 +289,49 @@ func TestScheduleWindows(t *testing.T) {
 	}
 }
 
+// TestZeroLengthWindowCoversNothing pins the one way GATE 8 could fail OPEN.
+//
+// A window whose end equals its start used to fall into the wrapping branch, where
+// `minutes >= StartMin` is true from the first minute of the day and the previous day's tail
+// catches the rest — so 09:00-09:00 granted at every hour of every day while the schedules screen
+// labelled it "overnight". The live bench measured it opening a door at 02:51 that was meant to be
+// shut until 09:00, and the way in was not a typo on a form: a client that sends field names this
+// API does not read has every window arrive as 0-0, which is how `bench_pintusan_offline.py` ran
+// its whole life on a 24/7 schedule it believed was office hours.
+//
+// The create handler now refuses one. This test is about the rows already stored on installs that
+// accepted them, which no validation can reach.
+func TestZeroLengthWindowCoversNothing(t *testing.T) {
+	s := baseline()
+	// A Tuesday, 10:00 local — inside nothing, unless the window matches everything.
+	s.Schedules = map[int64]entities.Schedule{100: {Id: 100}}
+	s.Windows = map[int64][]entities.ScheduleWindow{
+		100: {{Weekday: 2, StartMin: 9 * 60, EndMin: 9 * 60}},
+	}
+	if d := Decide(s, testPIN); d.Granted {
+		t.Error("a 09:00-09:00 window granted; a zero-length window must cover nothing at all")
+	}
+
+	// The all-zero window is the shape a mis-keyed request actually produces, and it is the one
+	// that used to match all seven days.
+	s.Windows = map[int64][]entities.ScheduleWindow{
+		100: {{Weekday: 0, StartMin: 0, EndMin: 0}, {Weekday: 2, StartMin: 0, EndMin: 0}},
+	}
+	if d := Decide(s, testPIN); d.Granted {
+		t.Error("an all-zero window granted; that is a window that never parsed, not 24/7 access")
+	}
+
+	// And the night shift it is one minute away from must still work, or the guard has taken the
+	// wrapping window with it.
+	s.Windows = map[int64][]entities.ScheduleWindow{
+		100: {{Weekday: 2, StartMin: 22 * 60, EndMin: 22*60 - 1}},
+	}
+	s.Now = time.Date(2026, 8, 4, 23, 0, 0, 0, kl)
+	if d := Decide(s, testPIN); !d.Granted {
+		t.Errorf("a window that wraps almost the whole way round denied at 23:00 (%s)", d.Reason)
+	}
+}
+
 // TestScheduleUsesSiteLocalTime is the timezone trap. The same instant is inside office hours in
 // Kuala Lumpur and the middle of the night in UTC; evaluating in the wrong zone silently shifts
 // every schedule on the site by the offset.

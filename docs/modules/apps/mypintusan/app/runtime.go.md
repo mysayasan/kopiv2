@@ -19,12 +19,11 @@ drive it come from.
 
 ```go
 type runtime struct {
-    deps     apphost.Dependencies
-    cfg      services.AccessSettings
-    location *time.Location
-    store    services.Store
-    alarms   services.Alarmer
-    strikes  services.StrikeResolver
+    deps    apphost.Dependencies
+    cfg     services.AccessSettings
+    store   services.Store
+    alarms  services.Alarmer
+    strikes services.StrikeResolver
     // decisions receives every access decision for the notification feed (and, through it, the
     // fleet uplink). Nil when nothing consumes decisions.
     decisions func(ctx context.Context, ev appentities.AccessEvent)
@@ -41,6 +40,13 @@ type runtime struct {
     // the settings API persisted the change, returned 200, read back as true, and every door
     // carried on deciding as though online.
     offline atomic.Bool
+
+    // location is the LIVE site timezone, atomic for the same reason offline and lockdown are.
+    // It is the first question the setup wizard asks, on an already-running controller, so
+    // "takes effect at the next restart" meant every fresh install decided its schedules and
+    // holidays in the seeded zone (UTC on an appliance) until somebody power-cycled it. Handed to
+    // each controller as the SiteLocation method value, so a correction reaches the next badge.
+    location atomic.Pointer[time.Location]
 
     mu       sync.RWMutex
     lockdown bool
@@ -74,14 +80,27 @@ replaced wholesale on each reconnect. `offline` follows the identical reasoning,
   hours or days later, reported by whoever was standing outside it.
 - `Offline()` — reports the live cached-replica state (`r.offline.Load()`); this is the function
   bound into `ControllerConfig.Offline` for every controller `runBus` builds.
+- `SiteLocation()` — the live site timezone, bound into `ControllerConfig.Location` for every
+  controller `runBus` builds and therefore consulted on every badge. Falls back to the host's
+  zone, never silently to UTC.
+- `SetLocation(loc)` — swaps the zone under the running controllers, logging the change (a site
+  timezone moving under a live access-control system is worth a journal line).
 - `ApplySettings(ctx, s)` — the listener registered via `settings.OnChange` in `app/app.go.md`.
   Carries a settings edit into the RUNNING controllers, and is explicit about which parts of the
-  edit it could NOT carry: only `s.Offline` takes effect live (`r.SetOffline(ctx, s.Offline)`). The
-  bus list, reader keys, tick interval and site timezone are all read while building a bus
-  supervisor and a controller, and re-reading them live would mean tearing down every segment on
-  the site mid-save — on a door controller, every door going dead for the length of a reconnect
-  because somebody renamed a reader. The Settings screen's restart note (`settings.restartNote`)
-  names exactly these fields for the same reason.
+  edit it could NOT carry: `s.Offline` and the SITE TIMEZONE take effect live
+  (`r.SetOffline` / `r.SetLocation`). The bus list, reader keys and tick interval are read while
+  building a bus supervisor and a controller, and re-reading them live would mean tearing down
+  every segment on the site mid-save — on a door controller, every door going dead for the length
+  of a reconnect because somebody renamed a reader. The Settings screen's restart note
+  (`settings.restartNote`) names exactly those.
+
+  The timezone was on that list and did not belong there: it is a value the decision path reads,
+  not a resource anything holds open, and it is the setting a site is most likely to get wrong at
+  installation, since the first-run wizard asks for it before any door exists. Swapping it
+  interrupts no door and no session. A zone that will not load is REFUSED and the previous one
+  kept (`validateAccessSettings` already turns one away at the API, so reaching here with a bad
+  zone means the database was edited underneath the app — and silently moving every schedule to
+  UTC would be the worst possible answer to that).
 - `start(ctx)` — spawns `superviseBus` (via `safego.Go`) for every configured bus whose `Port`
   is non-empty. Zero configured buses is not an error — logged, not failed — since a fresh
   install has none until somebody wires a reader; the API still comes up.

@@ -52,15 +52,39 @@ grant/membership mutation publishes a notification naming the administrator who 
 - `createSchedule` validates: a schedule that is neither `always` nor has at least one
   `ScheduleWindow` matches NOTHING — every grant through it would deny out-of-schedule forever,
   which reads as a broken door rather than a broken rule, so it is rejected outright. Each window's
-  `Weekday` must be 0–6 and `StartMin`/`EndMin` must be within 0–1440; **`EndMin <= StartMin` is
-  explicitly VALID** and means the window wraps past midnight (the night shift) — only the raw
-  bounds are checked, not the ordering.
+  `Weekday` must be 0–6, `StartMin` must be within 0–1439 (a window cannot start at 24:00) and
+  `EndMin` within 0–1440; **`EndMin < StartMin` is explicitly VALID** and means the window wraps
+  past midnight (the night shift).
+
+  **`EndMin == StartMin` is REFUSED**, with a message naming the 24/7 flag and giving the shape of
+  a real overnight window. It is the only way a schedule can fail OPEN: a zero-length window used
+  to fall into the wrapping branch in `services/decision.go.md`'s `windowCovers`, where "after the
+  start" is true from the first minute of the day and the previous day's tail catches the rest, so
+  09:00–09:00 matched every hour of every day while the schedules screen labelled it "(overnight)".
+  The realistic way in is not a slip on the form but a client sending field names this handler does
+  not read: Go's decoder drops unknown fields silently, every window arrives as 0–0, and the
+  "a schedule needs a window" guard above passes because there ARE windows. Four of this app's own
+  bench scripts did exactly that (`startMinute`/`endMinute` against an API that reads
+  `startMin`/`endMin`) and ran their whole lives on an accidental 24/7 schedule. Measured live: such
+  a schedule opened a door at 02:51 that was meant to be shut until 09:00.
+- `createSchedule` publishes an `access.rule-change` notification with the schedule's hours
+  rendered into the body (`describeSchedule`), so a wrong window is visible in the audit line
+  rather than only in the row it created.
 - `deleteSchedule` refuses while any `Grant` references it ("grants still use this schedule;
   delete or repoint them first"), then cascade-deletes its `ScheduleWindow` rows.
 - `listHolidays` / `createHoliday` / `deleteHoliday` — a holiday's `Date` must parse as
   `YYYY-MM-DD`; `Behaviour` must be `entities.HolidayDeny` / `HolidayFollowSunday` / `HolidayIgnore`,
   defaulting to `HolidayDeny` when omitted (`entities/access_rules.go.md`, resolved by
-  `services/decision.go.md`'s `scheduleAllows`).
+  `services/decision.go.md`'s `scheduleAllows`). `SiteId` scopes the calendar; `0` applies to every
+  site, and a door is placed at a site through `siteId` on `POST /api/doors` (`doors.go.md`) —
+  without that field, which no request shape carried until it was added, every door was at site 0
+  and a site-scoped holiday could never match anything.
+
+  **Both create and delete publish an `access.rule-change` notification**, and neither did before.
+  A holiday is the one rule change that closes — or, on delete, REOPENS — every door on a site for
+  a whole day without anybody editing a grant, including doors on a 24/7 schedule, and
+  `AccessEvent` records only DECISIONS. The delete is if anything the more important of the two:
+  closing a site early is embarrassing, opening one that was meant to be shut is the incident.
 
 ### Grants
 

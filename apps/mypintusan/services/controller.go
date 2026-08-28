@@ -79,8 +79,23 @@ const (
 
 // Controller options.
 type ControllerConfig struct {
-	BusPort  string
-	Location *time.Location
+	BusPort string
+	// Location is the SITE's timezone, and it is a function rather than a value because an
+	// operator can change it after installation and a door that is refusing people on the wrong
+	// clock must not have to wait for a restart to stop.
+	//
+	// It is asked for on the FIRST SCREEN of the setup wizard — "tell us where this site is, so
+	// opening hours and holidays are right" — which runs against an already-started controller.
+	// While this was a value captured at boot, that answer reached the database, the settings
+	// screen and nothing else: every schedule and every holiday on a fresh install was evaluated
+	// in whatever zone config.json seeded, which for an appliance is UTC. Measured live: with the
+	// site corrected to a zone where it was 12:51, a 09:00-17:00 grant went on being refused
+	// `out-of-schedule` because the controller was still deciding at 02:51.
+	//
+	// Nil, or a nil result, means the host's zone. Unlike the bus list and the reader keys — which
+	// really are boot-only, because re-reading them means tearing down every segment on the site —
+	// swapping a *time.Location costs nothing and interrupts no door.
+	Location func() *time.Location
 	// Offline and CacheAge describe whether this controller is running on a cached replica. A
 	// controller with a live database leaves them nil.
 	//
@@ -163,9 +178,6 @@ func NewController(store Store, bus *osdp.Bus, act Actuator, alarm Alarmer, veri
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	if cfg.Location == nil {
-		cfg.Location = time.Local
-	}
 	if cfg.PINWindow <= 0 {
 		cfg.PINWindow = 15 * time.Second
 	}
@@ -181,6 +193,22 @@ func NewController(store Store, bus *osdp.Bus, act Actuator, alarm Alarmer, veri
 }
 
 // Machine returns the state machine for a door, creating it on first use.
+// location is the site's timezone as it stands RIGHT NOW.
+//
+// Asked freshly on every decision rather than captured, so a corrected zone reaches the next badge.
+// Falling back to the host's zone rather than to UTC is deliberate: it is what an unconfigured
+// appliance already runs on, and silently deciding in UTC is exactly the eight-hour shift this
+// whole gate exists to avoid.
+func (c *Controller) location() *time.Location {
+	if c.cfg.Location == nil {
+		return time.Local
+	}
+	if loc := c.cfg.Location(); loc != nil {
+		return loc
+	}
+	return time.Local
+}
+
 func (c *Controller) Machine(ctx context.Context, doorId int64) (*DoorMachine, error) {
 	c.mu.Lock()
 	if m, ok := c.machines[doorId]; ok {
@@ -590,7 +618,7 @@ func (c *Controller) snapshot(ctx context.Context, now time.Time, door entities.
 
 	snap := Snapshot{
 		Now:           now,
-		Location:      c.cfg.Location,
+		Location:      c.location(),
 		Door:          door,
 		Reader:        reader,
 		ReaderOnline:  st.online,
@@ -641,7 +669,7 @@ func (c *Controller) snapshot(ctx context.Context, now time.Time, door entities.
 
 	// The holiday calendar is looked up in SITE-LOCAL time. A public holiday is a calendar day, not
 	// an instant, and resolving it in UTC shifts it by the offset for anyone badging near midnight.
-	date := now.In(c.cfg.Location).Format("2006-01-02")
+	date := now.In(c.location()).Format("2006-01-02")
 	holiday, err := c.store.HolidayOn(ctx, door.SiteId, date)
 	if err != nil {
 		return snap, err

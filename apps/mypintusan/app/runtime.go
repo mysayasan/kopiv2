@@ -18,10 +18,9 @@ import (
 
 // runtime owns the OSDP buses and their controllers, and keeps them alive.
 type runtime struct {
-	deps     apphost.Dependencies
-	cfg      services.AccessSettings
-	location *time.Location
-	store    services.Store
+	deps  apphost.Dependencies
+	cfg   services.AccessSettings
+	store services.Store
 	alarms   services.Alarmer
 	strikes  services.StrikeResolver
 	// decisions receives every access decision for the notification feed (and, through it, the
@@ -32,6 +31,15 @@ type runtime struct {
 	cache *services.CacheClock
 
 	cancel context.CancelFunc
+
+	// location is the live site timezone.
+	//
+	// ATOMIC AND HELD HERE, for the same reason offline and lockdown are: controllers are rebuilt
+	// on every bus reconnect, and a zone captured at process start cannot follow the one an
+	// operator types. It is the FIRST question the setup wizard asks, on a controller that is
+	// already running, so "it takes effect at the next restart" meant every fresh install decided
+	// its schedules and holidays in the seeded zone until somebody power-cycled the appliance.
+	location atomic.Pointer[time.Location]
 
 	// offline is the live answer to "is this controller serving from a cached replica?".
 	//
@@ -56,10 +64,11 @@ func newRuntime(deps apphost.Dependencies, cfg services.AccessSettings, loc *tim
 	decisions func(ctx context.Context, ev appentities.AccessEvent),
 	strikes services.StrikeResolver, cache *services.CacheClock) *runtime {
 	r := &runtime{
-		deps: deps, cfg: cfg, location: loc, store: store, alarms: alarms, decisions: decisions,
+		deps: deps, cfg: cfg, store: store, alarms: alarms, decisions: decisions,
 		strikes: strikes, cache: cache,
 		live: map[string]*services.Controller{},
 	}
+	r.SetLocation(loc)
 	// offline is deliberately NOT seeded here. The caller applies it through SetOffline so that a
 	// site configured offline from first boot gets the degraded-mode alert like any other.
 	return r
@@ -101,17 +110,53 @@ func (r *runtime) SetOffline(ctx context.Context, on bool) {
 // Offline reports the live cached-replica state.
 func (r *runtime) Offline() bool { return r.offline.Load() }
 
+// SiteLocation is the accessor every controller is handed. It is called on each decision, so a
+// corrected timezone reaches the next badge rather than the next restart.
+func (r *runtime) SiteLocation() *time.Location {
+	if loc := r.location.Load(); loc != nil {
+		return loc
+	}
+	return time.Local
+}
+
+// SetLocation swaps the site timezone under the running controllers.
+func (r *runtime) SetLocation(loc *time.Location) {
+	if loc == nil {
+		loc = time.Local
+	}
+	if was := r.location.Swap(loc); was != nil && was.String() != loc.String() {
+		r.deps.Logger.Infof("mypintusan.access",
+			"site timezone changed from %s to %s; schedules and holidays are evaluated in it from "+
+				"the next decision", was, loc)
+	}
+}
+
 // ApplySettings carries a settings edit into the RUNNING controllers, and says plainly which parts
 // of the edit it could not carry.
 //
-// Only `offline` takes effect live. The bus list, the reader keys, the tick and the site timezone
-// are all read while building a bus supervisor and a controller, and re-reading them would mean
-// tearing down every segment on the site mid-save — which on a door controller means every door on
-// the site going dead for the length of a reconnect because somebody renamed a reader. The Settings
-// screen carries a restart note for exactly that reason; this log line is its counterpart for an
-// operator reading the journal.
+// `offline` and the SITE TIMEZONE take effect live. The bus list, the reader keys and the tick are
+// read while building a bus supervisor and a controller, and re-reading them would mean tearing
+// down every segment on the site mid-save — which on a door controller means every door going dead
+// for the length of a reconnect because somebody renamed a reader. The Settings screen carries a
+// restart note naming exactly those.
+//
+// The timezone was on that list and did not belong there. It is a value the decision path reads,
+// not a resource anything holds open, and it is the one setting a site is most likely to get wrong
+// at installation — the setup wizard asks for it first, against a controller that is already
+// running. Swapping it interrupts no door and no session.
+//
+// A zone that will not load is REFUSED rather than applied: `validateAccessSettings` already turns
+// one away at the API, so reaching here with a bad zone means the database was edited underneath
+// the app, and the worst possible response to that is to silently move every schedule to UTC.
 func (r *runtime) ApplySettings(ctx context.Context, s services.AccessSettings) {
 	r.SetOffline(ctx, s.Offline)
+	if loc, err := s.Location(); err != nil {
+		r.deps.Logger.Errorf("mypintusan.access",
+			"site timezone %q will not load (%v); keeping %s — schedules and holidays are still "+
+				"being evaluated in the previous zone", s.Timezone, err, r.SiteLocation())
+	} else {
+		r.SetLocation(loc)
+	}
 }
 
 // start supervises every configured bus until the context is cancelled.
@@ -232,7 +277,7 @@ func (r *runtime) runBus(ctx context.Context, cfg services.BusSettings) error {
 		Bus: bus, Resolve: r.strikes,
 	}, r.alarms, services.BcryptPIN, services.ControllerConfig{
 		BusPort:  cfg.Port,
-		Location: r.location,
+		Location: r.SiteLocation,
 		// A live question, not the value at process start — see runtime.offline.
 		Offline:      r.Offline,
 		CacheAge:     r.cache.AgeFunc(),

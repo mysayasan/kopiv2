@@ -15,17 +15,19 @@ export default function Access({ toast }) {
   const [groups, setGroups] = useState(null)
   const [schedules, setSchedules] = useState(null)
   const [grants, setGrants] = useState(null)
+  const [holidays, setHolidays] = useState(null)
   const [doors, setDoors] = useState([])
   const [error, setError] = useState('')
 
   const load = useCallback(async () => {
     try {
-      const [g, s, gr, d] = await Promise.all([
-        api.listGroups(), api.listSchedules(), api.listGrants(), api.listDoors()
+      const [g, s, gr, h, d] = await Promise.all([
+        api.listGroups(), api.listSchedules(), api.listGrants(), api.listHolidays(), api.listDoors()
       ])
       setGroups(g && g.items ? g.items : [])
       setSchedules(s && s.items ? s.items : [])
       setGrants(gr && gr.items ? gr.items : [])
+      setHolidays(h && h.items ? h.items : [])
       setDoors(Array.isArray(d) ? d : [])
       setError('')
     } catch (e) {
@@ -42,7 +44,7 @@ export default function Access({ toast }) {
       </div>
     )
   }
-  if (groups === null || schedules === null || grants === null) {
+  if (groups === null || schedules === null || grants === null || holidays === null) {
     return <div className="screen"><p>{t('common.loading')}</p></div>
   }
 
@@ -58,6 +60,7 @@ export default function Access({ toast }) {
       <GrantsSection grants={grants} groups={groups} schedules={schedules} doors={doors} onChanged={load} toast={toast} />
       <GroupsSection groups={groups} onChanged={load} toast={toast} />
       <SchedulesSection schedules={schedules} onChanged={load} toast={toast} />
+      <HolidaysSection holidays={holidays} onChanged={load} toast={toast} />
     </div>
   )
 }
@@ -349,7 +352,7 @@ function SchedulesSection({ schedules, onChanged, toast }) {
           <span key={w.id} className="pill sm">
             {t(WEEKDAY_KEYS[w.weekday] || 'common.none')} {toTime(w.startMin)}–{toTime(w.endMin)}
             {/* A window ending before it starts wraps past midnight — the night shift. */}
-            {w.endMin <= w.startMin ? ` ${t('access.schedules.overnight')}` : ''}
+            {w.endMin < w.startMin ? ` ${t('access.schedules.overnight')}` : ''}
           </span>
         ))
     },
@@ -455,6 +458,138 @@ function AddSchedule({ onClose, onSaved, toast }) {
             </button>
           </>
         ) : null}
+
+        <div className="form-actions">
+          <button type="button" className="btn btn-quiet" onClick={onClose}>{t('common.cancel')}</button>
+          <button type="submit" className="btn btn-primary" disabled={saving}>{t('common.save')}</button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+// --- holidays -----------------------------------------------------------------------------------
+
+// The holiday calendar had an API, a decision gate, a denial reason translated into four languages
+// and an API client in lib/access.js — and no screen. Nothing in this app ever called listHolidays,
+// createHoliday or deleteHoliday, so on every install the calendar was empty and the branch of
+// `scheduleAllows` that reads it could not run.
+//
+// It belongs on THIS screen rather than on Settings because it is a rule about who may enter, not a
+// property of the appliance: one row here closes every door on the site for a day, INCLUDING doors
+// on a 24/7 schedule. That is why it is admin-only, audited like a grant, and why removing a row is
+// confirmed — deleting a holiday REOPENS a building on a day it was meant to be shut.
+const BEHAVIOURS = ['deny', 'follow-sunday', 'ignore']
+const BEHAVIOUR_KEYS = {
+  deny: 'access.holidays.deny',
+  'follow-sunday': 'access.holidays.followSunday',
+  ignore: 'access.holidays.ignore'
+}
+
+function HolidaysSection({ holidays, onChanged, toast }) {
+  const t = useT()
+  const [adding, setAdding] = useState(false)
+
+  const remove = async h => {
+    if (!window.confirm(t('access.holidays.deleteConfirm'))) return
+    try {
+      await api.deleteHoliday(h.id)
+      onChanged()
+    } catch (e) {
+      toast(e && e.message ? e.message : t('common.error'), 'error')
+    }
+  }
+
+  // Soonest first. A calendar is read forwards: the row anyone is looking for is the next one.
+  const rows = [...holidays].sort((a, b) => String(a.date).localeCompare(String(b.date)))
+
+  const columns = [
+    { key: 'date', label: t('access.holidays.date') },
+    { key: 'name', label: t('access.holidays.name') },
+    {
+      key: 'behaviour',
+      label: t('access.holidays.behaviour'),
+      render: (_v, r) => (
+        <span className={r.behaviour === 'deny' ? 'pill sm pill-warn' : 'pill sm'}>
+          {t(BEHAVIOUR_KEYS[r.behaviour] || 'common.none')}
+        </span>
+      )
+    },
+    {
+      key: 'actions',
+      label: '',
+      render: (_v, r) => (
+        <button type="button" className="btn btn-quiet" onClick={() => remove(r)}>{t('common.delete')}</button>
+      )
+    }
+  ]
+
+  return (
+    <section className="access-section">
+      <div className="access-section-head">
+        <h2 className="section-head">{t('access.holidays.title')}</h2>
+        <button type="button" className="btn btn-quiet" onClick={() => setAdding(true)}>
+          <Ico n="plus" sz={14} /> {t('access.holidays.add')}
+        </button>
+      </div>
+      <p className="muted small">{t('access.holidays.lead')}</p>
+      {rows.length === 0
+        ? <p className="muted">{t('access.holidays.empty')}</p>
+        : <DataTable columns={columns} rows={rows} />}
+
+      {adding ? (
+        <AddHoliday
+          onClose={() => setAdding(false)}
+          onSaved={() => { setAdding(false); onChanged() }}
+          toast={toast}
+        />
+      ) : null}
+    </section>
+  )
+}
+
+function AddHoliday({ onClose, onSaved, toast }) {
+  const t = useT()
+  // `deny` is the default because it is what a public holiday means, and because it is the
+  // fail-closed answer: a day entered by mistake shuts a door, which somebody reports within
+  // minutes, rather than opening one nobody is watching.
+  const [form, setForm] = useState({ name: '', date: '', behaviour: 'deny' })
+  const [saving, setSaving] = useState(false)
+
+  const submit = async e => {
+    e.preventDefault()
+    setSaving(true)
+    try {
+      await api.createHoliday({ name: form.name, date: form.date, behaviour: form.behaviour })
+      onSaved()
+    } catch (err) {
+      toast(err && err.message ? err.message : t('common.error'), 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Modal title={t('access.holidays.addTitle')} onClose={onClose}>
+      <form onSubmit={submit} className="form">
+        <label>
+          <span>{t('access.holidays.name')}</span>
+          <input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
+        </label>
+        <label>
+          <span>{t('access.holidays.date')}</span>
+          {/* A date, not a timestamp: a public holiday is a calendar day in the SITE's timezone and
+              must not shift with the server's UTC offset. */}
+          <input type="date" required value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} />
+          <small className="muted">{t('access.holidays.dateHint')}</small>
+        </label>
+        <label>
+          <span>{t('access.holidays.behaviour')}</span>
+          <select value={form.behaviour} onChange={e => setForm({ ...form, behaviour: e.target.value })}>
+            {BEHAVIOURS.map(b => <option key={b} value={b}>{t(BEHAVIOUR_KEYS[b])}</option>)}
+          </select>
+          <small className="muted">{t('access.holidays.behaviourHint')}</small>
+        </label>
 
         <div className="form-actions">
           <button type="button" className="btn btn-quiet" onClick={onClose}>{t('common.cancel')}</button>

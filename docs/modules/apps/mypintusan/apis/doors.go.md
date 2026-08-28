@@ -71,6 +71,15 @@ an interface specifically so the HTTP layer cannot reach an `osdp.Bus` or a
   no fail-open policy in this product, and the handler says so explicitly rather than coercing an
   unrecognised value to `cached`. A negative `offlineTtlSeconds` is refused too. Reachable only at
   creation, same as `RequireSecureChannel` above — there is still no `PUT /api/doors`.
+- `SiteId` is accepted on the request struct for the same class of reason, and the consumer is the
+  HOLIDAY CALENDAR. `SQLStore.HolidayOn` (`services/store_sql.go.md`) prefers a `Holiday` row
+  matching the door's `SiteId` over a global (`SiteId = 0`) one — the entire reason `Holiday` is
+  its own entity, since Malaysian public holidays vary BY STATE and a customer with offices in two
+  states genuinely needs both calendars — and `store_sql_test.go` tests that precedence with
+  `SiteId 5`. No request shape ever put a site on a door, so every door on every install was at
+  site 0, the site branch could not match, and a site-scoped holiday closed nothing anywhere.
+  A negative value is refused; `0` still means "follow the global calendar", which is right for the
+  single-site appliance this mostly ships as. Reachable only at creation, like its neighbours.
 - `unlock` — reads the acting `LocalUser` from context (never from the request body — an
   attacker-supplied actor name in the audit log next to a door opening would be worse than no
   name at all, it would be a forged record), resolves the door, then calls `rt.Unlock`. A

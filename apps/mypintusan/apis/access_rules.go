@@ -324,7 +324,7 @@ func (a *accessRulesApi) listSchedules(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *accessRulesApi) createSchedule(w http.ResponseWriter, r *http.Request) {
-	actorId, _, ok := requireAdmin(w, r)
+	actorId, actor, ok := requireAdmin(w, r)
 	if !ok {
 		return
 	}
@@ -358,10 +358,23 @@ func (a *accessRulesApi) createSchedule(w http.ResponseWriter, r *http.Request) 
 			controllers.SendError(w, controllers.ErrBadRequest, "weekday must be 0 (Sunday) to 6 (Saturday)")
 			return
 		}
-		// EndMin <= StartMin is VALID — it wraps past midnight (the night shift). Only the raw
-		// bounds are checked here.
-		if win.StartMin < 0 || win.StartMin > 1440 || win.EndMin < 0 || win.EndMin > 1440 {
-			controllers.SendError(w, controllers.ErrBadRequest, "window minutes must be between 0 and 1440")
+		// EndMin < StartMin is VALID — it wraps past midnight (the night shift).
+		if win.StartMin < 0 || win.StartMin > 1439 || win.EndMin < 0 || win.EndMin > 1440 {
+			controllers.SendError(w, controllers.ErrBadRequest,
+				"window minutes must be between 0 and 1440, and a window cannot start at 24:00")
+			return
+		}
+		// A ZERO-LENGTH WINDOW IS THE ONE WAY A SCHEDULE CAN FAIL OPEN, so it is refused here
+		// rather than stored and interpreted. `windowCovers` treats end-before-start as the night
+		// shift; end EQUAL to start used to land in that same branch and matched every minute of
+		// every day. Two ways to arrive at one: a slip on the schedules screen, and — far more
+		// likely — a client sending field names this handler does not read, so every window arrives
+		// as 0–0 while the "a schedule needs a window" guard above happily passes. Measured live:
+		// such a schedule opened a door at 02:51 that was meant to be shut until 09:00.
+		if win.StartMin == win.EndMin {
+			controllers.SendError(w, controllers.ErrBadRequest,
+				"a window cannot end at the same minute it starts; for round-the-clock access use "+
+					"the 24/7 flag, and for an overnight shift give the real end time (22:00 to 06:00)")
 			return
 		}
 	}
@@ -389,7 +402,30 @@ func (a *accessRulesApi) createSchedule(w http.ResponseWriter, r *http.Request) 
 		row.Id = int64(wid)
 		out.Windows = append(out.Windows, row)
 	}
+	a.ruleChanged(r.Context(), actor, fmt.Sprintf("schedule %q created (%s)",
+		sched.Name, describeSchedule(sched, out.Windows)))
 	controllers.SendResult(w, out, "succeed")
+}
+
+// describeSchedule renders a schedule for the audit line, because "schedule created" without its
+// hours says nothing that would let anyone spot a mistake afterwards.
+func describeSchedule(s entities.Schedule, windows []entities.ScheduleWindow) string {
+	if s.Always {
+		return "24/7"
+	}
+	parts := make([]string, 0, len(windows))
+	for _, w := range windows {
+		parts = append(parts, fmt.Sprintf("%s %02d:%02d-%02d:%02d", weekdayName(w.Weekday),
+			w.StartMin/60, w.StartMin%60, w.EndMin/60, w.EndMin%60))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func weekdayName(d int) string {
+	if d < 0 || d > 6 {
+		return "?"
+	}
+	return time.Weekday(d).String()[:3]
 }
 
 func (a *accessRulesApi) deleteSchedule(w http.ResponseWriter, r *http.Request) {
@@ -436,8 +472,15 @@ func (a *accessRulesApi) listHolidays(w http.ResponseWriter, r *http.Request) {
 	controllers.SendResult(w, map[string]any{"items": rows, "total": total}, "succeed")
 }
 
+// createHoliday adds a day to the calendar.
+//
+// A HOLIDAY IS THE ONLY RULE CHANGE THAT SHUTS A BUILDING WITHOUT ANYBODY TOUCHING A GRANT. One row
+// here can deny every holder at every door on the site for a whole day — including a 24/7 schedule,
+// because `scheduleAllows` consults the calendar ABOVE the always-on short circuit. That is why it
+// is audited like a grant edit: the access log records DECISIONS, and `access.rule-change` is the
+// only record this app keeps of who decided them.
 func (a *accessRulesApi) createHoliday(w http.ResponseWriter, r *http.Request) {
-	actorId, _, ok := requireAdmin(w, r)
+	actorId, actor, ok := requireAdmin(w, r)
 	if !ok {
 		return
 	}
@@ -477,15 +520,22 @@ func (a *accessRulesApi) createHoliday(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.Id = int64(id)
+	a.ruleChanged(r.Context(), actor, fmt.Sprintf("holiday %q added on %s (%s)",
+		h.Name, h.Date, h.Behaviour))
 	controllers.SendResult(w, h, "succeed")
 }
 
+// deleteHoliday removes a day from the calendar — which REOPENS the building on it. Audited for the
+// same reason the create is, and arguably more: closing a site early is embarrassing, and opening
+// one that was meant to be shut is the incident.
 func (a *accessRulesApi) deleteHoliday(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := requireAdmin(w, r); !ok {
+	_, actor, ok := requireAdmin(w, r)
+	if !ok {
 		return
 	}
 	id := pathID(r, "id")
-	if h, err := a.holidays.GetById(r.Context(), "", uint64(id)); err != nil || h == nil {
+	h, err := a.holidays.GetById(r.Context(), "", uint64(id))
+	if err != nil || h == nil {
 		controllers.SendError(w, controllers.ErrNotFound, "no such holiday")
 		return
 	}
@@ -493,6 +543,7 @@ func (a *accessRulesApi) deleteHoliday(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
+	a.ruleChanged(r.Context(), actor, fmt.Sprintf("holiday %q on %s removed", h.Name, h.Date))
 	controllers.SendResult(w, map[string]any{"deleted": true}, "succeed")
 }
 

@@ -57,8 +57,15 @@ moment setup finishes. A new admin-only "Access rules" screen
 (`apps/mypintusan/views/react-webpack/src/views/Access.js`) lets an operator manage all three
 afterwards. See `docs/modules/apps/mypintusan/apis/access_rules.go.md` for the endpoint-level
 detail, including the validation rules (a schedule needs either `always` or ≥1 window; a window's
-`EndMin <= StartMin` is valid and means an overnight/night-shift wrap; deleting a group or
-schedule still in use by a grant is refused).
+`EndMin < StartMin` is valid and means an overnight/night-shift wrap, while `EndMin == StartMin` is
+**refused** — see §5.6; deleting a group or schedule still in use by a grant is refused).
+
+**The holiday calendar now has a screen.** It had an API, a decision gate, a denial reason
+translated into four languages and client functions in `lib/access.js` — and nothing ever called
+them, so the calendar was empty on every install and the branch of `scheduleAllows` that reads it
+could not run. `Access.js` gained a Holidays section (admin-only, `deny` by default, audited as a
+rule change like a grant edit). Site-scoped calendars (`Holiday.SiteId`) remain API-only: a door is
+placed at a site through `siteId` on `POST /api/doors`, and there is still no doors-admin screen.
 
 **Still not there**: no reader onboarding beyond the wizard's single reader (no bus discovery, no
 SCBK rekey from the UI). `Controller.ContactChanged` exists as a seam but nothing calls it (no myiotsan
@@ -435,6 +442,46 @@ Needs both `ReaderInId` and `ReaderOutId` populated. Two modes:
   flaky contact locks out your entire staff on day one.
 - **Hard** — deny. Reserve for `critical` doors, and always pair with a scheduled midnight
   reset so one missed exit swipe does not permanently strand someone.
+
+### 5.6 Schedules, holidays and the site clock
+
+Step 6 above is the only check whose answer changes with nobody touching the system, and every part
+of it is **site-local**. `Snapshot.Location` carries the site's zone into the decision, the holiday
+calendar is looked up on the site's calendar date rather than the server's, and a window whose end
+is before its start wraps past midnight — 22:00–06:00 is one window, and the wrapped tail belongs
+to the FOLLOWING day, so a Friday 22:00–06:00 window also covers Saturday 02:00. A naive
+`start <= now <= end` denies every night-shift holder for the whole of their shift.
+
+Three rules that are not obvious from the structs, each found by live-benching the running
+appliance (`tools/fleetbench/bench_pintusan_schedules.py`, 29 checks):
+
+- **A window cannot end at the minute it starts.** `EndMin == StartMin` used to fall into the
+  wrapping branch, where "after the start" is true from the first minute of the day and the
+  previous day's tail catches the rest — so 09:00–09:00 matched every hour of every day while the
+  schedules screen labelled it "overnight". **This is the only way GATE 8 can fail open**, and it
+  is not a hypothetical: a client that sends field names the API does not read has every window
+  arrive as 0–0, which is exactly what four of this app's own bench scripts did. `POST
+  /api/schedules` now refuses one, and `windowCovers` treats a stored one as covering nothing so
+  rows already written on an install cannot open a door.
+- **The site timezone applies live.** It is the first thing the setup wizard asks for, on a
+  controller that is already running, so "it takes effect on the next restart" meant every fresh
+  install evaluated its schedules and holidays in whatever zone `config.json` seeded — UTC on an
+  appliance — until somebody power-cycled it. `ControllerConfig.Location` is now a function the
+  decision path calls per badge, and `runtime.ApplySettings` swaps it on a settings save. The bus
+  list, the reader keys and the tick remain boot-only: re-reading those means tearing down every
+  segment on the site, and the Settings screen's restart note now names only those.
+- **A holiday is scoped by site, and a door has to be at one.** `HolidayOn` prefers a row matching
+  the door's `SiteId` over a global (`SiteId = 0`) row — the reason `Holiday` is its own entity —
+  but no request shape ever put a site on a door, so every door was at site 0 and a site-scoped
+  holiday closed nothing anywhere. `siteId` is now accepted on `POST /api/doors`; 0 still means
+  "follow the global calendar", which is right for the single-site appliance this mostly ships as.
+
+Holiday behaviour is consulted **above** the 24/7 short circuit: a `deny` holiday closes a door
+whose schedule is `Always`, because the calendar exists precisely to shut a building on days
+nobody is meant to be in it. `follow-sunday` rewrites the weekday before the windows are read;
+`ignore` leaves the day ordinary. Creating or removing a holiday is published as an
+`access.rule-change` notification — it is the one rule change that closes (or reopens) every door
+on a site without anybody editing a grant.
 
 ---
 

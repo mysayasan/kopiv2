@@ -67,7 +67,7 @@ READER_ADDR = 1
 SITE_KEY = "a0a1a2a3a4a5a6a7b0b1b2b3b4b5b6b7"
 
 
-def app_config(reader_scbk=None, reader_requires_sc=False, offline=False):
+def app_config(reader_scbk=None, reader_requires_sc=False, offline=False, timezone="UTC"):
     """The app's config for one boot.
 
     reader_scbk / reader_requires_sc are parameters because **buses are seeded from config on
@@ -87,7 +87,12 @@ def app_config(reader_scbk=None, reader_requires_sc=False, offline=False):
     cfg["pairing"]["enabled"] = False
     cfg["access"] = dict(cfg.get("access") or {})
     cfg["access"].update({
-        "timezone": "UTC",       # so a bench asserting "outside the schedule" is not fighting an offset
+        # The SITE timezone, and a parameter for the same reason the reader key is one: it is
+        # read ONCE at boot, and no settings save carries it into a running controller. It is
+        # also the only lever a bench has on the clock. Schedules and holidays are evaluated in
+        # site-local time, and a bench cannot wait until 02:00 to ask whether 02:00 is inside a
+        # 22:00-06:00 window — so it picks a zone in which the wall clock is already there.
+        "timezone": timezone,
         "tickSeconds": 1,
         "pinWindowSeconds": 15,
         "offline": bool(offline),
@@ -236,7 +241,8 @@ def admin():
     return c
 
 
-def boot(reader_scbk=None, reader_requires_sc=False, build_app=True, offline=False):
+def boot(reader_scbk=None, reader_requires_sc=False, build_app=True, offline=False,
+         timezone="UTC"):
     """Tear down and stand up a FRESH app with the given bus config, returning when it serves.
 
     Fresh every time, deliberately: the data dir carries the seeded bus, so reusing it would
@@ -256,7 +262,7 @@ def boot(reader_scbk=None, reader_requires_sc=False, build_app=True, offline=Fal
 
     write(os.path.join(data, "config.json"),
           app_config(reader_scbk=reader_scbk, reader_requires_sc=reader_requires_sc,
-                     offline=offline))
+                     offline=offline, timezone=timezone))
     start_app()
     if not wait_up(BASE + "/api/auth/config", timeout=180):
         print(sh("docker", "logs", "--tail", "40", NAME, check=False))

@@ -305,7 +305,7 @@ func newRigWithStore(t *testing.T, data Store, cfg ControllerConfig) *rig {
 
 	cfg.BusPort = testPort
 	if cfg.Location == nil {
-		cfg.Location = kl
+		cfg.Location = func() *time.Location { return kl }
 	}
 	if cfg.Now == nil {
 		cfg.Now = func() time.Time { return time.Date(2026, 8, 4, 10, 0, 0, 0, kl) }

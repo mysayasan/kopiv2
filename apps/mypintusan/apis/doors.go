@@ -98,6 +98,16 @@ type createDoorRequest struct {
 	Name          string `json:"name"`
 	Class         string `json:"class"`
 	UnlockSeconds int    `json:"unlockSeconds"`
+	// SiteId places the door on myseliasan's site tree, and it is accepted here because the HOLIDAY
+	// CALENDAR reads it. `Holiday.SiteId` scopes a calendar to one site — the entity's own comment
+	// explains why ("Malaysian public holidays vary BY STATE … a site with offices in two states
+	// needs two"), `HolidayOn` implements the precedence and `store_sql_test.go` tests it with
+	// SiteId 5. But no request shape ever carried a site onto a door, so every door on every
+	// install was at site 0, `HolidayOn`'s site branch could not match, and a site-scoped holiday
+	// closed nothing anywhere. Measured live: a deny holiday scoped to the door's own site let the
+	// badge straight through. Same shape as the offline policy before it, and it matters for the
+	// same reason — there is no PUT /api/doors, so a door is born with its placement for good.
+	SiteId int64 `json:"siteId"`
 	// BusPort and OsdpAddress place the entry reader on a cable.
 	BusPort     string `json:"busPort"`
 	OsdpAddress int    `json:"osdpAddress"`
@@ -204,8 +214,16 @@ func (a *doorApi) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().Unix()
+	if body.SiteId < 0 {
+		controllers.SendError(w, controllers.ErrBadRequest, "the site id cannot be negative")
+		return
+	}
+
 	door := entities.Door{
 		Name: body.Name, Class: body.Class,
+		// 0 is "no site", and it is the right default for the single-site appliance this product
+		// mostly ships as: such a door follows the global holiday calendar.
+		SiteId:        body.SiteId,
 		LockKind:      entities.LockFailSecure,
 		UnlockSeconds: orDefault(body.UnlockSeconds, 5),
 		// The accessibility extension defaults to roughly triple the normal time; an operator can
