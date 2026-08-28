@@ -95,6 +95,11 @@ python tools/fleetbench/bench_iotsan_modbus.py       # does a WRITE reach the wi
 python tools/fleetbench/bench_iotsan_commands.py     # does a failed command STAY failed?
 python tools/fleetbench/bench_iotsan_flows.py        # can the JS in a flow escape, or starve the rest?
 python tools/fleetbench/bench_iotsan_telemetry.py    # the deadband gate + can the rows come back OUT?
+python tools/fleetbench/seed_iotsan_screens.py         # populated estate over the real broker + operator/viewer accts
+node   tools/fleetbench/uicheck_iotsan.js .artifacts/fleetbench en admin      # myiotsan's FIRST screen check (Part A + auto Part B)
+node   tools/fleetbench/uicheck_iotsan.js .artifacts/fleetbench ar admin      # Part A only, RTL (also ms, zh)
+node   tools/fleetbench/uicheck_iotsan.js .artifacts/fleetbench en operator   # Part A + auto Part C (screen OFFER vs server ALLOW)
+node   tools/fleetbench/uicheck_iotsan.js .artifacts/fleetbench en viewer     # Part A + auto Part C, the more-locked-down role
 ```
 
 `bench_idsan_lockout.py` is the only myidsan bench that stands up a **cluster**: a Postgres
@@ -677,6 +682,62 @@ of the SQLite file itself, not against the app's own claim about itself.
 app's live SQLite file (WAL/shm included, to avoid a torn read against a database the app holds
 open) into a scratch directory and queries it directly. Asking the app whether it stored something
 correctly is asking the accused to testify; this is the bench's own eyes on the table.
+
+## myiotsan — the first screen check
+
+Every bench of this app before now was an API bench. `uicheck_iotsan.js` is the first to drive its
+eleven screens in headless Chrome, seeded over the real MQTT broker (`seed_iotsan_screens.py` — a
+browser cannot speak MQTT) with a populated estate plus a real operator and a real viewer account,
+because a screen check run against an estate that silently failed to seed reports empty screens as
+broken ones. **PART A** sweeps all eleven nav sections per language and per role: renders, has a
+heading, leaks no dictionary key, fits its viewport, nav rail on screen, every enabled control
+hit-testable at its own centre. **PART B** (`uicheck_iotsan_partb.js`, auto-run for
+admin+English) drives real workflows — including actuation, the thing this app exists to do, and
+delete, last, because it removes what everything above needs — with real mouse and keyboard events
+and confirms the SERVER changed, not just the screen. **PART C** (`uicheck_iotsan_partc.js`,
+auto-run for operator/viewer) checks that what the screen OFFERS matches what the server ALLOWS,
+in both directions: a menu entry the server refuses is a dead end with no way to tell "not
+allowed" from "broken"; a capability the server allows and the nav hides is invisible to everyone
+including whoever granted the role. **114/114 with the fixes; 93/106 against the unfixed app**
+(locked-out roles attempt fewer checks because the device-stage checks are gated on being able to
+open a device).
+
+**Every non-admin was completely locked out, and no bench before this one could have seen it.**
+`POST /api/auth/login` succeeded for an operator or a viewer; `GET /api/auth/session` — the route
+the SPA asks on boot to learn who it is talking to — was absent from `services/rbac.go`'s
+deny-by-default catalog and answered `403`. `App.js` treated any non-OK answer as "nobody is
+signed in" and rendered the sign-in card, so signing in successfully led straight back to the
+sign-in card, forever, with no error anywhere. Every API bench this app has ever had ran as admin,
+which bypasses the matrix entirely — the one role that could never have found this. Fixed by
+adding `/api/auth/session` to the catalog as `read` for viewer and operator; existing installs
+pick it up on upgrade, since `EnsureApplianceRoles` adds missing catalog rows to already-configured
+roles.
+
+**A refusal rendered as an absence, twice.** The SPA now tells `403` apart from `401` on the
+session probe — a new `NoAccessScreen` ("you are signed in, but this account has not been granted
+access") replaces the login-card loop. And a viewer, correctly refused telemetry history, used to
+see the device Readings tab draw nine empty charts saying "No readings in this period" — the exact
+words a dead sensor would produce. `loadSeries` now carries `denied: r.status === 403`, the charts
+say "Your account cannot see reading history", and one banner explains it once above all nine
+rather than making the operator read the same lie nine times.
+
+**The Add-device form offered a protocol that has never had anywhere to go.** `PROTOCOLS =
+['mqtt', 'http']`, and grepping the whole repo finds no HTTP ingest route, ever. `Protocol` is read
+by no code — the broker admits on credentials, the Modbus poller reads the profile's transport —
+so a device created as `"http"` was provisioned, enabled, and permanently mute, with nothing
+anywhere reporting the mistake, and no way to correct it afterward (`UpdateDeviceRequest` has no
+`Protocol` field). The form now offers `mqtt` only; `services/device.go` gained a closed
+`supportedProtocols` set (`mqtt`, `modbus`) that `Create` refuses anything outside of, with a
+readable message. The `protocol.http` i18n key stays, deliberately, so an install with an existing
+such device still renders its label instead of the raw key.
+
+**Also proven good, precisely because nothing here needed a fix**: all eleven sections render in
+en/ms/zh/ar with no leaked dictionary keys and no unhittable controls; Arabic lays out RTL
+correctly with the nav rail on the right and nothing overflowing; actuation from the Control tab
+demands a confirmation stating the physical consequence, cancelling issues nothing, confirming
+produces exactly one `device_command` row attributed to the real user; a device with
+`actuationEnabled` off explains itself instead of offering a dead button; create/delete round-trip
+through the screen and reach the server.
 
 ## mypintusan — the first bench of the app that opens doors
 

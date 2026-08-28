@@ -1,6 +1,8 @@
 // zh locale dictionary. Code-split: loaded on demand except en.
 export default {
   'auth.subSignin': '登录传感器中枢',
+  'auth.subNoAccess': '该账户无法使用传感器中枢',
+  'auth.noAccessBody': '您已登录，但您的账户尚未获得使用此应用的权限。管理员可在“设置”中授予。',
   'auth.username': '用户名',
   'auth.password': '密码',
   'auth.signingIn': '正在登录…',
@@ -517,6 +519,8 @@ export default {
   'devices.readingsFailed': '无法加载读数。',
   'devices.noReadings': '该设备尚未上报任何数据。',
   'devices.noSeries': '此时间段内没有读数。',
+  'devices.historyNotPermitted': '您的账户无法查看读数历史。',
+  'devices.historyNotPermittedHint': '您可以查看每个测点的当前值，但看不到历史记录——这需要更高的角色权限。这是权限限制，而不是传感器无数据。',
   'devices.suspect': '超出合理范围',
   'devices.chartSubtitle': '最近 {range}',
   'devices.chartSubtitleUnit': '{unit} · 最近 {range}',

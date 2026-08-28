@@ -43,7 +43,18 @@ func Policy() []PolicyRule
 Returns the catalog, now including the P1/P2 device/telemetry/rules/notification surface added
 alongside the ingest spine:
 
-- Everyone signed in: `/api/auth/change-password`.
+- Everyone signed in: `/api/auth/change-password` and, **added 2026-08-28**,
+  `/api/auth/session` (Viewer: `read`, Operator: `read`) — "see who you are signed in as". This
+  route is what the SPA asks on boot to learn who it is talking to, and its absence from the
+  catalog (deny-by-default) meant every non-admin got `403` from it forever: `App.js` treated any
+  non-OK answer as "nobody is signed in" and rendered the login card, so an operator or viewer
+  signed in successfully and met the same card again, in an infinite loop with no error at any
+  layer. This is the exact failure the comment above this function already predicted ("a route
+  missing from this catalog is a route nobody can see they are not granting"); it went unnoticed
+  because every account anyone had tested with was an admin, and admin bypasses the matrix
+  entirely. `EnsureApplianceRoles` adds missing catalog rows to already-configured roles, so an
+  existing install picks this grant up on upgrade with no migration step. See
+  `tools/fleetbench/uicheck_iotsan.js` and `docs/MYIOTSAN_PLAN.md`'s fourth live-bench entry.
 - **Watching the estate** (viewer and operator both `read`): `/api/devices` (devices + their
   CURRENT readings), `/api/profiles`, `/api/rules`, `/api/alerts`, `/api/notifications`, and
   (home-automation) `/api/scenes` and `/api/schedules` — a viewer can see that a "Goodnight"

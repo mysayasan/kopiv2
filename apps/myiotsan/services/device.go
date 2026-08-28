@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -177,9 +178,13 @@ func (s *DeviceService) Create(ctx context.Context, req CreateDeviceRequest, act
 		return nil, fmt.Errorf("hash device password: %w", err)
 	}
 
-	protocol := strings.TrimSpace(req.Protocol)
+	protocol := strings.TrimSpace(strings.ToLower(req.Protocol))
 	if protocol == "" {
 		protocol = "mqtt"
+	}
+	if !supportedProtocols[protocol] {
+		return nil, fmt.Errorf("unsupported protocol %q: a device reaches this hub over %s",
+			req.Protocol, supportedProtocolList())
 	}
 	now := time.Now().Unix()
 	dev := entities.IotDevice{
@@ -390,6 +395,38 @@ func (s *DeviceService) MarkHealth(ctx context.Context, deviceId int64, health s
 	dev.Health = health
 	_, err = s.repo.UpdateById(ctx, "", *dev)
 	return err
+}
+
+// supportedProtocols is how a device can actually reach this hub, and it is a CLOSED SET on
+// purpose.
+//
+// `Protocol` is read by no code anywhere: the broker admits a device on its key and password,
+// and the Modbus poller decides to poll from its PROFILE's transport. So the field is a label —
+// which is exactly why it needs a guard. Nothing downstream would ever object to a value with no
+// transport behind it, and a device created with one is provisioned, enabled, admitted to the
+// broker if it knows its password, and permanently silent: no route accepts its data, no error
+// is raised anywhere, and `UpdateDeviceRequest` carries no Protocol field, so the mistake cannot
+// even be corrected afterwards. The Add-device form offered exactly such a value ("HTTP (the
+// device posts)") against an app that has never had an HTTP ingest route.
+//
+// Refusing at creation is the fail-closed half; the form no longer offering it is the other.
+// Existing rows are untouched — Update never writes this field — so an install that already
+// carries such a device keeps it, visible and correctable by deleting and re-adding.
+var supportedProtocols = map[string]bool{
+	// The embedded MQTT broker: the device dials in and publishes.
+	"mqtt": true,
+	// A polled device: the hub dials OUT to it. Which registers, and whether it is polled at
+	// all, comes from the profile's transport — this only records what kind of thing it is.
+	"modbus": true,
+}
+
+func supportedProtocolList() string {
+	names := make([]string, 0, len(supportedProtocols))
+	for name := range supportedProtocols {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return strings.Join(names, " or ")
 }
 
 // generatePassword mints a device credential with real entropy.

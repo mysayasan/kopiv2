@@ -51,8 +51,12 @@ construction (the runtime is built later in `app.go`) and before the broker star
 is missed. A nil runtime means the flow engine is simply not consulted. See
 `services/flow_runtime.go.md`.
 
-`Handle` satisfies `mqtt.MessageHandler` and is also the entry point future HTTP ingest would
-call, so a device that cannot speak MQTT gets the same pipeline behind it.
+`Handle` satisfies `mqtt.MessageHandler` and is the ONLY way a pushed payload enters this
+pipeline. **Corrected, 2026-08-28**: the comment used to claim it was "also the entry point for
+the HTTP ingest route" — there has never been such a route, verified exhaustively — and the
+Add-device form's now-removed `"http"` protocol option traded on exactly that claim reading true.
+If HTTP ingest is ever built it arrives here; until then a device speaks MQTT to the broker, or is
+polled (`HandlePolled`, below). See `services/device.go.md`'s protocol guard.
 
 **THE QUARANTINE is the very first thing `Handle` checks**, before anything else: if
 `p.Enrolling`, the payload is handed to `enroll.Observe` (recorded as a `DiscoveredDevice`

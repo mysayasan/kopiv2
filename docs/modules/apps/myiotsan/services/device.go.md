@@ -23,7 +23,9 @@ CRUD plus the authenticator surface, on `dbsql.IGenericRepo[entities.IotDevice]`
   **generated** (`generatePassword`, 24 bytes of crypto/rand, base64) and returned exactly once
   in the response — the same reasoning as the app's own bootstrap admin: a shipped or defaulted
   device password is a fleet-wide backdoor. The plaintext is never stored; only its bcrypt hash
-  is.
+  is. `Protocol` (lower-cased, trimmed, defaults to `"mqtt"`) is checked against
+  `supportedProtocols` and refused with a readable message if it names anything else — see
+  "The protocol guard" below.
 - `Update(ctx, id, UpdateDeviceRequest, actor)` — no `Password` field by design: rotating a
   credential is its own endpoint (`RotatePassword`), so an ordinary edit cannot silently change
   one.
@@ -72,6 +74,22 @@ CRUD plus the authenticator surface, on `dbsql.IGenericRepo[entities.IotDevice]`
   faithfully reporting an unchanged value is alive, and gating liveness behind the deadband
   would make a stable sensor look dead.
 - `MarkHealth(ctx, deviceId, health)` — used by the offline sweep.
+
+## The protocol guard
+
+`supportedProtocols` (`map[string]bool{"mqtt": true, "modbus": true}`) and
+`supportedProtocolList()` (sorted, human-readable, e.g. `"modbus or mqtt"`) are a CLOSED SET on
+purpose. `Protocol` is read by no code anywhere — the broker admits a device on its `DeviceKey`
+and password, and `ModbusPoller` decides to poll a device from its **profile's** `Transport`, not
+from this field — so nothing downstream would ever object to an unsupported value, and a device
+created with one is provisioned, enabled, admitted to the broker if it knows its password, and
+**permanently silent**: no route accepts its data, no error is raised anywhere, and
+`UpdateDeviceRequest` carries no `Protocol` field, so the mistake cannot even be corrected
+afterward. This is exactly what the Add-device form's now-removed `"http"` option produced — this
+app has never had an HTTP ingest route. `Create` is the fail-closed half of the fix; the form
+offering `mqtt` only is the other. Existing rows are untouched (`Update` never writes this field),
+so an install that already carries an `"http"` device keeps it, visible and correctable by
+deleting and re-adding. Covered by `services/device_test.go.md`.
 
 ## Notes
 

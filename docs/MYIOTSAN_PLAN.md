@@ -1426,6 +1426,72 @@ solar system once, deploy many" grouping on top. The two are complementary, not 
 future workspace instance could reasonably generate/instantiate a flow from its template rather
 than replace the engine underneath it.
 
+### Hardened, 2026-08-28, by the fourth live bench of this app (the first screen check)
+
+Every bench of this app before now was an API bench. `tools/fleetbench/uicheck_iotsan.js` is the
+first to drive myiotsan's screens in headless Chrome, seeded over the real MQTT broker
+(`seed_iotsan_screens.py` — a browser cannot speak MQTT) with a populated estate plus an operator
+and a viewer account, since a screen check run against an estate that silently failed to seed
+reports empty screens as broken ones. **PART A** sweeps all eleven nav sections per language:
+renders, has a heading, leaks no dictionary key, fits its viewport, nav rail on screen, every
+enabled control hit-testable at its own centre. **PART B**
+(`uicheck_iotsan_partb.js`, admin/English) drives real workflows with real mouse and keyboard
+events and confirms the SERVER changed. **PART C** (`uicheck_iotsan_partc.js`, operator and
+viewer) checks that what the screen OFFERS matches what the server ALLOWS in both directions —
+the check the previous three benches, all API-only, could not have written, because "the screen
+offers a control" and "the server would refuse it" are both true at once exactly when an account
+is locked out at a layer neither side reports as an error. **114/114 with the fixes; 93/106
+against the unfixed app** (locked-out roles attempt fewer checks because the device-stage checks
+are gated on being able to open a device).
+
+**Every non-admin was completely locked out of the UI.** `POST /api/auth/login` succeeds for an
+operator or a viewer, but `GET /api/auth/session` — the endpoint the SPA asks on boot to learn who
+it is talking to — was ABSENT from `services/rbac.go`'s deny-by-default catalog, so it answered
+`403`. `App.js` treated any non-OK answer as "nobody is signed in" and rendered the sign-in card.
+The user signs in, succeeds, and gets the login card again, forever, with no error at any layer.
+`rbac.go`'s own comment predicted exactly this ("a route missing from this catalog is a route
+nobody can see they are not granting"); it went unnoticed because every account anyone had tested
+with was an admin, and an admin bypasses the matrix entirely. Fixed by adding
+`/api/auth/session` to the catalog as `read` for viewer and operator — existing installs pick it
+up on upgrade, since `EnsureApplianceRoles` adds missing catalog rows to already-configured roles.
+
+**A refusal was rendered as an absence, twice.** (a) The SPA now distinguishes `403` from `401`: a
+new `authState === 'noaccess'` renders a new `NoAccessScreen` ("you are signed in, but this
+account has not been granted access") instead of looping the login card. (b) A viewer is
+correctly refused telemetry HISTORY (`rbac.go`: a viewer sees current readings but not the
+historical record) — but the device Readings tab rendered nine empty charts saying "No readings in
+this period", telling the operator the sensors were silent when the truth was they were not
+allowed to look. `loadSeries` now carries `denied: r.status === 403`, the charts say "Your account
+cannot see reading history", and a banner explains it once above all of them rather than nine
+times.
+
+**The Add-device form offered a protocol the app cannot receive.** `PROTOCOLS = ['mqtt', 'http']`
+with the label "HTTP (the device posts)", and this app has never had an HTTP ingest route anywhere
+in the repo — verified exhaustively. `Protocol` is read by no code (the broker admits on
+credentials; the Modbus poller decides from the profile's transport), nothing validated it, and
+`UpdateDeviceRequest` has no `Protocol` field, so a device created as `"http"` is provisioned,
+enabled, permanently mute, and not even correctable afterward. Fixed on both sides: the form now
+offers `mqtt` only, and `services/device.go` gained a closed `supportedProtocols` set (`mqtt`,
+`modbus`) that `Create` checks and refuses anything else against, with a readable message. The
+`entities/iot_device.go` field comment and the false `services/ingest.go` comment claiming
+`Handle` was "also the entry point for the HTTP ingest route" are both corrected. The
+`protocol.http` i18n key is deliberately KEPT so an install that already has such a device still
+renders its label instead of printing the raw key. New unit tests in
+`apps/myiotsan/services/device_test.go`.
+
+**Also proven good, and worth recording precisely because nothing here needed a fix**: all eleven
+sections render in en/ms/zh/ar with no leaked dictionary keys and no unhittable controls; Arabic
+lays out RTL correctly with the nav rail on the right and nothing overflowing; actuation from the
+Control tab demands a confirmation that states the physical consequence, cancelling issues
+nothing, confirming produces exactly one `device_command` row attributed to the real user; a
+device with `actuationEnabled` off explains itself rather than offering a dead button; create/
+delete round-trip through the screen and reach the server.
+
+See `apps/myiotsan/services/rbac.go.md`, `apps/myiotsan/services/device.go.md`,
+`apps/myiotsan/entities/iot_device.go.md`, and `apps/myiotsan/services/ingest.go.md` for the
+file-level detail; `apps/myiotsan/README.md`'s "Role model" section for the operator-facing
+summary.
+
 ## 9. Known risks
 
 | Risk | Mitigation |

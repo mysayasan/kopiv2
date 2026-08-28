@@ -129,7 +129,13 @@ out (OPC-UA discovery, Profinet DCP, a Matter controller, native TV/AV control) 
    `profileId` pointing at its device type, and optionally a `password`. Leave the password
    empty and the app **generates** one with real entropy and returns it exactly once in the
    response — nowhere else, ever. There is no default or shipped device password: a shared one
-   would be a fleet-wide backdoor the moment it leaked.
+   would be a fleet-wide backdoor the moment it leaked. `protocol` defaults to `mqtt` and is
+   checked against a closed set (`mqtt`, `modbus`) — it is a label describing how the device
+   reaches this hub, not something any code branches on, so an unsupported value is refused
+   outright rather than silently accepted and left permanently unreachable. The Add-device
+   screen offers `mqtt` only; an install with an older `"http"`-protocol device (a value the
+   form used to offer, for a route this app has never had) still renders it correctly, just
+   cannot create another.
 2. **Point the device at the broker** — MQTT, plaintext, port **1883** (`mqtt.addr` in config,
    default `0.0.0.0:1883`). Client id = the device's `deviceKey`. Username/password = the
    `deviceKey`/generated password. The device's own inventory row **is** its credential record:
@@ -490,6 +496,18 @@ Three roles, drawing the same line mymatasan draws — **can this person destroy
 - `operator` — + review telemetry history, acknowledge alerts. Cannot actuate a device, delete
   readings, or change rules and settings.
 - `admin` — everything.
+
+**`GET /api/auth/session` is granted to viewer and operator too** (added 2026-08-28, alongside
+this app's first screen check, `tools/fleetbench/uicheck_iotsan.js`) — it is the route the SPA
+asks on boot to learn who it is signed in as, and its earlier absence from the catalog meant every
+non-admin was refused it and looped forever on the sign-in card, since the app could not tell the
+difference between "not signed in" and "signed in but not permitted". The SPA now distinguishes
+the two: a `403` from the session probe renders a dedicated "you are signed in, but this account
+has not been granted access" screen with a sign-out button, instead of the login card. The same
+distinction applies on the device Readings tab — a viewer legitimately gets `403` from
+`/api/devices/{id}/readings` (history is operator-and-up only), and the charts now say so
+explicitly ("Your account cannot see reading history") rather than showing nine empty charts that
+read as a dead device.
 
 myiotsan draws a **second** line mymatasan does not need: actuation (writing to a device, e.g.
 a relay) is admin-only, because a bad write to a physical device is dangerous in a way a bad

@@ -7,7 +7,7 @@ import { ToastStack, LangProvider, normalizeLang, LanguageDropdown, AppFooter } 
 import { FormBusyOverlay, ThemeDropdown } from './components/ui';
 import { DashboardPage, DevicesHome, RulesPage, AlertsPage, NotificationsPage, ProfilesPage, ScenesPage, SchedulesPage, FlowsPage, KbPage, SettingsPage } from './components/pages';
 import { FirstRunWizard } from './components/onboarding';
-import { LoginScreen, ChangePasswordScreen } from './components/auth_screens';
+import { LoginScreen, ChangePasswordScreen, NoAccessScreen } from './components/auth_screens';
 import { api, apiBase } from './lib/helpers';
 import { enBundle, loadLocaleDict } from './i18n';
 
@@ -57,14 +57,19 @@ function AppInner({ lang, onLangChange }) {
   }
 
   async function loadSession() {
-    const r = await api('/api/auth/session').catch(() => ({ ok: false }));
+    const r = await api('/api/auth/session').catch(() => ({ ok: false, status: 0 }));
     if (r.ok && r.body) {
       setSession(r.body);
       setAuthState(r.body.mustChangePassword ? 'mustchange' : 'ready');
-    } else {
-      setSession(null);
-      setAuthState('anon');
+      return;
     }
+    setSession(null);
+    // A REFUSAL IS NOT AN ABSENCE. 403 means "you are signed in and may not do this"; folding it
+    // into 'anon' renders the sign-in card to somebody who has just signed in, who then signs in
+    // again and meets the same card — an infinite loop with no error reported anywhere. Every
+    // non-admin account hit exactly that, because the session probe was missing from the
+    // permission catalog and the matrix is deny-by-default.
+    setAuthState(r.status === 403 ? 'noaccess' : 'anon');
   }
   useEffect(() => { loadSession(); /* eslint-disable-next-line */ }, []);
 
@@ -119,6 +124,9 @@ function AppInner({ lang, onLangChange }) {
   // header, which the user cannot reach until they are signed in.
   if (authState === 'anon') {
     return <LoginScreen onLoggedIn={loadSession} lang={lang} onLangChange={onLangChange} />;
+  }
+  if (authState === 'noaccess') {
+    return <NoAccessScreen onLogout={logout} lang={lang} onLangChange={onLangChange} />;
   }
   if (authState === 'mustchange') {
     return <ChangePasswordScreen onDone={loadSession} onToast={pushToast} onLogout={logout} lang={lang} onLangChange={onLangChange} />;

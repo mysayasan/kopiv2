@@ -5,7 +5,15 @@ import { api, errorMessage, formatAgo, formatClock, formatNumber, formatTimestam
 import { CheckRow, ConfirmModal, CopyButton, EmptyState, Field, FormBusyOverlay, HealthPill, Modal, Panel } from './ui';
 import { DeviceControl } from './commands';
 
-const PROTOCOLS = ['mqtt', 'http'];
+// What a NEW device can be created as. 'http' was offered here for a long time and there has
+// never been an HTTP ingest route to receive it — the resulting device is provisioned, enabled
+// and permanently mute, with nothing anywhere reporting the mistake. The server refuses it now
+// too (services/device.go supportedProtocols); this is the half that stops anyone asking.
+//
+// `protocol.http` stays in the dictionaries deliberately: an install that already has such a
+// device still has to render its label on the device's own Settings tab, and dropping the key
+// would print the raw "protocol.http" at the user instead.
+const PROTOCOLS = ['mqtt'];
 
 // RANGES are the chart lookbacks, in seconds. A sensor estate is read at two very
 // different zooms — "what is it doing right now" and "did it drift over the week" — so
@@ -453,6 +461,12 @@ function DeviceReadings({ device }) {
         items: r.ok ? (r.body?.items || []) : [],
         span: r.ok ? (r.body?.span || 'raw') : 'raw',
         truncated: r.ok ? Boolean(r.body?.truncated) : false,
+        // A REFUSAL IS NOT AN ABSENCE. A viewer may see current values but not the historical
+        // record, so this request is legitimately 403 for them — and rendering that as "no
+        // readings in this period" tells the operator the sensors are silent when the truth is
+        // that they are not allowed to look. The two are indistinguishable on screen, and the
+        // one that is a hardware emergency is the one they would ignore.
+        denied: r.status === 403,
       }];
     }));
     setSeries(Object.fromEntries(results));
@@ -486,6 +500,10 @@ function DeviceReadings({ device }) {
 
   const latestKeys = Object.keys(latest);
   const withDate = rangeSecs > 24 * 3600;
+  // Refused for every key, not just one: that is a permission boundary rather than a gap in one
+  // series, and it deserves saying once at the top instead of nine times in nine empty charts.
+  const seriesValues = Object.values(series);
+  const historyDenied = seriesValues.length > 0 && seriesValues.every((v) => v && v.denied);
 
   return (
     <div className="iot-readings">
@@ -540,6 +558,10 @@ function DeviceReadings({ device }) {
         </div>
       )}
 
+      {historyDenied ? (
+        <p className="settings-hint">{t('devices.historyNotPermittedHint')}</p>
+      ) : null}
+
       {chartKeys
         .filter((k) => k.dataType !== 'string')
         .map((k) => {
@@ -566,7 +588,7 @@ function DeviceReadings({ device }) {
                 points={points}
                 unit={k.unit || ''}
                 formatX={(ms) => formatClock(ms, withDate)}
-                emptyText={t('devices.noSeries')}
+                emptyText={got.denied ? t('devices.historyNotPermitted') : t('devices.noSeries')}
               />
             </ChartCard>
           );

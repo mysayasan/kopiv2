@@ -71,6 +71,32 @@ export function LoginScreen({ onLoggedIn, lang, onLangChange }) {
   );
 }
 
+// NoAccessScreen is what a signed-in account sees when the server will not tell it who it is.
+//
+// It exists because the alternative is a LIE THAT LOOPS. The shell decides between "signed in"
+// and "signed out" from one probe, and a probe that is REFUSED is not the same as a probe that
+// says nobody is here — but folding them together renders the sign-in card to somebody who has
+// just signed in successfully. They retype the password, succeed again, and meet the same card:
+// an infinite loop with no error anywhere, on either side of the wire. That really shipped, for
+// every non-admin account this app has ever had.
+//
+// So a refusal gets its own screen, and it says the true thing: you are signed in, and this
+// account is not permitted to use this application. It offers sign-out, because the one useful
+// action is to come back as somebody else.
+export function NoAccessScreen({ onLogout, lang, onLangChange }) {
+  const t = useT();
+  return (
+    <AuthShell subtitle={t('auth.subNoAccess')} lang={lang} onLangChange={onLangChange}>
+      <p className="login-note">{t('auth.noAccessBody')}</p>
+      <div className="login-form">
+        <button type="button" onClick={onLogout}>
+          <span className="btn-icon"><Ico n="logout" sz={14} /> {t('auth.logout')}</span>
+        </button>
+      </div>
+    </AuthShell>
+  );
+}
+
 // ChangePasswordScreen forces an account flagged must-change (the stock admin on first
 // login) to pick a new password before reaching the app.
 export function ChangePasswordScreen({ onDone, onToast, onLogout, lang, onLangChange }) {
