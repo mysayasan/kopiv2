@@ -121,9 +121,16 @@ var scenarios = map[string]scenario{
 		"reader goes silent after -fault-after (cut bus / dead PSU) — offline supervision + degraded alert",
 		func(c config) (*Bus, []func(*Bus)) {
 			b := NewBus(c.log, c.verbose, osdp.NewPD(1))
-			return b, []func(*Bus){after(c.faultAfter, "reader going silent", func(bus *Bus) {
-				bus.With(func(pds []*osdp.PD) { pds[0].Faults.Silent = true })
-			})}
+			// The card loop is what makes the silence MEAN something. Without a badge accepted
+			// before the fault, "no grant afterwards" is indistinguishable from a reader that was
+			// never in service at all, and a bench reading the second as the first passes while
+			// testing nothing.
+			return b, []func(*Bus){
+				cardLoop(c, 1),
+				after(c.faultAfter, "reader going silent", func(bus *Bus) {
+					bus.With(func(pds []*osdp.PD) { pds[0].Faults.Silent = true })
+				}),
+			}
 		},
 	},
 	"one-down": {
@@ -202,9 +209,37 @@ var scenarios = map[string]scenario{
 		"reader asserts tamper after -fault-after — LSTATR/RSTATR alarm path",
 		func(c config) (*Bus, []func(*Bus)) {
 			b := NewBus(c.log, c.verbose, osdp.NewPD(1))
-			return b, []func(*Bus){after(c.faultAfter, "tamper asserted", func(bus *Bus) {
-				bus.With(func(pds []*osdp.PD) { pds[0].Faults.Tamper = true })
+			// Badging throughout: a tamper alarm is only interesting on a reader that is otherwise
+			// working, and the grants either side of the fault are the proof that it was.
+			return b, []func(*Bus){
+				cardLoop(c, 1),
+				after(c.faultAfter, "tamper asserted", func(bus *Bus) {
+					bus.With(func(pds []*osdp.PD) { pds[0].Faults.Tamper = true })
+				}),
+			}
+		},
+	},
+	"contact-open": {
+		"door-position contact OPENS after -fault-after and stays open, with NO badge — the forced + held-open path",
+		func(c config) (*Bus, []func(*Bus)) {
+			b := NewBus(c.log, c.verbose, osdp.NewPD(1))
+			return b, []func(*Bus){after(c.faultAfter, "door contact opened", func(bus *Bus) {
+				bus.With(func(pds []*osdp.PD) { pds[0].Inputs[0] = true })
 			})}
+		},
+	},
+	"contact-cycle": {
+		"door-position contact opens after -fault-after and closes -card-every later — a normal entry, IF a grant shunts it",
+		func(c config) (*Bus, []func(*Bus)) {
+			b := NewBus(c.log, c.verbose, osdp.NewPD(1))
+			return b, []func(*Bus){
+				cardLoop(c, 1),
+				after(c.faultAfter, "door contact opened", func(bus *Bus) {
+					bus.With(func(pds []*osdp.PD) { pds[0].Inputs[0] = true })
+					time.Sleep(c.cardEvery)
+					bus.With(func(pds []*osdp.PD) { pds[0].Inputs[0] = false })
+				}),
+			}
 		},
 	},
 	"slow": {

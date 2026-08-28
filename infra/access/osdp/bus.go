@@ -70,6 +70,22 @@ type Options struct {
 	// of service several times a second and bury the audit log.
 	SecureRetryBackoff time.Duration
 	SecureRetryMax     time.Duration
+	// StatusInterval is how often an online reader is asked for its LOCAL STATUS (tamper, mains
+	// failure) and its INPUT STATUS (the door-position contact) instead of a bare poll.
+	//
+	// It has to exist at all because a PD volunteers neither. POLL is answered with ACK, or with a
+	// queued card read or keypad entry — never with a status change — so a CP that only ever polls
+	// learns nothing about the reader's enclosure being opened or the door being pushed. That was
+	// the state of this driver until it was benched: `tamper`, `door-forced` and `door-held-open`
+	// were declared, severity-mapped, titled and translated, and no condition on any site could
+	// have reached any of them.
+	//
+	// One second is a compromise between two real costs. Too slow and a door forced at 03:00 is
+	// reported a beat late; too fast and status frames crowd out card reads in the same slot
+	// budget, which is the one thing a reader's poll cadence must never do. At the default 50 ms
+	// slot on a three-reader bus each PD gets a slot roughly every 150 ms, so a 1 s status cadence
+	// spends under a tenth of the bus on supervision.
+	StatusInterval time.Duration
 	// EventBuffer sizes the event channel.
 	EventBuffer int
 	// Logf, when set, receives protocol-level diagnostics.
@@ -95,6 +111,9 @@ func (o Options) Defaults() Options {
 	}
 	if o.SecureRetryMax <= 0 {
 		o.SecureRetryMax = 30 * time.Second
+	}
+	if o.StatusInterval <= 0 {
+		o.StatusInterval = time.Second
 	}
 	if o.EventBuffer <= 0 {
 		o.EventBuffer = 256
@@ -454,7 +473,7 @@ func (b *Bus) transact(ctx context.Context, pd *pdState) {
 		}
 		frame, code, handshake = f, CmdChlng, true
 	default:
-		c, data := pd.nextCommand()
+		c, data := pd.nextCommand(time.Now(), b.opts.StatusInterval)
 		frame, code = &Frame{Address: pd.address, Code: byte(c), Data: data}, c
 	}
 	frame.Sequence = seq
@@ -611,6 +630,12 @@ func (b *Bus) checkSupervision(pd *pdState) {
 		pd.resetSeq = true
 		pd.info = PDInfo{}
 		pd.caps = nil
+		// Forget the last status reading with the identity. A reader that was tampered — or a door
+		// that was opened — while the reader was away must be reported when it comes back, and an
+		// edge-triggered emitter that still holds the pre-outage reading would swallow exactly
+		// that. Re-reporting a condition that never cleared is the safe direction to err.
+		pd.haveLocal, pd.haveInputs, pd.lastInputs = false, false, nil
+		pd.statusAt, pd.pollsSinceStatus = time.Time{}, 0
 	}
 	b.mu.Unlock()
 	if stale {
@@ -871,9 +896,38 @@ func (b *Bus) handleReply(pd *pdState, sent Command, seq uint8, f *Frame, operat
 		b.emit(Event{At: time.Now(), Address: pd.address, Kind: EventKeypad, Digits: digits})
 
 	case RplLStatR:
+		// Local status: the reader's own enclosure and its mains feed. Emitted on the EDGE, so a
+		// case that stays open reports once rather than once per status interval forever.
 		if len(f.Data) >= 2 {
-			b.emit(Event{At: time.Now(), Address: pd.address, Kind: EventStatus,
-				Tamper: f.Data[0] != 0, PowerFail: f.Data[1] != 0})
+			tamper, power := f.Data[0] != 0, f.Data[1] != 0
+			b.mu.Lock()
+			changed := !pd.haveLocal || tamper != pd.lastTamper || power != pd.lastPowerFail
+			pd.haveLocal, pd.lastTamper, pd.lastPowerFail = true, tamper, power
+			b.mu.Unlock()
+			if changed {
+				b.emit(Event{At: time.Now(), Address: pd.address, Kind: EventStatus,
+					Tamper: tamper, PowerFail: power})
+			}
+		}
+
+	case RplIStatR:
+		// Input status: the door-position contact, and whatever else the installer supervised.
+		//
+		// The FIRST reading is emitted even though nothing has changed yet, and that is
+		// deliberate. Suppressing it would mean a door already standing open when the controller
+		// starts is never reported at all — the held-open timer only runs on a door the machine
+		// believes is open — so the one case where a propped door survives a restart unnoticed is
+		// exactly the case the alarm exists for.
+		inputs := make([]bool, len(f.Data))
+		for i, v := range f.Data {
+			inputs[i] = v != 0
+		}
+		b.mu.Lock()
+		changed := !pd.haveInputs || !sameInputs(pd.lastInputs, inputs)
+		pd.haveInputs, pd.lastInputs = true, inputs
+		b.mu.Unlock()
+		if changed {
+			b.emit(Event{At: time.Now(), Address: pd.address, Kind: EventInput, Inputs: inputs})
 		}
 	}
 
@@ -896,6 +950,20 @@ func (b *Bus) handleReply(pd *pdState, sent Command, seq uint8, f *Frame, operat
 	b.mu.Unlock()
 
 	b.completePending(pd, f, nil)
+}
+
+// sameInputs reports whether two input readings are identical. A reader that gains or loses an
+// input between readings has changed by definition, so a length difference counts as a change.
+func sameInputs(a, b []bool) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // credentialsBlocked reports that this reader must not deliver credentials because its door

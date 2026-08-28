@@ -89,6 +89,7 @@ python tools/fleetbench/bench_myseliasan_lockout.py  # myseliasan's lockout — 
 python tools/fleetbench/pintusan_harness.py     # mypintusan + a REAL OSDP reader on the bus
 python tools/fleetbench/bench_pintusan_door.py  # does the door open for the right person?
 python tools/fleetbench/bench_pintusan_securechannel.py  # can a reader you cannot trust still open a door?
+python tools/fleetbench/bench_pintusan_alarms.py  # which of the six alarms can actually fire?
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o .artifacts/fleetbench/bin/myiotsan ./cmd/myiotsan
 python tools/fleetbench/iotsan_harness.py            # myiotsan + its EMBEDDED broker
 python tools/fleetbench/bench_iotsan_actuation.py    # does anything reach a relay off-path?
@@ -911,6 +912,78 @@ rule that is therefore unimplemented: such a reader "must be capped at `interior
 The direction of the error is the safe one — the app never claims a reader is rekeyed without
 evidence — but it cannot distinguish a factory-keyed reader from a properly keyed one, and no
 trust cap is applied.
+
+## mypintusan — which of the six alarms can actually fire
+
+`bench_pintusan_alarms.py`, **19/19** (9/19 against unfixed main). Item 2 of the mypintusan
+hardening register. `services/controller.go` declares six alarm kinds — `duress`, `tamper`,
+`reader-offline`, `secure-channel`, `door-forced`, `door-held-open` — and each has a severity, a
+headline written to be read at 3am on a phone, and a translation in four languages. That is what a
+declared alarm looks like from the inside, and none of it is evidence that the condition can ever
+reach it. This is the detector that found five dead audit constants on myidsan, pointed at the app
+that opens doors: take each constant and make the real condition happen.
+
+**Three of the six could not fire on any installation.** The cause was one missing thing on the
+wire. A PD answers `POLL` with an `ACK`, or with a queued card read or keypad entry — it **never
+volunteers a status change** — so `LSTAT` (tamper, mains) and `ISTAT` (the door-position contact)
+have to be scheduled by the CP, and nothing in `infra/access/osdp` ever sent either. Downstream of
+that hole everything existed and was unit-tested: the door state machine, `Controller.ContactChanged`,
+the forced and held-open events, the audit reasons, the CRITICAL severity on `door-forced`, and
+`TestBusTamperSurfaces`, which passed for the life of the driver by handing the bus an `LSTAT`
+itself. The alarms were reachable from a test and from nowhere else.
+
+- **`tamper` never fired.** Somebody opening a reader's enclosure — step one of getting at the
+  RS-485 pair that Secure Channel exists to protect — raised nothing.
+- **`door-forced` never fired.** A door opening with no grant and no exit request raised nothing.
+- **`door-held-open` never fired.** A door wedged open past its threshold raised nothing. This is
+  the commonest way a secure door stops being one.
+
+Fixed by giving the poll loop a supervision schedule (`Options.StatusInterval`, default 1s,
+`statusMillis` per bus in config), alternating `LSTAT` and `ISTAT`, skipping `ISTAT` on a reader
+whose PDCAP claims no inputs, and emitting both on the EDGE so a case left open reports once rather
+than once a second forever. `Controller` turns an input report into `ContactChanged` for the door
+bound to that reader — **input 0 is the door contact**, which is a convention the driver documents
+rather than something OSDP states.
+
+**A fourth defect, in the other half of an alarm: the reader list.** `Reader.TamperState` was
+written once as `ok` when the reader was enrolled and never again, and `LastSeenAt` was never
+written at all. Measured live: while the `reader-offline` alarm was firing correctly, the readers
+screen still said `tamperState: ok, lastSeenAt: 0`. The alarm woke somebody and the screen they
+opened lied to them. Now `Controller.markReader` persists what the bus observed, and `LastSeenAt`
+is deliberately **not** stamped when a reader is declared offline — it was last seen when it last
+answered, not when we gave up on it.
+
+**A defect this work introduced, and the existing suite caught.** The first version of the
+scheduler gated only on elapsed time. `TestBusOneReaderDownDoesNotTakeTheBus` went red, and the
+reason is worth keeping: a card is queued at the PD and handed over on a `POLL`, and every dead
+reader on a segment costs a full reply timeout — so a degraded bus can take longer to go round than
+the status interval, at which point **every single transaction is a status command and no badge is
+ever delivered**, while the bus looks up and supervision looks healthy. Supervision is now capped as
+a fraction of a reader's slots (one in four) as well as by time, pinned by
+`TestBusStatusNeverStarvesCardDelivery`.
+
+What the bench had to build to ask the question at all: `tools/osdp-sim`'s `tamper` and `silent`
+scenarios presented no card, so neither could establish that its reader was ever in service — the
+same defect `refuse-sc`/`no-sc`/`wrong-key` had in item 1, and both now badge. Door position had no
+scenario whatsoever, so `contact-open` and `contact-cycle` are new.
+
+The episode that matters most is the negative one. A forced-door alarm on every legitimate entry is
+worse than no alarm at all — it is the fastest way to teach a site to ignore the one alarm that
+means somebody is inside who should not be. But "no forced alarm" is also exactly what a contact
+that was never reported produces, so the episode sets the door's held-open threshold *below* how
+long the contact stays open: **`door-held-open` firing is the positive evidence that the opening
+reached the state machine**, and only then is the forced alarm's absence a statement about the
+shunt.
+
+Proven good and unchanged: `duress` fires at CRITICAL (re-run as the control for the whole
+notification path, so that "no alarm arrived" below it is never confusable with "the feed is
+broken"); `reader-offline` fires, and at WARNING rather than CRITICAL, which is the deliberate
+choice `alarm.go` argues for — paging on one flaky segment trains people to ignore alarms.
+
+**Still not built, and reported rather than papered over:** the `myiotsan` door-contact binding
+(`Door.ContactDeviceKey`). A site whose contacts terminate on a relay board rather than on the
+reader still has no forced or held-open detection. `Controller.RequestToExit` likewise has no
+caller, so a REX button wired to the reader does not shunt the alarm.
 
 ## `onvifsim.py` — a real ONVIF device, on demand
 

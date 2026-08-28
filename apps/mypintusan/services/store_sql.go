@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/mysayasan/kopiv2/apps/mypintusan/entities"
 	sharedentities "github.com/mysayasan/kopiv2/domain/entities"
@@ -321,6 +322,44 @@ func (s *SQLStore) HolidayOn(ctx context.Context, siteId int64, date string) (*e
 func (s *SQLStore) RecordEvent(ctx context.Context, ev entities.AccessEvent) error {
 	if _, err := s.events.Create(ctx, "", ev); err != nil {
 		return fmt.Errorf("record access event: %w", err)
+	}
+	return nil
+}
+
+// MarkReader records the supervision state the bus just observed.
+//
+// It reads the row first and writes the whole entity back, because the shared generic repository
+// updates by entity rather than by column. That makes a blank state or a zero timestamp mean
+// "leave this alone": an input report says nothing about the enclosure, and declaring a reader
+// offline says nothing about when it was last actually heard from.
+func (s *SQLStore) MarkReader(ctx context.Context, readerId int64, tamperState string, lastSeenAt int64) error {
+	if readerId <= 0 {
+		return nil
+	}
+	rows, _, err := s.readers.Get(ctx, "", 1, 0, []sqldataenums.Filter{eq("Id", readerId)}, nil)
+	if err != nil {
+		return fmt.Errorf("reader %d: %w", readerId, err)
+	}
+	reader := first(rows)
+	if reader == nil {
+		return nil
+	}
+	if tamperState == "" || tamperState == reader.TamperState {
+		tamperState = reader.TamperState
+	}
+	if lastSeenAt <= 0 {
+		lastSeenAt = reader.LastSeenAt
+	}
+	// Nothing new to say. Worth the comparison: an online reader reports its status every second,
+	// and writing an identical row each time would turn supervision into a steady stream of
+	// database writes on an appliance whose storage is often an SD card.
+	if tamperState == reader.TamperState && lastSeenAt == reader.LastSeenAt {
+		return nil
+	}
+	reader.TamperState, reader.LastSeenAt = tamperState, lastSeenAt
+	reader.UpdatedAt = time.Now().Unix()
+	if _, err := s.readers.UpdateById(ctx, "", *reader); err != nil {
+		return fmt.Errorf("update reader %d: %w", readerId, err)
 	}
 	return nil
 }

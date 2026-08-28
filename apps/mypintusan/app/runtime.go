@@ -123,8 +123,9 @@ func (r *runtime) runBus(ctx context.Context, cfg services.BusSettings) error {
 	}
 
 	bus := osdp.NewBus(transport, osdp.Options{
-		SlotInterval: time.Duration(cfg.SlotMillis) * time.Millisecond,
-		ReplyTimeout: time.Duration(cfg.ReplyTimeoutMillis) * time.Millisecond,
+		SlotInterval:   time.Duration(cfg.SlotMillis) * time.Millisecond,
+		ReplyTimeout:   time.Duration(cfg.ReplyTimeoutMillis) * time.Millisecond,
+		StatusInterval: time.Duration(cfg.StatusMillis) * time.Millisecond,
 		Logf: func(f string, a ...any) {
 			r.deps.Logger.Infof("mypintusan.osdp."+cfg.Port, f, a...)
 		},

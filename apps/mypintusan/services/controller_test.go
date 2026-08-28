@@ -121,6 +121,25 @@ func (m *memStore) RecordEvent(_ context.Context, ev entities.AccessEvent) error
 	return nil
 }
 
+// MarkReader records supervision state the way the real store does: on the reader row itself, so a
+// test can assert that a reader the bus declared offline stops claiming to be fine.
+func (m *memStore) MarkReader(_ context.Context, readerId int64, tamperState string, lastSeenAt int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, r := range m.readers {
+		if r.Id != readerId {
+			continue
+		}
+		if tamperState != "" {
+			r.TamperState = tamperState
+		}
+		if lastSeenAt > 0 {
+			r.LastSeenAt = lastSeenAt
+		}
+	}
+	return nil
+}
+
 // awaitEvent waits for the next recorded access event.
 func (m *memStore) awaitEvent(t *testing.T, within time.Duration) entities.AccessEvent {
 	t.Helper()
@@ -275,6 +294,10 @@ func newRigWithStore(t *testing.T, data Store, cfg ControllerConfig) *rig {
 		SlotInterval: 2 * time.Millisecond,
 		ReplyTimeout: 40 * time.Millisecond,
 		OfflineAfter: 3,
+		// Fast enough that a test does not wait a second for a door contact. The production
+		// default is a second; the driver caps status commands at a quarter of a reader's slots
+		// however short this is, so shortening it here cannot starve card delivery.
+		StatusInterval: 20 * time.Millisecond,
 	})
 	if err := r.bus.Add(1); err != nil {
 		t.Fatalf("bus.Add: %v", err)
@@ -357,6 +380,96 @@ func (r *rig) badge(facility, number int) {
 	r.pdMu.Lock()
 	r.pd.PresentCard(osdp.CardRead{Format: 1, BitCount: 26, Data: EncodeWiegand26(facility, number)})
 	r.pdMu.Unlock()
+}
+
+// TestReaderContactRaisesForcedAlarm is the end-to-end version of the gap this bench found.
+//
+// The door state machine, the forced event, the audit reason, the alarm kind, the CRITICAL
+// severity and four translations of "Door forced open" all existed and were unit-tested. Nothing
+// called ContactChanged. The reader's own supervised input — the ordinary way a door contact is
+// wired — was never read, so on any real installation the alarm could not fire. This drives it the
+// way a door does: through the PD, the poll loop and the controller.
+func TestReaderContactRaisesForcedAlarm(t *testing.T) {
+	r := newRig(t, ControllerConfig{TickInterval: 20 * time.Millisecond})
+	r.waitOnline()
+
+	// No grant, no REX: the door simply opens.
+	r.pdMu.Lock()
+	r.pd.Inputs[0] = true
+	r.pdMu.Unlock()
+
+	r.alarm.awaitAlarm(t, AlarmDoorForced, 3*time.Second)
+	ev := r.store.awaitEvent(t, 3*time.Second)
+	if ev.Reason != entities.ReasonDoorForced {
+		t.Errorf("access log reason = %q, want %q", ev.Reason, entities.ReasonDoorForced)
+	}
+	if ev.DoorId != 1 {
+		t.Errorf("the forced event was not attributed to the door: %+v", ev)
+	}
+}
+
+// TestReaderContactAfterGrantDoesNotAlarm is the other half, and the more important one. A forced
+// alarm on every legitimate entry teaches a site to ignore the one alarm that means somebody is
+// inside who should not be — which is worse than having no alarm at all.
+func TestReaderContactAfterGrantDoesNotAlarm(t *testing.T) {
+	r := newRig(t, ControllerConfig{TickInterval: 20 * time.Millisecond})
+	r.waitOnline()
+
+	r.badge(7, 1234)
+	if ev := r.store.awaitEvent(t, 3*time.Second); ev.Decision != entities.DecisionGranted {
+		t.Fatalf("the badge was not granted: %s/%s", ev.Decision, ev.Reason)
+	}
+	r.pdMu.Lock()
+	r.pd.Inputs[0] = true
+	r.pdMu.Unlock()
+
+	// Long enough for several status polls to have carried the opening in.
+	time.Sleep(300 * time.Millisecond)
+	if r.alarm.has(AlarmDoorForced) {
+		t.Error("a granted entry raised a forced-door alarm")
+	}
+	// "No forced alarm" is also what a contact that was never reported at all looks like, so the
+	// absence above only means something once the opening is known to have arrived.
+	m, err := r.ctrl.Machine(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("door machine: %v", err)
+	}
+	if !m.ContactOpen() {
+		t.Error("the opening never reached the door state machine, so the check above proved nothing")
+	}
+}
+
+// TestReaderTamperMarksTheReaderRow covers the second half of an alarm: the reader LIST.
+//
+// `Reader.TamperState` was written once as `ok` when the reader was enrolled and never again, and
+// `LastSeenAt` was never written at all — so an installer opening the readers screen saw "ok, last
+// seen never" for a reader that was offline, alarmed and out of service. The alarm fired and the
+// screen lied.
+func TestReaderTamperMarksTheReaderRow(t *testing.T) {
+	r := newRig(t, ControllerConfig{})
+	r.waitOnline()
+
+	if got := r.store.readers[rkey(testPort, 1)]; got.LastSeenAt == 0 {
+		t.Error("a reader that came online was never stamped as seen")
+	}
+	r.pdMu.Lock()
+	r.pd.Faults.Tamper = true
+	r.pdMu.Unlock()
+
+	r.alarm.awaitAlarm(t, AlarmTamper, 3*time.Second)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		r.store.mu.Lock()
+		state := r.store.readers[rkey(testPort, 1)].TamperState
+		r.store.mu.Unlock()
+		if state == entities.TamperTripped {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("reader row tamperState = %q, want %q", state, entities.TamperTripped)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // TestEndToEndBadgeOpensDoor is the P1 milestone: a badge on a real reader, through the real driver

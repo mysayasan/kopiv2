@@ -70,12 +70,14 @@ is a row of the fault table in [`MYPINTUSAN_OSDP_PLAN.md` §4.1](../../docs/MYPI
 | `bad-sequence` | The §3.1 sequence trap, caught by a test instead of on site |
 | `bad-crc` | Corrupt replies rejected without panicking |
 | `garbage` | Frame **resynchronisation** — junk, a broken frame, more junk, then recovery |
-| `silent` | Offline supervision + degraded-mode alert |
+| `silent` | Offline supervision + degraded-mode alert — badges a card first, so "no grant after" means something |
 | `one-down` | One PD dies; the others on the bus keep working |
 | `refuse-sc` | **Fail-closed**: reader out of service and alarmed, never a cleartext fallback — badges a card so the claim is actually demonstrated |
 | `no-sc` | Reader cannot do Secure Channel at all (PDCAP drops the AES-128 bit), and badges anyway |
 | `default-scbk` | Reader still on the well-known default base key → capped at `interior`, UI nag |
-| `tamper` | `LSTATR` / `RSTATR` alarm path |
+| `tamper` | `LSTATR` alarm path — badges throughout, so the alarm is on a reader known to be working |
+| `contact-open` | Door-position contact opens with **no badge** and stays open → `door-forced`, then `door-held-open` |
+| `contact-cycle` | Contact opens just after a grant and closes again → the shunt suppresses `door-forced`, and `door-held-open` still fires |
 | `slow` | A near-timeout reply does not starve the other PDs on the bus |
 | `secure` | Secure Channel happy path: handshake on the site key, then encrypted traffic |
 | `sc-drop` | Session **establishes then drops** mid-conversation — the harder fail-closed case |
@@ -86,6 +88,16 @@ session was refused, which is the easy half. "Must fail closed" is a claim about
 **when somebody badges**, so all three now run the same `cardLoop` `secure`/`sc-drop`/
 `default-scbk` already did, and a bench can assert on the resulting access decision instead of
 just the handshake outcome. See `tools/fleetbench/bench_pintusan_securechannel.py`.
+
+`silent` and `tamper` got the same treatment for the same reason. A reader that never came up
+produces no grants and no alarms, which reads exactly like a reader that came up and whose alarm is
+dead — so both now badge, and a bench can establish that the reader was in service *before* the
+fault bit. `bad-sequence`, `bad-crc`, `garbage` and `addr-collision` still present no card.
+
+`contact-open` and `contact-cycle` are new: the PD has always modelled `Inputs` and answered
+`ISTAT`, and nothing had ever driven them. See `tools/fleetbench/bench_pintusan_alarms.py`, which
+uses them to show that `door-forced` and `door-held-open` fire on a real opening and that a
+legitimate entry does not raise a forced alarm.
 
 `refuse-sc`, `sc-drop` and `wrong-key` are the security-critical ones. They are also precisely the
 cases nobody tests, because a real reader will not do any of them on request.

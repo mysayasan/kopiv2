@@ -40,6 +40,11 @@ type Config struct {
 - `BusConfig.SlotMillis` (default 50) / `ReplyTimeoutMillis` (default 200) — passed straight
   into `osdp.Options`; per-PD poll cadence is `SlotMillis` × reader count
   (`MYPINTUSAN_OSDP_PLAN.md` §6.2's open budget question).
+- `BusConfig.StatusMillis` (default 1000) — how often an online reader is asked for its tamper
+  state and its door-position contact instead of being given a bare poll. A PD volunteers neither,
+  so a CP that never asks is blind to both; raising it trades alarm latency for bus headroom on a
+  long multidrop segment. The driver caps status commands at a quarter of a reader's slots however
+  low this is set, so it cannot starve card delivery — see `infra/access/osdp/cp.go.md`.
 - `ReaderConfig.SCBK` — the 16-byte Secure Channel base key as hex. Empty runs the reader in the
   clear.
 - `ReaderConfig.RequireSecureChannel` — takes the reader **out of service** rather than falling

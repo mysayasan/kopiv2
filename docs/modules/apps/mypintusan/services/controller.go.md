@@ -39,9 +39,24 @@ runtime and the only consumer of the bus's event channel. It also owns lockdown,
 - `NewController` / `Machine(ctx, doorId)` — lazily creates and caches one `DoorMachine` per
   door, loaded from `Store.Door`.
 - `ContactChanged(ctx, doorId, open)` — the seam that turns "we energised the strike" into
-  "somebody actually went through" (door-forced/held-open detection). **Nothing calls this
-  method** — there is no myiotsan door-contact binding wired in, so forced/held-open logic
-  works in `doorstate_test.go` but not against a real deployment.
+  "somebody actually went through" (door-forced/held-open detection). Two things can feed it and
+  for a long time neither did: the **near path**, a contact on the OSDP reader's own supervised
+  input, now drives it via `contactReported`; the **far path**, a contact wired to a myiotsan relay
+  board (`Door.ContactDeviceKey`), is still unbuilt. Until it was live-benched the state machine,
+  the events, the audit rows, the severities and four translations all existed and *nothing called
+  this function*, so `door-forced` and `door-held-open` could not fire on any installation.
+- `contactReported(ctx, ev)` — maps an `osdp.EventInput` to a door: reader by bus address, then its
+  `DoorId`. **Input 0 is the door contact** — OSDP says nothing about what any input means, the
+  reference kit wires door position to the first, and the reader profile that would let a site say
+  otherwise is not built. A reader reporting no inputs, or not yet bound to a door, is silently
+  ignored — that is the state of every reader between being plugged in and being commissioned.
+- `markReader(ctx, addr, state, seen)` — persists what the bus just observed onto the reader row,
+  best-effort, because failing to update a screen must never interrupt the alarm that prompted it.
+  It is the second half of an alarm: `Reader.TamperState` was previously written once as `ok` at
+  enrolment and never again, and `LastSeenAt` never at all, so a reader could be offline, alarmed
+  and out of service while the readers screen still read "ok, last seen never". `LastSeenAt` is
+  deliberately NOT stamped when a reader is declared offline — it was last seen when it last
+  answered, not when we gave up on it.
 - `RequestToExit` / `SetFreeAccess` / `SetLockdown` / `Lockdown()` — thin wrappers that drive
   `DoorMachine` and turn its returned `DoorEvent`s into alarms/audit rows via `emitDoorEvents`.
   `SetLockdown` seals every door already being tracked, not just future decisions, because a
@@ -67,8 +82,9 @@ runtime and the only consumer of the bus's event channel. It also owns lockdown,
 - `handle` dispatches OSDP bus events: `EventOnline`/`EventOffline` update per-reader state
   (offline additionally raises `AlarmReaderOffline` — every door on that reader is now unusable
   and a dashboard nobody is watching would not surface it), `EventStatus` tamper raises
-  `AlarmTamper`, `EventFault` raises `AlarmSecureChannel`, `EventKeypad` buffers a PIN,
-  `EventCard` goes to `handleCard`.
+  `AlarmTamper` and records the state on the reader row, `EventInput` goes to `contactReported`,
+  `EventFault` raises `AlarmSecureChannel`, `EventKeypad` buffers a PIN, `EventCard` goes to
+  `handleCard`.
 - `takePIN` consumes (not merely expires) a buffered PIN on read, so it can never be offered to
   a second card — otherwise the next person in the queue could open the door, or trigger a
   duress alarm attributed to them, on someone else's PIN. **This implements PIN-then-card only**:
@@ -121,9 +137,11 @@ runtime and the only consumer of the bus's event channel. It also owns lockdown,
   `Address` func. Fixed by replacing both fields with a single `StrikeResolver` — see
   `store_sql.go.md`'s `StrikeFor` for the production resolution logic (entry reader → PD
   address, `Door.RelayChannel` → output).
-- `Controller.ContactChanged` is still a seam **nothing calls** — there is no myiotsan
-  door-contact binding wired in, so forced/held-open logic works in `doorstate_test.go` but not
-  against a real deployment.
+- `Controller.ContactChanged` is now driven by the reader's own supervised input (OSDP ISTAT).
+  The **myiotsan** door-contact binding (`Door.ContactDeviceKey`) remains unwired, so a site whose
+  contacts terminate on a relay board rather than on the reader still has no forced/held-open
+  detection. Live-benched by `tools/fleetbench/bench_pintusan_alarms.py`, which drives all six
+  alarm kinds and the false-positive case (a granted entry must not raise a forced alarm).
 - `Snapshot.AntiPassbackViolation` is never computed by anything in this file — anti-passback
   detection (comparing the last in/out passage) does not exist yet; it is a P3 feature.
 - `TestRecordPublishesDecisionsButNotDoorStateRows` (`controller_test.go`) pins the `Decisions`

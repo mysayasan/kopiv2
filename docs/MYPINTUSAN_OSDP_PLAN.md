@@ -182,12 +182,26 @@ real reader misbehave on demand**, and every one of these is a failure the app m
 | Go silent (cut the bus) | Offline supervision + degraded-mode alert |
 | Return garbage / bad CRC | Decoder does not panic; frame resync works |
 | Two PDs both at address 0 | Onboarding wizard handles the out-of-box collision |
-| Tamper asserted | `RSTATR` → alarm path |
+| Tamper asserted | `LSTATR` → alarm path (`tamper` scenario) |
+| Door contact opens with no grant | `ISTATR` → `door-forced`, then `door-held-open` (`contact-open`) |
+| Door contact opens just after a grant | The shunt suppresses `door-forced` and nothing else (`contact-cycle`) |
 | Slow reply (near timeout) | Poll loop does not starve the other PDs on the bus |
 
 The "refuse Secure Channel" and "drop SC mid-session" cases are the security-critical ones.
 They are also precisely the cases nobody tests, because a real reader will not do it on
 request.
+
+> **The CP must ASK for status; a PD never volunteers it.** A PD answers `POLL` with an `ACK`,
+> or with a queued card read or keypad entry — never with a status change. So `LSTAT` and
+> `ISTAT` have to be scheduled by the poll loop, and until they were, three of this app's six
+> declared alarms (`tamper`, `door-forced`, `door-held-open`) could not fire on any
+> installation: the state machine, the audit rows, the severities and four translations all
+> existed with nothing on the wire to reach them. `Options.StatusInterval` (default 1s) is that
+> schedule. It is capped at one status command per four transactions per reader as well as by
+> elapsed time, because a card is delivered on a `POLL` and a degraded segment — each dead
+> reader costing a full reply timeout — can take longer to go round than the interval, at which
+> point a purely time-gated scheduler starves badge delivery completely while the bus looks
+> healthy. Found live by `tools/fleetbench/bench_pintusan_alarms.py`.
 
 ### 4.2 Multi-drop
 
@@ -320,3 +334,62 @@ See `docs/modules/apps/mypintusan/entities/reader.go.md` and
 
 18/18 checks pass with both fixes; 13/18 against the unfixed app (the simulator's card-loop
 change is bench tooling and was held constant across both runs).
+
+---
+
+## 10. The CP never asked for status (added 2026-08-28)
+
+`tools/fleetbench/bench_pintusan_alarms.py`, **19/19**; 9/19 against the unfixed app.
+
+`services/controller.go` declares six alarm kinds. **Three of them could not fire on any
+installation**, and one omission explains all three.
+
+A PD answers `POLL` with an `ACK`, or with a queued card read or keypad entry. **It never
+volunteers a status change.** §2.2 lists `LSTAT 0x64` and `ISTAT 0x65` among the commands needed
+for P1, and `infra/access/osdp/pd.go` answers both — but `bus.go`'s poll loop sent neither, ever.
+Everything downstream of that hole was built and unit-tested: the door state machine,
+`Controller.ContactChanged`, `EvForced`/`EvHeldOpen`, the audit reasons, the CRITICAL severity on
+`door-forced`, four translations of "Door forced open", and a `TestBusTamperSurfaces` that passed
+for the life of the driver **by handing the bus an `LSTAT` itself**. The alarms were reachable from
+a test and from nowhere else.
+
+| Alarm | Condition | Before |
+| --- | --- | --- |
+| `tamper` | reader enclosure opened | never fired — no `LSTAT` was sent |
+| `door-forced` | door opens with no grant, no REX | never fired — no `ISTAT`, and `ContactChanged` had no caller |
+| `door-held-open` | door wedged past its threshold | never fired — same |
+
+A fourth defect sat in the other half of an alarm. `Reader.TamperState` was written once as `ok`
+when the reader was enrolled and never again, and `LastSeenAt` was never written at all. Measured
+live: while the `reader-offline` alarm was firing correctly, `GET /api/readers` still reported
+`tamperState: ok, lastSeenAt: 0`. The alarm woke somebody and the screen they opened lied to them.
+
+**The fix.** `Options.StatusInterval` (default 1s, `statusMillis` per bus in config) schedules a
+status command in place of a bare poll. `LSTAT` and `ISTAT` alternate — they answer different
+questions and interleaving costs one slot per interval instead of two — and `ISTAT` is skipped
+entirely on a reader whose PDCAP claims no supervised inputs, because asking a keypad-only reader
+for a door contact earns a NAK every second and a NAK is a failed transaction, which is what
+declares a healthy reader offline. Both are emitted on the EDGE: a reader whose case stays open
+would otherwise republish the alarm every second forever. `Controller` maps an input report to the
+door bound to that reader and calls `ContactChanged`; **input 0 is the door contact and true means
+open**, a convention the driver documents rather than something OSDP states (per-input polarity is
+a reader-profile setting that does not exist yet).
+
+**A trap this work fell into first, worth recording.** Gating supervision only on elapsed time
+turned `TestBusOneReaderDownDoesNotTakeTheBus` red, and the reason is a real production failure:
+a card is queued at the PD and handed over on a `POLL`, and every dead reader on a segment costs a
+full reply timeout — so a degraded bus can take longer to go round than the status interval, at
+which point every single transaction is a status command and **no badge is ever delivered**, while
+the bus looks up and supervision looks healthy. Supervision is now capped at one slot in four per
+reader as well as by time (`minPollsPerStatus`), pinned by
+`TestBusStatusNeverStarvesCardDelivery`.
+
+`tools/osdp-sim` needed two new scenarios (`contact-open`, `contact-cycle`) — the PD had always
+modelled `Inputs` and nothing had ever driven them — and `tamper`/`silent` gained card loops for
+the same reason `refuse-sc`/`no-sc`/`wrong-key` did in §9: a reader that never came up produces no
+grants and no alarms, which reads exactly like a reader that came up and whose alarm is dead.
+
+**Still a gap, found not built:** the `myiotsan` door-contact binding (`Door.ContactDeviceKey`) has
+no path in, so a site whose contacts terminate on a relay board rather than on the reader still has
+no forced or held-open detection. `Controller.RequestToExit` likewise has no caller, so a REX
+button wired to the reader does not shunt the forced alarm.

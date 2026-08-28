@@ -331,6 +331,7 @@ func settingsFromConfig(cfg *pintuconfig.Config) services.AccessSettings {
 	for _, b := range cfg.Buses {
 		bus := services.BusSettings{
 			Port: b.Port, SlotMillis: b.SlotMillis, ReplyTimeoutMillis: b.ReplyTimeoutMillis,
+			StatusMillis: b.StatusMillis,
 		}
 		for _, r := range b.Readers {
 			bus.Readers = append(bus.Readers, services.ReaderSettings{

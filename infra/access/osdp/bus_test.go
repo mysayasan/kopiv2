@@ -28,9 +28,10 @@ type harness struct {
 // relationship as production, two orders of magnitude smaller.
 func fastOpts() Options {
 	return Options{
-		SlotInterval: 2 * time.Millisecond,
-		ReplyTimeout: 40 * time.Millisecond,
-		OfflineAfter: 3,
+		SlotInterval:   2 * time.Millisecond,
+		ReplyTimeout:   40 * time.Millisecond,
+		OfflineAfter:   3,
+		StatusInterval: 10 * time.Millisecond,
 	}
 }
 
@@ -505,6 +506,107 @@ func TestBusTamperSurfaces(t *testing.T) {
 	ev := h.awaitKind(2*time.Second, 1, EventStatus)
 	if !ev.Tamper {
 		t.Error("tamper was not reported")
+	}
+}
+
+// TestBusPollsStatusUnasked is the check TestBusTamperSurfaces above could not make.
+//
+// That test asserts the DECODE path — hand the bus an LSTAT and a tamper flag comes back out — and
+// it passed for the entire life of this driver while nothing in the poll loop ever sent one. A PD
+// answers POLL with an ACK or a queued card read and never volunteers a status change, so the CP
+// was structurally blind to tamper: the alarm existed, was severity-mapped, titled and translated
+// in four languages, and no site could have raised it. The difference between the two tests is the
+// missing `bus.Send` here, and that absence is the whole point.
+func TestBusPollsStatusUnasked(t *testing.T) {
+	pd := NewPD(1)
+	h := newHarness(t, fastOpts(), pd)
+	h.awaitKind(2*time.Second, 1, EventOnline)
+
+	h.with(func(pds []*PD) { pds[0].Faults.Tamper = true })
+	ev := h.awaitKind(2*time.Second, 1, EventStatus)
+	if !ev.Tamper {
+		t.Error("tamper was not reported by the poll loop")
+	}
+}
+
+// TestBusReportsDoorContactUnasked is the same claim for the door-position contact, which is what
+// makes door-forced and door-held-open possible at all.
+func TestBusReportsDoorContactUnasked(t *testing.T) {
+	pd := NewPD(1)
+	h := newHarness(t, fastOpts(), pd)
+	h.awaitKind(2*time.Second, 1, EventOnline)
+
+	h.with(func(pds []*PD) { pds[0].Inputs[0] = true })
+	ev := h.await(2*time.Second, "the door contact opening", func(e Event) bool {
+		return e.Kind == EventInput && e.Address == 1 && len(e.Inputs) > 0 && e.Inputs[0]
+	})
+	if len(ev.Inputs) != 1 {
+		t.Errorf("expected one supervised input, got %d", len(ev.Inputs))
+	}
+}
+
+// TestBusStatusIsEdgeTriggered pins the property that stops supervision becoming a flood.
+//
+// A reader whose case is open answers every LSTAT with the tamper bit set, so a level-triggered
+// emitter would republish the alarm on every status interval for as long as the case stays open —
+// hundreds an hour, all identical. alarm.go argues against paging on a flaky segment because "the
+// failure mode worth avoiding is an alarm nobody believes"; this is the same argument with a much
+// larger number.
+func TestBusStatusIsEdgeTriggered(t *testing.T) {
+	pd := NewPD(1)
+	h := newHarness(t, fastOpts(), pd)
+	h.awaitKind(2*time.Second, 1, EventOnline)
+
+	h.with(func(pds []*PD) { pds[0].Faults.Tamper = true })
+	h.awaitKind(2*time.Second, 1, EventStatus)
+
+	// Well over a hundred status intervals. A level-triggered emitter would have produced dozens
+	// of repeats by now.
+	deadline := time.After(300 * time.Millisecond)
+	repeats := 0
+	for done := false; !done; {
+		select {
+		case ev, ok := <-h.bus.Events():
+			if !ok {
+				done = true
+				break
+			}
+			if ev.Kind == EventStatus {
+				repeats++
+			}
+		case <-deadline:
+			done = true
+		}
+	}
+	if repeats > 0 {
+		t.Errorf("an unchanged tamper was republished %d times", repeats)
+	}
+}
+
+// TestBusStatusNeverStarvesCardDelivery pins the bound that stops supervision eating the bus.
+//
+// A card read is queued at the PD and handed over on a POLL, so every slot spent asking for status
+// is a slot the card waits. That is a rounding error on a healthy bus and a catastrophe on a sick
+// one: each dead reader costs a full reply timeout, so a degraded segment can take longer to go
+// round than the status interval — and a scheduler gated only on elapsed time then sends a status
+// command EVERY time, forever, and no badge ever reaches the controller. The bus stays "up",
+// supervision stays "healthy", and nobody can get into the building.
+//
+// The status interval here is deliberately shorter than a single round can possibly be.
+func TestBusStatusNeverStarvesCardDelivery(t *testing.T) {
+	opts := fastOpts()
+	opts.StatusInterval = time.Nanosecond // always due, on every slot
+	dead, healthy := NewPD(1), NewPD(2)
+	dead.Faults.Silent = true
+	h := newHarness(t, opts, dead, healthy)
+	h.awaitKind(3*time.Second, 2, EventOnline)
+
+	h.with(func(list []*PD) {
+		list[1].PresentCard(CardRead{Format: 1, BitCount: 26, Data: []byte{0xAB}})
+	})
+	ev := h.awaitKind(3*time.Second, 2, EventCard)
+	if !bytes.Equal(ev.Card.Data, []byte{0xAB}) {
+		t.Errorf("healthy reader delivered % x", ev.Card.Data)
 	}
 }
 

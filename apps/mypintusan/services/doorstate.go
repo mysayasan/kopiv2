@@ -120,6 +120,10 @@ type DoorMachine struct {
 
 	forcedActive bool
 	heldActive   bool
+	// contactSeen records that a door-position report has actually arrived, whatever the door's
+	// configuration says. It is what lets ContactBound answer for a contact on the reader's own
+	// supervised input, which nothing configures.
+	contactSeen bool
 
 	lockdown bool
 	// freeAccessScheduled is the schedule's opinion; freeAccessActive is whether the door is
@@ -181,7 +185,20 @@ func (m *DoorMachine) FreeAccess() bool {
 // no forced alarm, no held-open alarm, no evacuation roster. That is a capability gap to surface in
 // the UI, not something to degrade silently — an operator who believes they have forced-door
 // detection and does not is worse off than one who knows they do not.
-func (m *DoorMachine) ContactBound() bool { return m.door.ContactDeviceKey != "" }
+//
+// Two things can bind a contact and they are known at different times. A myiotsan contact is
+// CONFIGURED, so the door's own row answers for it; a contact on the reader's supervised input is
+// DISCOVERED, because the reader announces how many inputs it has and then reports them. Answering
+// only from configuration would have told an operator they had no forced-door detection on every
+// door whose contact is wired the ordinary way, straight to the reader.
+func (m *DoorMachine) ContactBound() bool {
+	if m.door.ContactDeviceKey != "" {
+		return true
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.contactSeen
+}
 
 // Grant unlocks the door after an access decision has granted. seconds comes from the decision, so
 // a holder with the accessibility extension gets their longer time here without the machine
@@ -229,6 +246,10 @@ func (m *DoorMachine) RequestToExit(now time.Time) []DoorEvent {
 func (m *DoorMachine) ContactChanged(now time.Time, open bool) []DoorEvent {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// Set BEFORE the no-change return. The first report from a closed door says `false`, which
+	// matches the initial state and returns early — so testing capability after the change check
+	// would leave every quiet door looking as though it had no contact at all.
+	m.contactSeen = true
 	if open == m.contactOpen {
 		return nil
 	}
