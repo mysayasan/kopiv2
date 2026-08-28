@@ -43,10 +43,13 @@ type AccessSettings struct {
 
 // BusSettings is one segment.
 type BusSettings struct {
-	Port               string           `json:"port"`
-	SlotMillis         int              `json:"slotMillis"`
-	ReplyTimeoutMillis int              `json:"replyTimeoutMillis"`
-	Readers            []ReaderSettings `json:"readers"`
+	Port               string `json:"port"`
+	SlotMillis         int    `json:"slotMillis"`
+	ReplyTimeoutMillis int    `json:"replyTimeoutMillis"`
+	// StatusMillis is how often an online reader is asked for tamper state and door position
+	// instead of a bare poll. A PD volunteers neither, so a CP that never asks is blind to both.
+	StatusMillis int              `json:"statusMillis"`
+	Readers      []ReaderSettings `json:"readers"`
 }
 
 // ReaderSettings binds one PD address to its Secure Channel policy.
@@ -224,6 +227,7 @@ type rawBus struct {
 	Port               string      `json:"port"`
 	SlotMillis         int         `json:"slotMillis"`
 	ReplyTimeoutMillis int         `json:"replyTimeoutMillis"`
+	StatusMillis       int         `json:"statusMillis"`
 	Readers            []rawReader `json:"readers"`
 }
 
@@ -241,7 +245,8 @@ func rawSettings(s AccessSettings) rawAccess {
 		PINWindowSeconds: s.PINWindowSeconds, Offline: s.Offline,
 	}
 	for _, b := range s.Buses {
-		rb := rawBus{Port: b.Port, SlotMillis: b.SlotMillis, ReplyTimeoutMillis: b.ReplyTimeoutMillis}
+		rb := rawBus{Port: b.Port, SlotMillis: b.SlotMillis,
+			ReplyTimeoutMillis: b.ReplyTimeoutMillis, StatusMillis: b.StatusMillis}
 		for _, r := range b.Readers {
 			rb.Readers = append(rb.Readers, rawReader{
 				Address: r.Address, SCBK: r.SCBK,
@@ -298,6 +303,9 @@ func normalizeAccessSettings(s AccessSettings) AccessSettings {
 		}
 		if s.Buses[i].ReplyTimeoutMillis <= 0 {
 			s.Buses[i].ReplyTimeoutMillis = 200
+		}
+		if s.Buses[i].StatusMillis <= 0 {
+			s.Buses[i].StatusMillis = 1000
 		}
 	}
 	return s

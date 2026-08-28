@@ -68,6 +68,13 @@ first. `var _ Store = (*SQLStore)(nil)` pins that interchangeability at compile 
   over a global one (`SiteId == 0`), because Malaysian public holidays vary by state.
 - `RecordEvent(ctx, ev)` — a bare `Create`; the log is append-only by design, with no update/delete
   path anywhere in this store.
+- `MarkReader(ctx, readerId, tamperState, lastSeenAt)` — the reader's live supervision state, as
+  the READERS SCREEN shows it. It reads the row and writes the whole entity back (the shared
+  generic repo updates by entity, not by column), which is what lets a blank state or a zero
+  timestamp mean "leave this alone" — an input report says nothing about the enclosure, and
+  declaring a reader offline says nothing about when it was last actually heard from. An unchanged
+  row is skipped rather than rewritten: an online reader reports every second, and an appliance's
+  storage is often an SD card.
 
 ## Notes
 

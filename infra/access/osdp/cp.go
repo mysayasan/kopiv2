@@ -50,7 +50,8 @@ const (
 	EventKeypad                   // PIN digits were entered
 	EventOnline                   // a reader completed identification
 	EventOffline                  // a reader stopped answering
-	EventStatus                   // tamper / power / input change
+	EventStatus                   // tamper / mains failure changed
+	EventInput                    // a supervised input changed — the door-position contact
 	EventFault                    // a protocol fault worth surfacing, reader still present
 )
 
@@ -66,6 +67,8 @@ func (k EventKind) String() string {
 		return "offline"
 	case EventStatus:
 		return "status"
+	case EventInput:
+		return "input"
 	case EventFault:
 		return "fault"
 	}
@@ -102,6 +105,14 @@ type Event struct {
 
 	// Tamper/PowerFail carry the LSTATR flags on EventStatus.
 	Tamper, PowerFail bool
+	// Inputs carries the ISTATR contact states on EventInput, one entry per supervised input.
+	//
+	// INPUT 0 IS THE DOOR-POSITION CONTACT and true means the door is OPEN. That is a convention,
+	// not something the protocol states: OSDP reports an input's electrical state and leaves the
+	// meaning to the installer, so a normally-closed contact wired the other way round reports the
+	// inverse. Per-input polarity is a reader-profile setting this driver does not yet carry;
+	// until it does, a site must wire the contact so that "door open" asserts the input.
+	Inputs []bool
 
 	// Reason explains EventOffline and EventFault in operator language.
 	Reason string
@@ -125,6 +136,10 @@ func (e Event) String() string {
 			e.Address, e.Info.Serial, e.Info.FirmwareMajor, e.Info.FirmwareMinor, e.Info.FirmwareBuild, sc)
 	case EventOffline, EventFault:
 		return fmt.Sprintf("addr=%d %s: %s", e.Address, e.Kind, e.Reason)
+	case EventStatus:
+		return fmt.Sprintf("addr=%d status tamper=%t mains-fail=%t", e.Address, e.Tamper, e.PowerFail)
+	case EventInput:
+		return fmt.Sprintf("addr=%d inputs %v", e.Address, e.Inputs)
 	default:
 		return fmt.Sprintf("addr=%d %s", e.Address, e.Kind)
 	}
@@ -207,6 +222,35 @@ type pdState struct {
 	// pending is an operator/door command waiting for this PD's slot. A queued command jumps the
 	// round-robin, because the latency that matters here is badge-to-strike.
 	pending *cmdReq
+
+	// statusAt is when this PD is next due a status command instead of a bare poll, and
+	// statusPhase alternates LSTAT and ISTAT so neither starves the other. See
+	// Options.StatusInterval for why a CP that only polls is blind to both.
+	statusAt    time.Time
+	statusPhase int
+	// pollsSinceStatus caps supervision as a FRACTION of this PD's slots, not merely as a rate.
+	//
+	// The time gate alone is not enough and the failure is nasty. A card read is queued at the PD
+	// and handed over on a POLL, so a slot spent on LSTAT is a slot the card waits. On a healthy
+	// bus a round takes milliseconds and a one-second status interval costs one slot in twenty.
+	// On a DEGRADED bus it does not: every dead reader costs a full reply timeout, so a segment
+	// with several dead readers can take longer to go round than the status interval — at which
+	// point every single transaction is due a status command and NO CARD IS EVER DELIVERED. The
+	// bus looks alive, supervision looks healthy, and nobody can badge in. Requiring polls between
+	// status commands bounds supervision at one slot in four however slow the round becomes.
+	pollsSinceStatus int
+	// haveLocal/lastTamper/lastPowerFail and haveInputs/lastInputs hold the last reading, so a
+	// status event is emitted on a CHANGE rather than on every poll.
+	//
+	// The edge is not an optimisation. A reader whose case is open answers LSTAT with the tamper
+	// bit set for as long as it stays open, so a level-triggered alarm would republish once a
+	// second forever — and alarm.go's own argument against paging on a flaky segment applies with
+	// far more force to a thousand identical alarms an hour: "the failure mode worth avoiding
+	// is an alarm nobody believes".
+	haveLocal                 bool
+	lastTamper, lastPowerFail bool
+	haveInputs                bool
+	lastInputs                []bool
 }
 
 func newPDState(addr uint8, now time.Time) *pdState {
@@ -231,8 +275,8 @@ func (p *pdState) nextSeq() uint8 {
 }
 
 // nextCommand decides what to send in this PD's slot: a queued command, the next identification
-// step, or a poll.
-func (p *pdState) nextCommand() (Command, []byte) {
+// step, a due status command, or a poll.
+func (p *pdState) nextCommand(now time.Time, statusEvery time.Duration) (Command, []byte) {
 	if p.pending != nil {
 		return p.pending.code, p.pending.data
 	}
@@ -246,8 +290,56 @@ func (p *pdState) nextCommand() (Command, []byte) {
 		}
 		return CmdPoll, nil
 	default:
+		if c, ok := p.dueStatus(now, statusEvery); ok {
+			p.pollsSinceStatus = 0
+			return c, nil
+		}
+		p.pollsSinceStatus++
 		return CmdPoll, nil
 	}
+}
+
+// minPollsPerStatus is how many polls must pass between two status commands for one reader. Four
+// transactions per status caps supervision at a quarter of a reader's slots in the worst case.
+const minPollsPerStatus = 3
+
+// dueStatus returns the supervision command this PD owes, if its interval has elapsed.
+//
+// LSTAT and ISTAT alternate rather than both going out each round: they answer different
+// questions (is somebody at the reader / is somebody at the door) and interleaving them costs one
+// slot per interval instead of two. ISTAT is skipped entirely on a reader whose PDCAP says it
+// supervises no inputs — asking a keypad-only reader for a door contact earns a NAK every second,
+// and a NAK is a failed transaction, which is what declares a healthy reader offline.
+func (p *pdState) dueStatus(now time.Time, every time.Duration) (Command, bool) {
+	if p.statusAt.IsZero() {
+		// Do not fire on the very first slot after coming online: the identification exchange has
+		// only just finished and the first thing a door wants from a fresh reader is a poll.
+		p.statusAt = now.Add(every)
+		return 0, false
+	}
+
+	if now.Before(p.statusAt) || p.pollsSinceStatus < minPollsPerStatus {
+		return 0, false
+	}
+	p.statusAt = now.Add(every)
+	if p.inputCount() > 0 {
+		p.statusPhase++
+		if p.statusPhase%2 == 0 {
+			return CmdIStat, true
+		}
+	}
+	return CmdLStat, true
+}
+
+// inputCount reports how many supervised inputs this reader claims in PDCAP capability
+// CapContactStatus. Zero means it has none, so it is never asked for input status.
+func (p *pdState) inputCount() int {
+	for _, c := range p.caps {
+		if c.Function == CapContactStatus {
+			return int(c.NumItems)
+		}
+	}
+	return 0
 }
 
 // wantsSecureChannel reports whether this reader should be running a session but is not.

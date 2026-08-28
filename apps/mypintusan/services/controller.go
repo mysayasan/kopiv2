@@ -28,6 +28,16 @@ type Store interface {
 	Schedules(ctx context.Context, ids []int64) (map[int64]entities.Schedule, map[int64][]entities.ScheduleWindow, error)
 	HolidayOn(ctx context.Context, siteId int64, date string) (*entities.Holiday, error)
 	RecordEvent(ctx context.Context, ev entities.AccessEvent) error
+	// MarkReader records what the bus has just observed about a reader: its supervision state and
+	// when it last completed a usable transaction.
+	//
+	// It exists because the alarm and the reader LIST are two different products for two different
+	// moments. An alarm is what wakes somebody at 03:00; the list is what an installer opens on
+	// Tuesday to find out which reader on the site is dead. Before this, `Reader.TamperState` was
+	// written once as `ok` at enrolment and never again, and `LastSeenAt` was never written at
+	// all — so a reader could be offline, alarmed and out of service while its row still read
+	// "ok", last seen never. The alarm fired; the screen lied.
+	MarkReader(ctx context.Context, readerId int64, tamperState string, lastSeenAt int64) error
 }
 
 // Actuator opens a door. It is deliberately narrow.
@@ -172,11 +182,18 @@ func (c *Controller) Machine(ctx context.Context, doorId int64) (*DoorMachine, e
 	return m, nil
 }
 
-// ContactChanged feeds a door-position report in from myiotsan.
+// ContactChanged feeds a door-position report in.
 //
 // This is the seam that turns "we energised the strike" into "somebody actually went through", and
 // with it door-forced and door-held-open detection. A door with no contact bound simply never has
 // this called — which is a capability gap to surface, not to paper over.
+//
+// TWO THINGS CAN CALL IT, and for a long time neither did. The OSDP reader's own supervised input
+// is the near path and now drives it (see contactReported); a contact wired to a myiotsan relay
+// board is the far path and is still unbuilt. Until it was benched, the state machine, the events,
+// the audit rows, the severities and the four translations all existed and NOTHING CALLED THIS
+// FUNCTION — so door-forced and door-held-open, the two alarms that detect somebody forcing a door
+// or propping it open, could not fire on any installation.
 func (c *Controller) ContactChanged(ctx context.Context, doorId int64, open bool) {
 	m, err := c.Machine(ctx, doorId)
 	if err != nil {
@@ -376,6 +393,7 @@ func (c *Controller) handle(ctx context.Context, ev osdp.Event) {
 		c.mu.Lock()
 		c.readerState[ev.Address] = readerState{online: true, secure: ev.SecureSession}
 		c.mu.Unlock()
+		c.markReader(ctx, ev.Address, entities.TamperOK, ev.At)
 
 	case osdp.EventOffline:
 		c.mu.Lock()
@@ -383,12 +401,25 @@ func (c *Controller) handle(ctx context.Context, ev osdp.Event) {
 		c.mu.Unlock()
 		// A reader going out of service is an alarm, not a log line: every door bound to it is now
 		// unusable, and nobody finds that out from a dashboard nobody is watching.
+		//
+		// LastSeenAt is deliberately NOT stamped here. The reader was last seen when it last
+		// answered, not when we gave up on it, and writing the moment of the outage would make
+		// every dead reader look as if it had just been heard from.
+		c.markReader(ctx, ev.Address, entities.TamperOffline, time.Time{})
 		c.raise(ctx, AlarmReaderOffline, ev.Address, ev.Reason)
 
 	case osdp.EventStatus:
+		// Edge-triggered by the bus: this arrives when the local status CHANGED, so a case left
+		// open reports once rather than once per status poll.
+		state := entities.TamperOK
 		if ev.Tamper {
+			state = entities.TamperTripped
 			c.raise(ctx, AlarmTamper, ev.Address, "reader tamper asserted")
 		}
+		c.markReader(ctx, ev.Address, state, ev.At)
+
+	case osdp.EventInput:
+		c.contactReported(ctx, ev)
 
 	case osdp.EventFault:
 		c.raise(ctx, AlarmSecureChannel, ev.Address, ev.Reason)
@@ -607,6 +638,48 @@ func (c *Controller) record(ctx context.Context, ev entities.AccessEvent) {
 	if c.cfg.Decisions != nil && ev.RawCredential != "" {
 		c.cfg.Decisions(ctx, ev)
 	}
+}
+
+// contactReported turns an OSDP input report into a door-position change.
+//
+// INPUT 0 IS THE DOOR CONTACT. OSDP supervises a list of inputs and says nothing about what any of
+// them mean; the reference kit wires door position to the first, and the reader profile that would
+// let a site say otherwise is not built yet. A reader reporting no inputs is not an error — most
+// readers supervise none — so it is silently ignored rather than logged every second.
+func (c *Controller) contactReported(ctx context.Context, ev osdp.Event) {
+	if len(ev.Inputs) == 0 {
+		return
+	}
+	reader, err := c.store.ReaderByBus(ctx, c.cfg.BusPort, int(ev.Address))
+	if err != nil || reader == nil || reader.DoorId == 0 {
+		// A reader that is on the cable but not enrolled against a door has nothing to report
+		// about. Distinct from an error worth alarming on: this is the state of every reader
+		// between being plugged in and being commissioned.
+		return
+	}
+	c.markReader(ctx, ev.Address, "", ev.At)
+	c.ContactChanged(ctx, reader.DoorId, ev.Inputs[0])
+}
+
+// markReader persists what the bus just observed about a reader, best-effort.
+//
+// Best-effort on purpose: this is the operator's VIEW of the hardware, and failing to update a
+// screen must never interrupt the alarm or the decision that prompted it. An empty state leaves
+// the stored one alone (an input report says nothing about tamper); a zero time leaves LastSeenAt
+// alone.
+func (c *Controller) markReader(ctx context.Context, addr uint8, state string, seen time.Time) {
+	reader, err := c.store.ReaderByBus(ctx, c.cfg.BusPort, int(addr))
+	if err != nil || reader == nil {
+		return
+	}
+	at := int64(0)
+	if !seen.IsZero() {
+		at = seen.Unix()
+	}
+	if state == "" && at == 0 {
+		return
+	}
+	_ = c.store.MarkReader(ctx, reader.Id, state, at)
 }
 
 func (c *Controller) raise(ctx context.Context, kind string, addr uint8, detail string) {

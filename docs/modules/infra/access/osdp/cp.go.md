@@ -16,7 +16,13 @@ answering badges over a channel just decided to require encryption, before it ex
 
 ## Key Type: Event / EventKind
 
-`EventCard`, `EventKeypad`, `EventOnline`, `EventOffline`, `EventStatus`, `EventFault`. Card reads
+`EventCard`, `EventKeypad`, `EventOnline`, `EventOffline`, `EventStatus`, `EventInput`,
+`EventFault`. `EventStatus` carries the LSTATR flags (`Tamper`, `PowerFail`); `EventInput` carries
+the ISTATR contact states (`Inputs`), where **input 0 is the door-position contact and true means
+open** — a convention, not something OSDP states, since the protocol reports an input's electrical
+state and leaves the meaning to the installer (per-input polarity is not yet a reader-profile
+setting). Both are edge-triggered by `bus.go`: they arrive when the reading CHANGED, so a reader
+whose case is left open reports once rather than once per status interval forever. Card reads
 arrive as `EventCard` and nowhere else — a PD hands one over unprompted on a poll reply, so there
 is no call that returns a card and never will be. `Event.SecureSession`/`DefaultKeySession` (on
 `EventOnline`) are the *observed* fact of an established, keyed session, distinct from
@@ -45,8 +51,24 @@ queued operator/door command that jumps the round-robin, because badge-to-strike
 - `nextSeq()` — an OFFLINE reader always gets sequence 0 (the session-start value); you cannot be
   mid-session with a device that has not answered, since the CP's counter keeps advancing while
   the reader's does not.
-- `nextCommand()` — queued command, else the next identification step (`ID` then `CAP`), else
-  `Poll`.
+- `nextCommand(now, statusEvery)` — queued command, else the next identification step (`ID` then
+  `CAP`), else a due status command, else `Poll`.
+- `dueStatus(now, every)` / `inputCount()` — the supervision scheduler, and the reason `tamper`,
+  `door-forced` and `door-held-open` could not fire on any installation before it existed. A PD
+  answers `POLL` with an ACK or a queued card read and **never volunteers a status change**, so a
+  CP that only polls learns nothing about an enclosure being opened or a door being pushed. LSTAT
+  and ISTAT alternate (they answer different questions and interleaving costs one slot per interval
+  instead of two), and ISTAT is skipped entirely on a reader whose PDCAP claims no supervised
+  inputs — asking a keypad-only reader for a door contact earns a NAK every second, and a NAK is a
+  failed transaction, which is what declares a healthy reader offline.
+- `pollsSinceStatus` / `minPollsPerStatus` — supervision is capped as a FRACTION of a reader's
+  slots (one in four), not merely as a rate. A card read is queued at the PD and handed over on a
+  `POLL`, so a slot spent on LSTAT is a slot the card waits. That is a rounding error on a healthy
+  bus and a catastrophe on a sick one: every dead reader costs a full reply timeout, so a degraded
+  segment can take longer to go round than `StatusInterval` — at which point a purely time-gated
+  scheduler sends a status command every single time and **no badge is ever delivered**, while the
+  bus looks up and supervision looks healthy. Pinned by
+  `TestBusStatusNeverStarvesCardDelivery`.
 - `wantsSecureChannel(now)` — true only once identification has completed, because
   `DiversifySCBK` needs the reader's serial and PDCAP capability 9 says whether Secure Channel is
   even possible; challenging an unidentified reader means guessing at both.

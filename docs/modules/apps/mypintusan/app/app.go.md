@@ -144,9 +144,10 @@ a remote unlock issued through the tunnel audited on the node as `"cp:admin"`.
   first-run wizard, plus database-backed runtime settings replacing `config.json` as the source of
   truth after first boot.
 - **What remains**: no reader onboarding beyond the wizard's single reader (no bus discovery, no
-  SCBK rekey from the UI); no myiotsan bindings for door contacts/relay actuation
-  (`Controller.ContactChanged` is a seam nothing calls); and no serial bus transport (only `tcp://`
-  dials). `myseliasan` fleet adoption is now wired (see "Fleet adoption" above) — doors as
+  SCBK rekey from the UI); no myiotsan bindings for door contacts/relay actuation — a door contact
+  on the **reader's own supervised input** is now read and drives forced/held-open detection, but a
+  contact terminating on a myiotsan relay board (`Door.ContactDeviceKey`) still has no path in; and
+  no serial bus transport (only `tcp://` dials). `myseliasan` fleet adoption is now wired (see "Fleet adoption" above) — doors as
   placeable floor-plan assets and a `myiotsan` `RelayDeviceKey` binding remain out of scope. The
   groups/schedules/grants screens and APIs that used to be missing here now exist
   (`apis/access_rules.go.md`) — choosing which doors somebody reaches no longer needs direct

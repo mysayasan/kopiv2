@@ -27,7 +27,10 @@ type Bus struct {
 not flap a door), `SupervisionTimeout` (5s — declares a reader offline when it answers but never
 completes a *usable* transaction, closing the "NAKs everything forever" limbo hole a pure failure
 counter cannot catch), `SecureRetryBackoff`/`SecureRetryMax` (500ms→30s, damps a reader that
-establishes a session and immediately loses it), `EventBuffer` (256).
+establishes a session and immediately loses it), `StatusInterval` (1s — how often an online reader
+is asked for LOCAL status (tamper, mains) and INPUT status (the door contact) instead of a bare
+poll; it exists because a PD volunteers neither, see `cp.go.md`'s `dueStatus`), `EventBuffer`
+(256).
 
 ## Responsibilities
 

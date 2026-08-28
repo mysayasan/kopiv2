@@ -51,6 +51,11 @@ type BusConfig struct {
 	SlotMillis int `json:"slotMillis"`
 	// ReplyTimeoutMillis is how long a reader gets to answer.
 	ReplyTimeoutMillis int `json:"replyTimeoutMillis"`
+	// StatusMillis is how often an online reader is asked for its tamper state and its
+	// door-position contact instead of being given a bare poll. A PD volunteers neither, so a CP
+	// that never asks is blind to both: raising it trades alarm latency for bus headroom on a long
+	// multidrop segment, and 0 takes the driver's default.
+	StatusMillis int `json:"statusMillis"`
 }
 
 // ReaderConfig binds one PD address to its Secure Channel policy.
@@ -99,6 +104,9 @@ func Load(raw []byte) (*Config, error) {
 		}
 		if cfg.Buses[i].ReplyTimeoutMillis <= 0 {
 			cfg.Buses[i].ReplyTimeoutMillis = 200
+		}
+		if cfg.Buses[i].StatusMillis <= 0 {
+			cfg.Buses[i].StatusMillis = 1000
 		}
 	}
 	return cfg, nil

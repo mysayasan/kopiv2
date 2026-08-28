@@ -25,6 +25,7 @@ type BusSettings struct {
     Port               string
     SlotMillis         int
     ReplyTimeoutMillis int
+    StatusMillis       int // tamper + door-contact supervision cadence; default 1000
     Readers            []ReaderSettings
 }
 type ReaderSettings struct {

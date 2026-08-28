@@ -67,7 +67,13 @@ without sleeping.
   race was found by the nightly `-race` CI job (`.github/workflows/go-check.yml`) on the day it
   was added. Events are returned to the caller after the lock is dropped, so `emitDoorEvents`
   can never re-enter the machine under its own lock.
-- `ContactChanged` and `Tick`'s held-open detection are exercised in `doorstate_test.go`, but
-  **`Controller.ContactChanged` is never invoked in a real deployment** — see
-  `services/controller.go.md`'s Notes.
+- `ContactChanged` and `Tick`'s held-open detection are exercised in `doorstate_test.go`, and
+  `Controller.ContactChanged` is now driven in a real deployment by the reader's own supervised
+  input — see `services/controller.go.md`'s Notes for the myiotsan half that is still unwired.
+- `ContactBound()` answers from BOTH sources, because they are known at different times: a
+  myiotsan contact is CONFIGURED (`Door.ContactDeviceKey`), while a contact on the reader's
+  supervised input is DISCOVERED (`contactSeen`, set by the first report to arrive — before the
+  no-change return, since a closed door's first report says `false` and would otherwise be
+  swallowed). Answering only from configuration told an operator they had no forced-door detection
+  on every door whose contact is wired the ordinary way.
 - Covered by `doorstate_test.go`.
