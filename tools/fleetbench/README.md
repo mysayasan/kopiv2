@@ -95,6 +95,7 @@ python tools/fleetbench/bench_iotsan_modbus.py       # does a WRITE reach the wi
 python tools/fleetbench/bench_iotsan_commands.py     # does a failed command STAY failed?
 python tools/fleetbench/bench_iotsan_flows.py        # can the JS in a flow escape, or starve the rest?
 python tools/fleetbench/bench_iotsan_telemetry.py    # the deadband gate + can the rows come back OUT?
+python tools/fleetbench/bench_iotsan_discovery.py    # READ-ONLY/LAN-local/bounded/cancellable, against a real Modbus tripwire
 python tools/fleetbench/seed_iotsan_screens.py         # populated estate over the real broker + operator/viewer accts
 node   tools/fleetbench/uicheck_iotsan.js .artifacts/fleetbench en admin      # myiotsan's FIRST screen check (Part A + auto Part B)
 node   tools/fleetbench/uicheck_iotsan.js .artifacts/fleetbench ar admin      # Part A only, RTL (also ms, zh)
@@ -738,6 +739,73 @@ demands a confirmation stating the physical consequence, cancelling issues nothi
 produces exactly one `device_command` row attributed to the real user; a device with
 `actuationEnabled` off explains itself instead of offering a dead button; create/delete round-trip
 through the screen and reach the server.
+
+## myiotsan — active network discovery scanning
+
+`bench_iotsan_discovery.py`, **38/38 with the fix; 36/38 against unfixed main**. Every bench of
+this app so far acted on a device an admin had already entered: a known endpoint, a chosen
+profile, a deliberate command. Discovery inverts that — an admin types a network range and the
+appliance goes and touches everything in it, equipment it was never told about, possibly on an OT
+network, possibly mid-duty. `infra/iot/discover`'s package doc states the posture that is supposed
+to make that acceptable in one sentence — READ-ONLY, LAN-local, bounded, cancellable — and this
+bench takes each claim and tries to break it, because three of the four fail silently: a write a
+device accepts looks identical from the caller's side to a read it answered; a host that accepts a
+connection and then stalls looks identical to one that was never dialled; a sweep that quietly
+reached past the LAN returns the same `200 OK` a legitimate one does.
+
+`modbus_tripwire.py` is what makes the READ-ONLY claim measurable rather than assumed: a real
+Modbus TCP device that answers as a plausible SunSpec device (the longest, most-identifying code
+path the scanner has) and records the **function code** of every request it receives, split into
+reads and writes. It deliberately *accepts* a write with a success reply instead of an exception —
+a scanner that only falls back to a read on a write failure would otherwise hide the evidence by
+never sending one that fails. It also carries `Blackhole`, a socket that accepts a TCP connection
+and then says nothing, which is the only thing that actually exercises a per-host timeout: a closed
+port fails instantly and proves nothing about a bound.
+
+**It found one defect, and it is the claim stated most plainly: LAN-local was never enforced.** The
+multicast scanners (mDNS/SSDP/EtherNet-IP/BACnet) are link-local by construction — they take no
+target and broadcast to a fixed address — but the Modbus sweep takes its target from a CIDR string
+an admin types, and nothing checked it. Measured against a running appliance: a sweep of
+`192.0.2.0/24` (TEST-NET-1, public address space) was accepted and really ran, taking 6.4s; so was
+`127.0.0.1/32`, the appliance's own loopback. An unconstrained sweep target makes the endpoint a
+general-purpose port scanner for whoever holds the admin session, pointed wherever the appliance
+has a route — outward past the plant network, or inward at services bound to loopback that were
+never meant to face a network at all. Fixed in `discover.Hosts` — the one funnel every sweep target
+passes through — with a `checkLANLocal`/`isLANLocal` pair that refuses anything outside RFC 1918 +
+RFC 6598 CGNAT + RFC 3927 link-local + IPv6 ULA/link-local, plus loopback/unspecified/multicast
+outright. After the fix, the refusal is instant (0.0s) where the sweep used to cost 6.4s.
+
+**Everything else held, and is now proven live rather than merely designed that way**: against the
+tripwire, the whole scan issued exactly four requests, all function code 3 (read holding
+registers) at the SunSpec model-chain addresses — no write-single, write-multiple or mask-write
+ever arrived; a `/8` is refused before any probe goes out ("scan range too large"); a stalling host
+is bounded by the per-op timeout rather than left to the OS; abandoning the request mid-scan stops
+the scanner dialling (the blackhole's connection count froze and stayed frozen); a scan produces
+candidates and adds no device, an identified SunSpec hit gets a profile *suggested* not assigned,
+re-scanning refreshes rather than duplicates; operator and viewer are both refused
+`POST /api/discovery/scan` and `POST /api/discovery/window`; and a scan is recorded in the
+notification feed with what it found.
+
+**An honest limit, not a defect, worth writing down rather than tripping over later**: the scan is
+synchronous and holds its HTTP request open for the whole sweep. 256 unreachable hosts cost 6.4s at
+the shipped 800ms/host and 32-way concurrency, so the 1024-host cap is roughly 26s, and the full cap
+with all five scanners selected measured **41.7s**. That only completes because myiotsan's shipped
+`config.json` disables the write timeout (`writeTimeoutSeconds: 0`); apphost's default of 30s when
+the key is absent would be exceeded mid-scan. The host cap and that timeout are two numbers that
+have to move together — now stated on `ScanService`'s own doc comment
+(`apps/myiotsan/services/scanner.go`).
+
+Facts worth not rediscovering:
+
+- The tripwire and the blackhole each bind their own port (`TRIPWIRE_PORT`/`BLACKHOLE_PORT`); both
+  must be free before the bench starts, and both are on `HOST`'s address, not `127.0.0.1` — the
+  appliance dials out from inside its own network namespace.
+- `192.0.2.0/24` (TEST-NET-1, RFC 5737) is the right probe for the public-address-space question
+  precisely because it is reserved-for-documentation and unrouted — it proves the scanner does not
+  confine itself to the LAN without pointing a real sweep at anyone's real network.
+- The starvation check (Part 6) reads `GET /api/devices/stats`'s `dropped` count before and after a
+  scan rather than asserting a bare "did it error" — the same before/after shape
+  `bench_iotsan_flows.py` used to prove a flow worker was not being starved.
 
 ## mypintusan — the first bench of the app that opens doors
 

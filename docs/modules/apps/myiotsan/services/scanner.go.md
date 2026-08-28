@@ -10,10 +10,21 @@ then adopts through the identical review step, so the two onboarding paths conve
 pipeline rather than becoming two things an admin has to learn.
 
 Deliberately conservative, mirroring the properties `Enrollment`'s window already has: opt-in (an
-admin triggers it via `POST /api/discovery/scan`, admin-only — `apis/discovery.go.md`), bounded
-(host cap + per-scan timeout via `infra/iot/discover`), READ-ONLY (nothing in `infra/iot/discover`
-writes to a device), and audited (every scan publishes a `notification.CategorySystem` event, the
-same posture opening an enrollment window has).
+admin triggers it via `POST /api/discovery/scan`, admin-only — `apis/discovery.go.md`), LAN-local
+(`discover.Hosts` refuses a sweep target outside private address space — including the appliance's
+own loopback — before `ScanModbus` ever dials it), bounded (host cap + per-scan timeout via
+`infra/iot/discover`), READ-ONLY (nothing in `infra/iot/discover` writes to a device), and audited
+(every scan publishes a `notification.CategorySystem` event, the same posture opening an enrollment
+window has).
+
+**Timing, live-measured, worth reading before touching either constant**: a sweep of 256
+unreachable hosts costs about 6.4s at the shipped 800ms/host and 32-way concurrency, so the
+1024-host `scanHostCap` is roughly 26s, and the full cap with all five scanners selected measured
+41.7s. The scan is synchronous and holds its HTTP request open for the whole run; that only
+completes because myiotsan's shipped `config.json` sets `writeTimeoutSeconds: 0` (write timeout
+disabled) — apphost's default when the key is absent is 30s, which this scan would exceed. The host
+cap and that timeout are two numbers that must be changed together — see the doc comment on
+`ScanService` itself.
 
 ## Key Type: ScanService
 
@@ -82,4 +93,9 @@ identity reply per host).
   can type `192.168.1.0/24, 10.0.0.0/28` or one per line interchangeably.
 - No dedicated unit test file for this service (unlike `enrollment_test.go`) — verified instead
   by the live-boot in `docs/DISCOVERY_SCANNING.md` (scan → SunSpec-identify → candidate with
-  endpoint/unit prefilled and `generic-sunspec-solar` suggested → adopt → device).
+  endpoint/unit prefilled and `generic-sunspec-solar` suggested → adopt → device), and by
+  `tools/fleetbench/bench_iotsan_discovery.py` (38/38 with the LAN-local fix; 36/38 against the
+  unfixed app), which drives a real scan against a Modbus tripwire device
+  (`tools/fleetbench/modbus_tripwire.py`) that records the function code of every request it
+  receives, so READ-ONLY is a measured property of the traffic rather than an assumption about the
+  code path.

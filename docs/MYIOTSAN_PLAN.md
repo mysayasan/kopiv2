@@ -241,7 +241,7 @@ No new fleet port block is required: `myiotsan` dials the same `myseliasan` endp
 | **P0** | **Scaffolding.** `apps/myiotsan/`, `cmd/myiotsan/`, root `main.go` app map, `version.json` entry, config + dev certs, webpack FE off `@shared`, SPA shell that boots. Purely mechanical (§8). | ~3d |
 | **P1** | **Ingest spine.** `iot_device` CRUD, `device_profile` catalog, embedded MQTT broker, HTTP ingest, telemetry store + deadband + rollup + retention, live device page with `@shared/charts` TimeSeriesChart. | ~1.5wk |
 | **P2** | **Rules & alerts.** Port `detection_rule` → `iot_rule`, evaluators, `alert_event`, wire existing notification destinations. **P0–P2 is the shippable MVP.** | ~1.5wk |
-| **P3** | **Discovery & onboarding — SHIPPED 2026-07-14, see §8c.** Time-boxed enrollment window + quarantined candidate capture + admin adoption, profile-match suggestion, profile import/export, first-run wizard. mDNS/SSDP/portscan and a Modbus TCP scan were deliberately deferred to P5 at the time (see §8c) — **active network discovery scanning (Modbus/mDNS/SSDP/EtherNet-IP/BACnet) then shipped 2026-07-17, see `docs/DISCOVERY_SCANNING.md`.** | ~1wk |
+| **P3** | **Discovery & onboarding — SHIPPED 2026-07-14, see §8c.** Time-boxed enrollment window + quarantined candidate capture + admin adoption, profile-match suggestion, profile import/export, first-run wizard. mDNS/SSDP/portscan and a Modbus TCP scan were deliberately deferred to P5 at the time (see §8c) — **active network discovery scanning (Modbus/mDNS/SSDP/EtherNet-IP/BACnet) then shipped 2026-07-17, see `docs/DISCOVERY_SCANNING.md`.** **Live-benched 2026-08-28 (fifth live bench, see the "Hardened" note at the end of §8i): the stated LAN-local guarantee was not enforced for the Modbus sweep — fixed in `discover.Hosts`.** | ~1wk |
 | **P4** | **Actuation & twin — SHIPPED 2026-07-14, see §8d.** Commands, desired/reported, RBAC + audit + confirm (§3.4). | ~1wk |
 | **P5** | **Industrial protocols.** Modbus poller, OPC-UA. | ~1.5wk |
 | **P6** | **Fleet — SHIPPED 2026-07-14, see §8e.** Adoption by myseliasan; `Kind` column on `managed_node`; cross-domain correlation rules. A dedicated `nodeiot/` embed mirroring `nodecam/` (full remote device-management pages inside myseliasan, the way camera pages are embedded today) was **not** built in this pass — deliberately deferred to P7; see §8e "What was deliberately NOT built" and §8f. | ~2wk |
@@ -1491,6 +1491,69 @@ See `apps/myiotsan/services/rbac.go.md`, `apps/myiotsan/services/device.go.md`,
 `apps/myiotsan/entities/iot_device.go.md`, and `apps/myiotsan/services/ingest.go.md` for the
 file-level detail; `apps/myiotsan/README.md`'s "Role model" section for the operator-facing
 summary.
+
+### Hardened, 2026-08-28, by the fifth live bench of this app (active network discovery scanning)
+
+`tools/fleetbench/bench_iotsan_discovery.py`, **38/38 with the fix; 36/38 against unfixed main**.
+`infra/iot/discover`'s package doc has always made four claims about every scanner it ships:
+READ-ONLY, LAN-local, bounded, cancellable — plus, one layer up, that a scan proposes candidates
+and never adds a device, that it is opt-in/admin-only, and that it is audited. This bench takes
+each claim in turn and tries to break it, because three of the four fail silently: a device that
+accepts a write says nothing different from one that only answered a read, a host that accepts and
+then stalls looks identical to one that was never dialled, and a sweep that quietly reached past
+the LAN produces the same HTTP 200 a legitimate one does.
+
+**LAN-local was stated but never enforced, and this is the one defect the bench found.** The
+multicast scanners (mDNS/SSDP/EtherNet-IP/BACnet) are link-local by construction — they take no
+target and broadcast to a fixed address — but the Modbus sweep takes its target from a CIDR string
+an admin types, and nothing checked it. Measured on a running appliance: a sweep of `192.0.2.0/24`
+(TEST-NET-1, public address space) was accepted and really ran, taking 6.4s; so was a sweep of
+`127.0.0.1/32`, the appliance's own loopback. That makes the endpoint a general-purpose port
+scanner pointed wherever the appliance has a route — outward past the plant network, or inward at
+services bound to loopback that were never meant to face a network at all. Fixed in
+`discover.Hosts` (`infra/iot/discover/discover.go`), the single funnel every sweep target passes
+through: a new `checkLANLocal`/`isLANLocal` pair refuses anything outside RFC 1918 + RFC 6598 CGNAT
++ RFC 3927 IPv4 link-local + IPv6 ULA/link-local, and refuses loopback, unspecified and multicast
+addresses outright. A bare hostname is resolved and every address it yields must qualify; an
+unresolvable target is refused rather than scanned (fail closed); a list containing one bad target
+among good ones is refused whole rather than silently scanning the good half; and CIDR bounds are
+checked *before* expansion so a wide public range is refused on sight rather than after building
+and discarding a million strings. Five new unit tests in `infra/iot/discover/discover_test.go`.
+After the fix, the refusal is instant (0.0s) where the sweep used to take 6.4s, and a genuine LAN
+range still scans normally.
+
+**Everything else held, and is now proven live rather than merely designed that way.**
+READ-ONLY: against `tools/fleetbench/modbus_tripwire.py` — a real Modbus TCP device that answers
+as a plausible SunSpec device (the longest, most-identifying code path) and *records the function
+code* of every request, and which deliberately accepts writes with a success reply rather than an
+exception, so a writing scanner cannot fall back to a read path and hide the evidence — the entire
+scan issued exactly four requests, all function code 3 (read holding registers), at the SunSpec
+model-chain addresses (40000/40002/40004/40070) and nothing else; no write-single, write-multiple
+or mask-write ever arrived. Bounded: a `/8` is refused with "scan range too large (> 1024 hosts)"
+before any probe goes out; a host that accepts and then stalls (`Blackhole`, a socket that accepts
+TCP and says nothing — the only thing that actually exercises a per-host timeout, since a closed
+port fails instantly and proves nothing) is bounded by the per-op timeout rather than left to the
+OS; an answering-but-unidentifiable host still surfaces as an "unidentified Modbus" candidate.
+Cancellable: abandoning the request mid-scan stops the scanner dialling (the blackhole connection
+count froze at 3 and stayed 3 six seconds later). Proposes-never-adds: a scan produces candidates
+and adds no device; an identified SunSpec hit gets a profile *suggested*, not assigned;
+re-scanning refreshes rather than duplicates; adoption is what creates the device, carrying the
+scan's endpoint/unit/transport unretyped. Opt-in: operator and viewer are both refused
+`POST /api/discovery/scan` and `POST /api/discovery/window`; nothing scans on a timer; and a scan
+IS recorded in the notification feed with what it found ("network scan found 1 device(s)").
+
+**An honest limit worth recording, not a defect**: the scan is synchronous and holds its HTTP
+request open for its whole duration. Measured: 256 unreachable hosts cost 6.4s at the shipped
+800ms/host and 32-way concurrency, so the 1024-host cap is roughly 26s, and the full cap with all
+five scanners selected measured **41.7s**. That completes only because myiotsan's shipped
+`config.json` sets `writeTimeoutSeconds: 0` (write timeout disabled); apphost's default when the
+key is absent is 30s, which this scan would exceed. The host cap and that timeout are two numbers
+that must be changed together — noted on `ScanService`'s own doc comment
+(`apps/myiotsan/services/scanner.go`) for whoever tunes either next.
+
+See `infra/iot/discover/discover.go.md`, `infra/iot/discover/discover_test.go.md`,
+`apps/myiotsan/services/scanner.go.md`, and `docs/DISCOVERY_SCANNING.md` for the file-level and
+safety-posture detail.
 
 ## 9. Known risks
 

@@ -116,11 +116,17 @@ device, it only proposes candidates you then adopt through the same review step 
 
 **Every scan is read-only, admin-only, LAN-local, and bounded** (a 1024-host cap, a per-scan
 timeout, a concurrency cap) — nothing here ever writes to a device, and a scan is audited to the
-notification feed the same way opening an enrollment window is. See
-`docs/DISCOVERY_SCANNING.md` for the full safety posture, what each scanner has actually been
-verified against (Modbus/mDNS/SSDP live-booted end to end; EtherNet/IP and BACnet are
-parser-verified only — no real PLC was available to test against), and what was deliberately left
-out (OPC-UA discovery, Profinet DCP, a Matter controller, native TV/AV control) and why.
+notification feed the same way opening an enrollment window is. **LAN-local is enforced, not just
+claimed**: the Modbus sweep's admin-typed range is checked against private/link-local address space
+before it is ever dialled, refusing a public range or the appliance's own loopback outright (a gap a
+live bench found and closed 2026-08-28 — see `docs/DISCOVERY_SCANNING.md`). The scan holds its HTTP
+request open for the whole sweep — up to ~26s at the 1024-host cap, ~42s with all five scanners
+selected — which is why the shipped config disables the write timeout for this app; do not shorten
+it without raising the host cap's ceiling to match. See `docs/DISCOVERY_SCANNING.md` for the full
+safety posture, what each scanner has actually been verified against (Modbus/mDNS/SSDP live-booted
+end to end; EtherNet/IP and BACnet are parser-verified only — no real PLC was available to test
+against), and what was deliberately left out (OPC-UA discovery, Profinet DCP, a Matter controller,
+native TV/AV control) and why.
 
 ## Connecting a device manually
 
