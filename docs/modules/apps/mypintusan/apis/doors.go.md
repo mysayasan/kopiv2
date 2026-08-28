@@ -52,6 +52,15 @@ an interface specifically so the HTTP layer cannot reach an `osdp.Bus` or a
   to find the PD address, so a door left with `ReaderInId == 0` would grant a badge and then fail
   to open. This is the first-door step in the SPA's first-run wizard
   (`views/react-webpack/src/views/Wizard.js`).
+  `RequireSecureChannel` on the request struct is a **`*bool`**, not a `bool`: a nil pointer
+  (the field omitted) resolves through `entities.SecureChannelDefault(body.Class)` — on for
+  `perimeter`/`critical`, off otherwise — while an explicit `false` is honoured as the caller's
+  own escape hatch. Before this the field was passed straight through like a plain default-`false`
+  bool, so a `critical` or `perimeter` door created without mentioning Secure Channel silently got
+  none; measured live, a card on a plaintext reader opened a `critical` door. It matters more than
+  the neighbouring defaults (`UnlockSeconds`, `HeldOpenSeconds`, `OfflinePolicy`, all defaulted
+  already) because there is no `PUT /api/doors` — a door created with the wrong policy keeps it
+  for good.
 - `unlock` — reads the acting `LocalUser` from context (never from the request body — an
   attacker-supplied actor name in the audit log next to a door opening would be worse than no
   name at all, it would be a forged record), resolves the door, then calls `rt.Unlock`. A
@@ -73,6 +82,10 @@ an interface specifically so the HTTP layer cannot reach an `osdp.Bus` or a
 - Live-verified alongside the rest of the API surface: `GET /doors`, `GET /doors/{id}`,
   `GET /readers`, `POST /doors/{id}/unlock` (both while live and refused during lockdown),
   `GET`/`POST /lockdown` all exercised against a booted app with `tools/osdp-sim`.
+- `POST /doors`'s Secure Channel default (above) is live-benched by
+  `tools/fleetbench/bench_pintusan_securechannel.py`, which provisions a `critical`/`perimeter`
+  door mentioning nothing about Secure Channel and asserts on the STORED door, not just the
+  response the handler sent back.
 - `POST /doors` was exercised the same way, driven through the wizard's door step
   (`views/react-webpack/src/views/Wizard.js`) rather than by a direct API call. That path is what
   first exposed the shared SPA's request-double-encoding bug (`lib/api.js` — every write in the

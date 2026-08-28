@@ -557,7 +557,19 @@ func (b *Bus) secureChannelLost(pd *pdState, reason string) {
 		if pd.sc != nil {
 			pd.sc.fail()
 		}
-		if pd.status == StatusSecuring {
+		// ANNOUNCE THE DOWNGRADE, whichever state the reader was in.
+		//
+		// This used to fire only from StatusSecuring — a reader that never got a session up. But
+		// the harder case is the one this misses: a session that ESTABLISHES and then DROPS. That
+		// reader is already StatusOnline, so no event was emitted, and every consumer kept the
+		// `SecureSession: true` it was told at handshake — permanently. Measured against the
+		// simulator's `sc-drop` scenario: a door configured to require an encrypted session went
+		// on granting on a reader whose session had died, which is precisely the RS-485 tap this
+		// whole mechanism exists to defeat, and the PD's own comment calls it "the harder half".
+		//
+		// Re-announcing from Online too means the downgrade is a fact the caller learns, rather
+		// than one only the bus knows.
+		if pd.status == StatusSecuring || pd.status == StatusOnline {
 			pd.status = StatusOnline
 			sc, dflt := pd.security()
 			onlineEv = Event{At: time.Now(), Address: pd.address, Kind: EventOnline,

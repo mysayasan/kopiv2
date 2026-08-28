@@ -31,7 +31,9 @@ policy, and the myiotsan bindings a door needs to actuate and to know its own po
   drives the reader's own output instead, and `ContactChanged`, which nothing currently calls.
 - `RequireSecureChannel` — defaults on for perimeter/critical. No cleartext fallback: if the
   session fails to establish or drops mid-session, the reader is taken out of service and
-  alarmed (`services/decision.go.md` gate 2).
+  alarmed (`services/decision.go.md` gate 2). The default is applied by `SecureChannelDefault`
+  below; the field itself only ever holds what the caller actually asked for (or the default,
+  once resolved) — never an implicit `false`.
 - `OfflinePolicy` (`cached`/`deny`) and `OfflineTTLSeconds` (class-default override) — there is
   deliberately no allow-all; see `DefaultOfflineTTLSeconds`.
 - `AntiPassback` — `off`/`soft`/`hard`. Soft (log the violation, grant anyway) is the default;
@@ -41,6 +43,18 @@ policy, and the myiotsan bindings a door needs to actuate and to know its own po
 
 ## Methods
 
+- `SecureChannelDefault(class string) bool` — package-level, not a method: what
+  `RequireSecureChannel` should be when the caller creating a door said nothing either way.
+  `true` for `ClassPerimeter`/`ClassCritical`, `false` otherwise (including an unset/unknown
+  class). Interior is deliberately excluded — a cupboard on a spur of cheap non-SC readers is
+  the case the escape hatch exists for, and defaulting it on would take those doors out of
+  service on upgrade. Added because the rule was documented on `RequireSecureChannel`'s own
+  comment for months before anything applied it: `apis/doors.go.md`'s `create` handler passed
+  the request body's boolean straight through, so a `critical` door created without mentioning
+  Secure Channel came out with it **off** — measured live, a card on a plaintext reader opened
+  a `critical` door. There is no `PUT /api/doors`, so a door created with the wrong policy kept
+  it for good. Covered by `services/decision_test.go`'s
+  `TestSecureChannelDefault_OnForTheClassesThatFaceOutward`/`_OffForInterior`.
 - `DefaultOfflineTTLSeconds()` — the cache lifetime for this door's class when
   `OfflineTTLSeconds` does not override it: `critical` 8h, `perimeter` 24h, `interior` 72h. Past
   the TTL the door denies (`services/decision.go.md` gate 10) — the cache keeps a network blip
@@ -51,8 +65,12 @@ policy, and the myiotsan bindings a door needs to actuate and to know its own po
 
 ## Notes
 
-- **Not yet persisted.** No repository, no dbsql registration, no migration exists for this
-  entity; it is exercised only by in-memory test fakes.
+- Persisted via `dbsql.IGenericRepo[entities.Door]` (`services/store_sql.go.md`'s `SQLStore.doors`),
+  registered in `services/schema.go.md`'s migration set. This note previously said "not yet
+  persisted"; that stopped being true once the SQL store landed, and stayed stale in this file —
+  corrected here because `tools/fleetbench/bench_pintusan_securechannel.py`'s central assertion (a door
+  created with no `requireSecureChannel` gets the class default) is only meaningful because the
+  value it reads back came from the database, not an in-memory fake.
 - `Class`/`LockKind`/`OfflinePolicy`/`AntiPassback` constants are enumerated (`Class*`,
   `Lock*`, `Offline*`, `APB*`) as a closed set, matching the reason-code convention in
   `entities/access_event.go.md`.

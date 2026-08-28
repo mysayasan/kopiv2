@@ -88,6 +88,7 @@ node   tools/fleetbench/uicheck_idsan_webauthn.js .artifacts/fleetbench  # a REA
 python tools/fleetbench/bench_myseliasan_lockout.py  # myseliasan's lockout — it had NONE
 python tools/fleetbench/pintusan_harness.py     # mypintusan + a REAL OSDP reader on the bus
 python tools/fleetbench/bench_pintusan_door.py  # does the door open for the right person?
+python tools/fleetbench/bench_pintusan_securechannel.py  # can a reader you cannot trust still open a door?
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o .artifacts/fleetbench/bin/myiotsan ./cmd/myiotsan
 python tools/fleetbench/iotsan_harness.py            # myiotsan + its EMBEDDED broker
 python tools/fleetbench/bench_iotsan_actuation.py    # does anything reach a relay off-path?
@@ -856,6 +857,60 @@ Things it cost a run to learn:
   transient (12/12 succeeded once the bus was up) and the superseded command really did not
   execute — but it is the one action where an operator most needs to know whether the door
   opened, and a protocol string does not tell them.
+
+## mypintusan — the OSDP Secure Channel
+
+`bench_pintusan_securechannel.py`, **18/18** (13/18 against unfixed main). Item 1 of a new
+mypintusan hardening register — the app that physically opens doors, which had exactly one live
+bench before this (`bench_pintusan_door.py`, above). Secure Channel is the only thing standing
+between a screwdriver and a building: RS-485 is a two-wire bus in a ceiling void, and with no
+Secure Channel, card numbers cross it in clear and replies replay. Every other gate in the
+decision path — schedule, grant, revocation — is reasoning about a credential the reader TOLD it
+about, so all of them are worth exactly what the reader's word is worth.
+
+`tools/osdp-sim` shipped six Secure Channel scenarios and three of them — `refuse-sc`, `no-sc`,
+`wrong-key` — had never actually badged a card, so they could prove a session was refused and
+nothing about what happens next, which is the half of "must fail closed" that matters. They now
+run a card loop like the other three. Each episode in this bench is a **fresh boot**: a reader's
+key and its `RequireSecureChannel` policy are seeded from config on first boot only, and there is
+no API to change either afterwards, so "what happens with the wrong site key" can only be asked
+of a new appliance.
+
+Two real defects, both fixed:
+
+- **A session that established and then dropped left the door granting on cleartext.**
+  `infra/access/osdp/bus.go`'s `secureChannelLost` only re-announced the downgrade from
+  `StatusSecuring` — a reader that never got a session up. The harder case is the one that missed:
+  a session that establishes and then drops leaves the reader `StatusOnline`, so no event fired
+  and every consumer kept the `SecureSession: true` it was told at handshake, permanently.
+  Measured against the simulator's `sc-drop` scenario: a door requiring an encrypted session went
+  on granting badges on a reader whose session had died. Fixed by re-announcing from `StatusOnline`
+  too, so the downgrade is a fact the caller learns rather than one only the bus knows.
+- **A `critical`/`perimeter` door created without mentioning Secure Channel did not require one.**
+  `entities/door.go`'s own field comment has always said `RequireSecureChannel` "defaults on for
+  perimeter and critical," but the create handler passed the request body's boolean straight
+  through while every neighbouring field (`UnlockSeconds`, `HeldOpenSeconds`, `OfflinePolicy`) got
+  a real default. Measured: a card on a plaintext reader opened a `critical` door. Fixed with
+  `entities.SecureChannelDefault(class)` and turning the request field into a `*bool`, so "the
+  caller said false" is distinguishable from "the caller said nothing." This one mattered more
+  than an ordinary defaulting bug because **there is no `PUT /api/doors`** — a door created with
+  the wrong policy keeps it for good.
+
+Proven good and unchanged, recorded rather than reported as fixed: a healthy secure session
+grants; `no-sc` and `refuse-sc` both deny with the specific reason `secure-channel-failed`, not a
+vaguer one; a door that does **not** require SC still works with a reader that cannot do it, so
+the guard is not a blanket no; a key mismatch never becomes a cleartext session and IS alarmed
+(`access.secure-channel`, "Reader secure channel fault").
+
+**A feature gap, found and reported, not built:** `Reader.ScbkState` is written once at creation
+as `default` and never updated — `ScbkRekeyed`/`ScbkFailed` are declared in `entities/reader.go`
+and assigned nowhere. `infra/access/osdp/pd.go` already answers a PDCAP capability request and
+`bus.go` already carries the result as `Event.DefaultKeySession`/`Event.DefaultKey`, but nothing
+in `apps/mypintusan` reads either field. The simulator's own `default-scbk` description names the
+rule that is therefore unimplemented: such a reader "must be capped at `interior` until rekeyed."
+The direction of the error is the safe one — the app never claims a reader is rekeyed without
+evidence — but it cannot distinguish a factory-keyed reader from a properly keyed one, and no
+trust cap is applied.
 
 ## `onvifsim.py` — a real ONVIF device, on demand
 

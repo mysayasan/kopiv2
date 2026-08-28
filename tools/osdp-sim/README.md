@@ -72,14 +72,20 @@ is a row of the fault table in [`MYPINTUSAN_OSDP_PLAN.md` §4.1](../../docs/MYPI
 | `garbage` | Frame **resynchronisation** — junk, a broken frame, more junk, then recovery |
 | `silent` | Offline supervision + degraded-mode alert |
 | `one-down` | One PD dies; the others on the bus keep working |
-| `refuse-sc` | **Fail-closed**: reader out of service and alarmed, never a cleartext fallback |
-| `no-sc` | Reader cannot do Secure Channel at all (PDCAP drops the AES-128 bit) |
+| `refuse-sc` | **Fail-closed**: reader out of service and alarmed, never a cleartext fallback — badges a card so the claim is actually demonstrated |
+| `no-sc` | Reader cannot do Secure Channel at all (PDCAP drops the AES-128 bit), and badges anyway |
 | `default-scbk` | Reader still on the well-known default base key → capped at `interior`, UI nag |
 | `tamper` | `LSTATR` / `RSTATR` alarm path |
 | `slow` | A near-timeout reply does not starve the other PDs on the bus |
 | `secure` | Secure Channel happy path: handshake on the site key, then encrypted traffic |
 | `sc-drop` | Session **establishes then drops** mid-conversation — the harder fail-closed case |
-| `wrong-key` | Reader holds a different site key — must fail closed, not downgrade |
+| `wrong-key` | Reader holds a different site key — must fail closed, not downgrade; badges a card |
+
+`refuse-sc`, `no-sc` and `wrong-key` used to configure the fault and stop there — proving a
+session was refused, which is the easy half. "Must fail closed" is a claim about what happens
+**when somebody badges**, so all three now run the same `cardLoop` `secure`/`sc-drop`/
+`default-scbk` already did, and a bench can assert on the resulting access decision instead of
+just the handshake outcome. See `tools/fleetbench/bench_pintusan_securechannel.py`.
 
 `refuse-sc`, `sc-drop` and `wrong-key` are the security-critical ones. They are also precisely the
 cases nobody tests, because a real reader will not do any of them on request.

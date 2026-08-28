@@ -44,6 +44,29 @@ func baseline() Snapshot {
 	}
 }
 
+// The class default for Secure Channel. It was documented on the field for months and applied
+// nowhere: a critical door created without mentioning it came out FALSE, and a card on a
+// plaintext reader opened it.
+
+func TestSecureChannelDefault_OnForTheClassesThatFaceOutward(t *testing.T) {
+	for _, class := range []string{entities.ClassPerimeter, entities.ClassCritical} {
+		if !entities.SecureChannelDefault(class) {
+			t.Errorf("%s doors must require a Secure Channel by default", class)
+		}
+	}
+}
+
+func TestSecureChannelDefault_OffForInterior(t *testing.T) {
+	// The escape hatch, and why it exists: a cupboard on a spur of cheap non-SC readers. Turning
+	// this on by default would take those doors out of service on upgrade.
+	if entities.SecureChannelDefault(entities.ClassInterior) {
+		t.Error("interior doors must not require a Secure Channel by default")
+	}
+	if entities.SecureChannelDefault("") {
+		t.Error("an unset class must not silently require a Secure Channel")
+	}
+}
+
 func TestDecideGrantsTheHappyPath(t *testing.T) {
 	d := Decide(baseline(), testPIN)
 	if !d.Granted {

@@ -65,4 +65,7 @@ overridden by anything later, and an unknown card never reaches a schedule looku
 
 - Reachable from both `services.Controller` (online, live `Store`) and — once a cache replica
   exists — an offline path; today only the online caller exists (`services/controller.go.md`).
-- Covered by `decision_test.go`, table-driven over the ten gates above.
+- Covered by `decision_test.go`, table-driven over the ten gates above. Also carries two tests
+  unrelated to the gate table — `TestSecureChannelDefault_OnForTheClassesThatFaceOutward`/
+  `_OffForInterior`, over `entities.SecureChannelDefault` (`entities/door.go.md`) — placed here
+  alongside `Decide`'s own Secure Channel gate (2) rather than in a new file for one function.
