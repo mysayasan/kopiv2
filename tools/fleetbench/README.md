@@ -94,6 +94,7 @@ python tools/fleetbench/bench_iotsan_actuation.py    # does anything reach a rel
 python tools/fleetbench/bench_iotsan_modbus.py       # does a WRITE reach the wire, and move plant?
 python tools/fleetbench/bench_iotsan_commands.py     # does a failed command STAY failed?
 python tools/fleetbench/bench_iotsan_flows.py        # can the JS in a flow escape, or starve the rest?
+python tools/fleetbench/bench_iotsan_telemetry.py    # the deadband gate + can the rows come back OUT?
 ```
 
 `bench_idsan_lockout.py` is the only myidsan bench that stands up a **cluster**: a Postgres
@@ -613,6 +614,69 @@ How the starvation half is driven, because the measurement is the whole argument
 - The burst size is 200 readings on purpose. At 100 the unfixed app landed at 9.7 s against a 10 s
   budget, and a knife edge is not a measurement.
 
+
+## myiotsan — the deadband gate and telemetry read-back
+
+`bench_iotsan_telemetry.py`, **50/50** (33/44 against unfixed main). `entities/telemetry_key.go`
+states the claim this bench exists to test: "THE DEADBAND IS THE STORAGE DESIGN." `deadband_test.go`
+already pins `Admit()` as a pure function, and it passes — what a unit test cannot see is
+everything around it: whether an edited deadband reaches the hot path without a restart, whether a
+deleted device's baseline is dropped, whether liveness really bypasses the gate, and whether the
+rows the gate was careful to keep can actually be READ BACK. A store that admits the right samples
+and then cannot show them is the same outage as a store that dropped them.
+
+**The gate itself held completely.** First-sample admission, the `>=` boundary, a baseline that
+does not creep across a slow sub-deadband drift, heartbeat-before/after, a deadband edit taking
+effect with no restart, and the property `services/ingest.go` calls "the worst possible bug this
+app could contain" — a suppressed sample still reaching the rule engine — all measured, all
+correct, against a real broker and a real device. What broke was the read-back half.
+
+**A chatty key crowded every other key off the device page.** `Latest` folded a device's newest
+500 rows in memory, on the reasoning that "the tail is small because the deadband keeps it small"
+— true per key, not for a device as a whole. Publishing 520 rows on one key of a seven-key device
+left the "current value of every key" panel showing exactly one key. `Latest` now takes the
+profile's declared key list and does one indexed seek per key instead of sharing a tail.
+
+**A wide chart drew the wrong end of the window.** `/readings` asked the database for the first
+`maxPoints` rows ascending, which is the OLDEST slice of a window over the cap — a chart of a busy
+key over a wide range drew the start of the range and stopped, indistinguishable from a device
+that died. It now reads newest-first and reverses, so the cap discards the old end.
+
+**The rollup table had zero readers.** `Series`'s own comment had always promised that over the
+cap "it reads the ROLLUPS instead, which is what they exist for." Nothing called `Rollups`.
+Confirmed live: a 24-hour window on a busy key now comes back `span=1m`, reaching both ends of the
+range — the recent end via a raw top-up of what the worker has not folded yet, the old end via the
+buckets themselves — where before it silently returned the same truncated raw slice regardless of
+how wide the window claimed to be. `/readings` now answers `{items, span, truncated}` instead of a
+bare list, so a chart drawing hourly summaries has to say so.
+
+**A rollup bucket could be permanently wrong, and the worker had never once run to find out.**
+`rollupOnce`'s cutoff was `now - width`, not a bucket boundary — at 10:01:30 that cuts mid-bucket,
+writes the 10:00 bucket from half its data, and advances the cursor past the readings from
+10:00:30 to 10:00:59 with nothing left to fold them. The shipped interval was a hardcoded,
+unsettable hour, so on every bench this app has had, the rollup worker had never actually run. A
+new `telemetry_store.rollupIntervalMs` (default unchanged at 1h; the harness sets it to 5s) let
+this bench watch its arithmetic directly against the raw table — no API exposes a bucket — and
+confirm every 1-minute bucket's count/min/max matches the raw rows underneath it, no bucket is
+written twice, and the still-filling current bucket is never rolled up early.
+
+**The deadband gate never forgot a deleted device.** `DeadbandGate.Forget` shipped with a comment
+naming exactly why it exists and had zero production callers, only its own unit test — the gate
+map is the one structure `services/ingest.go` calls unbounded. This bench deletes a device,
+creates a replacement (SQLite reissues the freed rowid, so the replacement can land on the same
+id), and checks the new device's first reading is stored rather than compared against the deleted
+device's last value, then checks `myiotsan_ingest_series` actually falls after the delete.
+
+**`written` was the sum of insert ids.** `ReadingWriter` added `CreateMultiple`'s return value —
+the driver's last insert id — into a running total instead of counting rows, so the number an
+operator compares against `stored` to see whether the batcher is keeping up grew with the size of
+the table: 2,666 readings stored, 3,555,111 reported written. Checked directly against a row count
+of the SQLite file itself, not against the app's own claim about itself.
+
+`db()` (new in `iotsan_harness.py`) is why the rollup and `written` checks are real: it copies the
+app's live SQLite file (WAL/shm included, to avoid a torn read against a database the app holds
+open) into a scratch directory and queries it directly. Asking the app whether it stored something
+correctly is asking the accused to testify; this is the bench's own eyes on the table.
 
 ## mypintusan — the first bench of the app that opens doors
 

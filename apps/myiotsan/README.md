@@ -199,6 +199,19 @@ evaluated on every decoded sample, including ones the deadband suppressed. A val
 steadily over a threshold without moving does not get a new row, but it still fires an alert —
 gating rules behind the deadband would mean a steady overheat is never alerted on.
 
+**Deleting a device now forgets its baseline.** The gate's last-value map is the one structure in
+the ingest path that is unbounded by design — `myiotsan_ingest_series` (below) exists so it can be
+watched — and a device delete (`DELETE /devices/{id}`) now calls `Ingest.ForgetDevice`, so a site
+that replaces sensors over years does not accumulate a baseline for every device it has ever had,
+and a replacement device that lands on a reused id does not have its first reading compared
+against a stranger's last value.
+
+**The device page's "current value of every key" reads each key on its own, not a shared tail.**
+`Latest` used to read a device's newest 500 rows and fold them down, which crowds a quiet key off
+the page once a chatty one fills the tail — measured live, one key writing 520 rows made a
+seven-key device show exactly one. It now does one indexed seek per key the device's profile
+declares.
+
 ## Rules and alerts
 
 An `IotRule` watches one device, every device sharing a `tag`, or every device reporting a key.
@@ -613,7 +626,9 @@ node") for the operator-facing side of this.
   future connect mode; the ingest pipeline does not care where a payload came from.
 - `telemetry_store` — `batchSize`/`flushMs`/`queueSize` tune the write-behind batcher;
   `rawRetentionDays` (default 30) / `rollupRetentionDays` (default 400) tune how long raw
-  readings and their downsampled rollups survive.
+  readings and their downsampled rollups survive; `rollupIntervalMs` (default 1 hour, not shipped
+  explicitly in `config.json`) is how often the rollup-and-retention worker runs — a maintenance
+  cadence, not something exposed in the Settings UI.
 - No new fleet ports: adoption into a `myseliasan` fleet (see "Fleet" above) dials the same
   discovery/pairing/control ports mymatasan nodes already use.
 
@@ -637,7 +652,7 @@ raise an error a human sees; these metrics instrument exactly those silent failu
 | `myiotsan_ingest_suppressed_total` | gauge (sampled counter) | — | Readings the deadband dropped as unchanged. This ratio *should* sit high (90%+ on real building sensors) — that's the storage design working. Falling toward zero means a deadband has been mistuned. |
 | `myiotsan_ingest_dropped_total` | gauge (sampled counter) | — | **The headline metric.** Readings shed because the write queue was full — ingest has outrun the disk. Silent data loss: the broker keeps accepting and the UI keeps rendering, so without this, nothing else shows it. Verified live at `86` against a torrent that outran the disk. Alert on any increase. |
 | `myiotsan_ingest_queue_depth` | gauge | — | Current write-queue depth — the leading indicator of drops, before readings are actually lost. |
-| `myiotsan_ingest_series` | gauge | — | Distinct `(device, key)` series the deadband gate is tracking. |
+| `myiotsan_ingest_series` | gauge | — | Distinct `(device, key)` series the deadband gate is tracking — the one unbounded structure on the ingest path, watchable here; a device delete now forgets its series so this does not grow forever. |
 | `myiotsan_devices_online` / `myiotsan_devices_offline` | gauge | — | Fleet health at a glance. Offline is the one to alert on — a sensor gone silent is a monitoring blind spot, and a smoke detector gone silent is worse. |
 | `myiotsan_commands_total` | counter | `outcome` (`confirmed`/`failed`/`refused`) | Actuation command outcomes. A rising `failed` is devices not acting; a rising `refused` is somebody repeatedly trying something they aren't allowed to. |
 | `myiotsan_flow_events_dropped_total` | gauge (sampled counter) | — | Telemetry events the Flow Engine SHED because its worker queue overflowed. Same silent-loss shape as `myiotsan_ingest_dropped_total`, one layer up: the reading still lands and the chart still draws, only the automation on top of it quietly stops. Alert on any increase. |
@@ -736,6 +751,12 @@ Two things on the Dashboard deserve an operator's attention:
 - **Dropped** readings get their own alarm block rather than a slot in a counter row. A
   non-zero, growing value is the one number that means ingest has outrun the disk and readings
   are being shed.
+
+A device's telemetry chart carries its own subtitle stating what it drew: a plain window of raw
+samples says nothing extra, but a window served from downsampled buckets says so (`1m`/`1h`
+averages) and a window that had to be cut off for lack of rollup coverage says that too — a chart
+that silently swapped raw samples for hourly summaries, or silently dropped the older half of a
+window, would be a chart that lies about what it is showing.
 
 The alert log has **no delete button**, deliberately: acknowledging is an operator power,
 erasing the record is not.

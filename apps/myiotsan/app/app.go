@@ -421,6 +421,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	telemetry.RunRollup(bgCtx, services.RetentionConfig{
 		RawDays:    effTelemetry.RawRetentionDays,
 		RollupDays: effTelemetry.RollupRetentionDays,
+		Interval:   time.Duration(appCfg.Telemetry.RollupIntervalMs) * time.Millisecond,
 	})
 
 	// The offline sweep. An "offline" rule cannot be driven by a reading — its whole subject is

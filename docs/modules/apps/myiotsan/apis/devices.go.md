@@ -13,12 +13,21 @@ Registers the device inventory and its telemetry under `/api/devices`.
     dropped/queued/series) — the ratio of suppressed to stored IS the storage design working or
     not, and `dropped > 0` means the disk cannot keep up; both are things an operator has to be
     able to see rather than infer.
-  - `GET/PUT/DELETE /devices/{id}` — read / edit / remove.
+  - `GET/PUT/DELETE /devices/{id}` — read / edit / remove. `remove` also calls
+    `ingest.ForgetDevice(id)` (`services/ingest.go.md`) so the deadband gate's baseline for this
+    device does not outlive it.
   - `POST /devices/{id}/password` — rotate the device's broker credential (admin-only per
     `services/rbac.go`).
   - `GET /devices/{id}/readings` — a time series for one `key` (query param), with `from`/`to`
-    unix-second bounds; what the device chart reads. Operator-and-up per RBAC.
+    unix-second bounds, capped at `seriesMaxPoints` (2000); what the device chart reads.
+    Operator-and-up per RBAC. Answers `{items, span, truncated}` — `span` is `"raw"`/`"1m"`/
+    `"1h"` (the resolution the points actually carry) and `truncated` is true only when the
+    window held more raw points than the cap and no rollup covered it yet. See
+    `services/telemetry.go.md`'s `SeriesPage`.
   - `GET /devices/{id}/latest` — current value of every key; what the device page header shows.
+    Resolves the calling device's profile and passes its declared key list into
+    `TelemetryService.Latest` — a device with no profile (or an unresolvable one) passes no keys
+    and `Latest` falls back to its tail scan.
 - `create` returns the generated broker password in the response body **and nowhere else,
   ever**.
 - Shared helpers used across this package: `readPaging` (limit/offset query parsing),

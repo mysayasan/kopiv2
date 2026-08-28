@@ -182,10 +182,16 @@ decoder. This is a change from P0, where `module` was an empty `struct{}`.
       /api/discovery/scan` can run it. See `services/scanner.go.md` and `infra/iot/discover`'s
       module docs; this is the counterpart to the announce path that feeds the identical
       quarantined `DiscoveredDevice` candidate list.
-  10. Starts `telemetry.RunRollup(bgCtx, ...)` (rollup before purge — see `telemetry.go.md`) and
-      a `safego.Supervise`d offline sweep (`ruleService.SweepOffline`) on a 1-minute
+  10. Starts `telemetry.RunRollup(bgCtx, services.RetentionConfig{RawDays, RollupDays,
+      Interval: appCfg.Telemetry.RollupIntervalMs})` (rollup before purge — see `telemetry.go.md`)
+      and a `safego.Supervise`d offline sweep (`ruleService.SweepOffline`) on a 1-minute
       `offlineSweepInterval` — the only way an "absence of readings" rule can ever fire, since a
-      silent device never calls `Handle` again.
+      silent device never calls `Handle` again. `RawDays`/`RollupDays` come from `effTelemetry`
+      (the runtime-editable settings store, step 8a); `Interval` deliberately comes straight from
+      raw `appCfg`, not `effTelemetry` — it is a maintenance cadence, not an operator setting.
+      Before `RollupIntervalMs` existed, this call always got the zero value and fell through to
+      `RunRollup`'s own 1-hour default with no way to shorten it for a bench, so the rollup worker
+      had never actually been observed running.
   10b. **Wires actuation (P4)**: `services.NewCommandService(deps.Db, deviceService,
       broker.Publish, audit, deps.Metrics, logf)` — `audit` publishes every attempt, INCLUDING every refusal,
       as a `notification.CategorySystem`/`Warning` notification ("somebody tried to unlock the
@@ -459,3 +465,16 @@ adopted myiotsan node) were booted together for a live end-to-end check. See
   site location, saved and test-fired a webhook (confirming `Configure` reached the live hub),
   saved telemetry retention (confirming defaults are preserved for unset fields), read pairing
   status, and read version/health.
+- **The deadband gate and telemetry read-back path, live-benched 2026-08-28**
+  (`tools/fleetbench/bench_iotsan_telemetry.py`, 50/50 with the fixes, 33/44 without): `Latest`
+  now takes the calling profile's declared key list and does one indexed seek per key instead of
+  folding a 500-row device-wide tail (a chatty key was crowding every other key off the device
+  page); `Series` now reads a window newest-first so its cap discards the OLD end, actually reads
+  `Rollups` over the cap (previously zero callers), and tops the rollup up with the raw tail not
+  yet folded, answering `{items, span, truncated}`; `rollupOnce`'s cutoff is floored to a bucket
+  boundary instead of `now - width`, fixing a permanent mid-bucket undercount; a device delete now
+  calls the new `Ingest.ForgetDevice` so the deadband gate's baseline map does not outlive it; and
+  `ReadingWriter`'s `written` counter counts rows handed to a batch instead of summing the
+  driver's last-insert-id return value. See `services/telemetry.go.md`, `services/ingest.go.md`,
+  `services/reading_writer.go.md`, `config/config.go.md`'s `RollupIntervalMs`, and
+  `docs/MYIOTSAN_PLAN.md`'s hardening entry for the full writeup.

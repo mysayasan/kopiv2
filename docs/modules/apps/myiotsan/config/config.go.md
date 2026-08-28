@@ -37,6 +37,15 @@ appliance keeps up:
 - `RawRetentionDays` (default 30) — how long individual readings survive.
 - `RollupRetentionDays` (default 400, over a year) — how long the downsampled buckets survive;
   longer than the raw rows so last summer stays comparable to this one.
+- `RollupIntervalMs` (default 1 hour, unchanged shipped cadence) — how often the rollup-and-
+  retention worker (`services.TelemetryService.RunRollup`) runs. Deliberately here rather than in
+  the runtime-editable Telemetry settings screen (`services/telemetry_settings.go.md`): it is a
+  maintenance cadence, not an operator tuning knob, and a background job with no way to make it
+  run is a job nobody has ever watched do its work — on every bench of this app before this field
+  existed, the rollup worker had never run once. Not present in the shipped `config.json`/
+  `config.dev.json` (unlike the other `telemetry_store` fields above), so both fall through to
+  the 1-hour `normalize()` default; a bench harness sets it explicitly (5s) to exercise the
+  worker on a short run.
 
 ## Notes
 
@@ -45,4 +54,6 @@ appliance keeps up:
 - `apps/myiotsan/config.json`/`config.dev.json` both ship the same defaults explicitly
   (`mqtt.enabled: true`, `mqtt.addr: "0.0.0.0:1883"`, and the `telemetry_store` block) — the
   explicit values in the shipped files and this file's `normalize()` defaults intentionally
-  agree.
+  agree, with one deliberate exception: `rollupIntervalMs` is left out of both shipped files, so
+  it always resolves through `normalize()`'s 1-hour default rather than a value an installer
+  could accidentally shorten.

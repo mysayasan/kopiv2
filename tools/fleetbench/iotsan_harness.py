@@ -88,6 +88,10 @@ def app_config():
         "queueSize": 8192,
         "rawRetentionDays": 30,
         "rollupRetentionDays": 400,
+        # The rollup + retention worker's cadence. Shipped default is an hour, which is right for
+        # a site and means the worker had NEVER RUN on any bench in this file's history — a
+        # background job nobody has ever watched do its work. Five seconds makes it observable.
+        "rollupIntervalMs": 5000,
     }
     # A bench issues commands in bursts; the shipped per-endpoint rate limit is not what is under
     # test here (the per-DEVICE actuation rate limit is, and that one stays on).
@@ -441,6 +445,32 @@ class DeviceWire:
 
 def logs(tail=60):
     return sh("docker", "logs", "--tail", str(tail), NAME, check=False)
+
+
+def db():
+    """Open a snapshot of the app's SQLite file — the bench's OWN eyes on the store.
+
+    Same reasoning as the Modbus client above: asking the app whether it stored something is
+    asking the accused to testify. This reads the table the app writes, through a different
+    process, which is the only way to check a background worker's ARITHMETIC (does a rollup
+    bucket's count match the raw rows in that bucket?) when no API exposes its output.
+
+    The file is copied first, WAL and shm included: the app holds it open in WAL mode, and
+    reading a live WAL database from another process is how you get a torn read that looks like
+    a product bug."""
+    import shutil
+    import sqlite3
+    import tempfile
+
+    src = os.path.join(ROOT, NAME, "myiotsan.db")
+    tmp = tempfile.mkdtemp(prefix="iotbench-db-")
+    for suffix in ("", "-wal", "-shm"):
+        path = src + suffix
+        if os.path.exists(path):
+            shutil.copy(path, os.path.join(tmp, "myiotsan.db" + suffix))
+    con = sqlite3.connect(os.path.join(tmp, "myiotsan.db"))
+    con.row_factory = sqlite3.Row
+    return con
 
 
 def main():

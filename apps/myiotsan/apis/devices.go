@@ -102,6 +102,8 @@ func (a *devicesApi) remove(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return
 	}
+	// The gate must forget this device's baselines, or they outlive it — see Ingest.ForgetDevice.
+	a.ingest.ForgetDevice(id)
 	controllers.SendResult(w, map[string]any{"deleted": id}, "succeed")
 }
 
@@ -118,6 +120,11 @@ func (a *devicesApi) rotate(w http.ResponseWriter, r *http.Request) {
 	controllers.SendResult(w, map[string]any{"password": password}, "succeed")
 }
 
+// seriesMaxPoints caps one chart's points. A chart 900 pixels wide cannot draw more, and over
+// the cap the series is served from rollups rather than by discarding the recent end of the
+// window — see TelemetryService.Series.
+const seriesMaxPoints = 2000
+
 // readings returns a time series for one key. Charts read this.
 func (a *devicesApi) readings(w http.ResponseWriter, r *http.Request) {
 	id, ok := readID(w, r)
@@ -132,12 +139,17 @@ func (a *devicesApi) readings(w http.ResponseWriter, r *http.Request) {
 	}
 	from, _ := strconv.ParseInt(q.Get("from"), 10, 64)
 	to, _ := strconv.ParseInt(q.Get("to"), 10, 64)
-	rows, err := a.telemetry.Series(r.Context(), id, key, from, to, 2000)
+	page, err := a.telemetry.Series(r.Context(), id, key, from, to, seriesMaxPoints)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
-	controllers.SendResult(w, map[string]any{"items": rows}, "succeed")
+	// `span` and `truncated` travel with the points because a chart that silently changes what
+	// it is drawing is a chart that lies: over a wide window these are rollup buckets, not the
+	// sensor's own samples, and the page has to be able to say so.
+	controllers.SendResult(w, map[string]any{
+		"items": page.Items, "span": page.Span, "truncated": page.Truncated,
+	}, "succeed")
 }
 
 // latest is what the device page shows at the top: the current value of every key.
@@ -146,7 +158,18 @@ func (a *devicesApi) latest(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	latest, err := a.telemetry.Latest(r.Context(), id)
+	// The profile's declared keys, so every key gets its own seek instead of all of them
+	// competing for room in one shared tail — see TelemetryService.Latest. A device with no
+	// profile passes none, and falls back to the tail.
+	var keys []string
+	if dev, err := a.devices.GetById(r.Context(), id); err == nil && dev != nil && dev.ProfileId > 0 {
+		if declared, err := a.profiles.KeysFor(r.Context(), dev.ProfileId); err == nil {
+			for _, k := range declared {
+				keys = append(keys, k.Key)
+			}
+		}
+	}
+	latest, err := a.telemetry.Latest(r.Context(), id, keys)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return

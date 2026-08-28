@@ -1348,6 +1348,74 @@ side: what a flow that CANNOT run costs, and what one COMPILED script can cost t
   `docs/modules/infra/db/sql/scan_limit.go.md`. Not a Flow Engine bug, but the Flow Engine is what
   surfaced it: an install's hundred-and-first enabled flow was listed nowhere and never ran.
 
+### Hardened, 2026-08-28, by the third live bench of this app (the deadband gate + telemetry read-back)
+
+`tools/fleetbench/bench_iotsan_telemetry.py` (50/50 with the fixes, 33/44 against unfixed main)
+asked the load-bearing claim `entities/telemetry_key.go` makes in so many words — "THE DEADBAND
+IS THE STORAGE DESIGN" — and drove it against a real broker instead of `deadband_test.go`'s pure
+`Admit()` calls. **The gate itself held completely**: first-sample admission, the `>=` boundary,
+baseline-does-not-creep across a slow sub-deadband drift, heartbeat-before/after, an edited
+deadband taking effect with no restart, and — the property `services/ingest.go` calls "the worst
+possible bug this app could contain" — a suppressed sample still firing its rule, all measured,
+all correct. What broke was the half the gate exists FOR: reading the rows it was careful to keep
+back out.
+
+- **A chatty key crowded every other key off the device page.** `TelemetryService.Latest` read a
+  device's newest 500 rows and folded them down in memory, reasoning that "the tail is small
+  because the deadband keeps it small" — true PER KEY, not for a device as a whole. One key
+  publishing every second fills 500 rows in eight minutes; every other key on the device falls off
+  the end of the tail and vanishes. Measured live: after one key wrote 520 rows, a seven-key
+  device's "current value of every key" panel showed exactly one key. `Latest` now takes the
+  profile's declared key list and does one indexed `(device, key, time)` seek per key — a bounded,
+  small number that does not depend on traffic — and only falls back to the tail fold for a device
+  with no profile to declare keys from.
+- **A wide chart drew the wrong end of the window and stopped.** `Series` asked the database for
+  the first `maxPoints` rows ASCENDING, which returns the OLDEST slice of a window over the cap. A
+  7-day chart of a busy key drew Monday and Tuesday and stopped — indistinguishable, from the
+  chart alone, from a device that died five days ago. It now reads the window newest-first and
+  reverses it, so the cap discards the OLD end and the most recent reading is never the one
+  dropped.
+- **The rollup table was write-only.** `Series`'s own comment had always promised that over the
+  cap it "reads the ROLLUPS instead, which is what they exist for" — and nothing did.
+  `TelemetryService.Rollups` had zero callers anywhere in the app. A wide window now genuinely
+  falls back to rollup buckets (rendered from each bucket's `Last`, not a mean — a state-like key
+  such as a door position has no meaningful average), topped up with the raw tail the rollup
+  worker has not folded yet so the chart still reaches the present. `GET /api/devices/{id}/readings`
+  now answers `{items, span, truncated}` (`span` one of `"raw"`/`"1m"`/`"1h"`) rather than a bare
+  list, so a chart that is quietly drawing hourly summaries instead of raw samples has to say so.
+- **A rollup bucket could be permanently wrong, and the worker had never once been observed
+  running to find out.** `rollupOnce`'s cutoff was `now - width`, not a bucket boundary: at
+  10:01:30 that cuts at 10:00:30, the MIDDLE of the 10:00 bucket. The 10:00 bucket got written from
+  half a minute of data, the cursor advanced past it, and the readings from 10:00:30 to 10:00:59
+  were folded by nothing — forever, since the cursor never revisits a bucket it has already
+  written. The cutoff is now floored to the current bucket's own start, the newest instant
+  everything before it is provably whole. A second, related gap: a pass that fills its 20000-row
+  batch stops at an arbitrary row, very likely mid-bucket, which has the identical undercount
+  consequence — a new `dropIncompleteTail` now trims a batch's unproven-whole trailing rows before
+  folding (unless a single bucket is wider than the whole batch, in which case it folds the
+  partial rather than stall the rollup forever by never advancing the cursor). **None of this had
+  ever been exercised**: the interval was a hardcoded, unsettable hour, so on every bench this app
+  has had, the worker had literally never run once. A new `telemetry_store.rollupIntervalMs`
+  config field (default 1h, unchanged shipped behavior; deliberately NOT in the runtime-editable
+  Telemetry settings screen — a maintenance cadence, not an operator knob) lets the bench harness
+  turn the crank at 5s and watch its arithmetic against the raw table directly, since no API
+  exposes a bucket.
+- **The deadband gate's memory of a deleted device was never cleared.** `DeadbandGate.Forget`
+  shipped with a comment explaining precisely why it exists — a deleted or re-provisioned device
+  must not leave its last value behind for a future device to be compared against — and had zero
+  production callers, only its own unit test. The gate map is the one structure `services/ingest.go`
+  calls unbounded, and it could therefore only ever grow. A new `Ingest.ForgetDevice`, called from
+  `DELETE /devices/{id}`, closes it.
+- **`written` was the sum of insert ids, not a count.** `ReadingWriter.Run` added `CreateMultiple`'s
+  return value — the driver's LAST INSERT ID, what its other callers want from it — into a running
+  total, so `written` grew with the size of the table rather than the work done: a bench that
+  stored 2,666 readings reported `written` as 3,555,111. `written` is the counter an operator
+  compares against `stored` to see whether the batcher is keeping up, so it now counts
+  `len(batch)`.
+
+See `services/telemetry.go.md`, `services/ingest.go.md`, `services/reading_writer.go.md`,
+`apis/devices.go.md`, and `config/config.go.md` for the file-level detail.
+
 ### Relationship to §8g's Layer B (the system workspace, still not built)
 
 The Flow Engine is NOT the system workspace — there is still no `system_template`/`system_instance`

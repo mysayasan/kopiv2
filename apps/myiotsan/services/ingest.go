@@ -76,6 +76,19 @@ func (i *Ingest) InvalidateProfile(profileId int64) {
 	delete(i.bindings, profileId)
 }
 
+// ForgetDevice drops a device's deadband baselines. It must be called when a device is deleted,
+// for two reasons the gate's own comment states and nothing used to act on.
+//
+// The map is the one unbounded structure in the ingest path — Size() is exposed to the metrics
+// endpoint precisely so an operator can watch it — and without this it could only ever grow: a
+// site that replaces sensors over ten years accumulates a baseline for every device it has ever
+// had. And on a database that hands out row ids as max+1, a replacement device can land on a
+// deleted one's id, at which point its first reading is compared against a stranger's last value
+// and can be suppressed as "unchanged" — the one sample that must never be dropped.
+func (i *Ingest) ForgetDevice(deviceId int64) {
+	i.gate.Forget(deviceId)
+}
+
 // SetEnrollment wires the enrollment window in, so a quarantined client's payloads become
 // candidates instead of telemetry.
 func (i *Ingest) SetEnrollment(e *Enrollment) { i.enroll = e }
