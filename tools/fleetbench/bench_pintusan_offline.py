@@ -177,10 +177,14 @@ def enrol(op, holder_id, door_id, group_name="Offline Group"):
     cred_id = rid(r)
     group_id = rid(op.post("/api/groups", {"name": group_name}))
     op.post("/api/groups/%d/members" % group_id, {"holderId": holder_id})
-    sched_id = rid(op.post("/api/schedules", {
-        "name": "Always",
-        "windows": [{"weekday": d, "startMinute": 0, "endMinute": 1439} for d in range(7)],
-    }))
+    # The 24/7 flag, not seven windows.
+    #
+    # This used to post `startMinute`/`endMinute` — the API reads `startMin`/`endMin` — so every
+    # window arrived as 0-0, which `windowCovers` took for a window wrapping past midnight and
+    # matched at every hour of every day. The schedule did what this bench needed by accident, and
+    # `bench_pintusan_schedules.py` found the fail-open it was riding on: a zero-length window is
+    # now refused, so this had to say what it actually meant.
+    sched_id = rid(op.post("/api/schedules", {"name": "Always", "always": True}))
     op.post("/api/grants", {"groupId": group_id, "doorId": door_id, "scheduleId": sched_id})
     return cred_id
 

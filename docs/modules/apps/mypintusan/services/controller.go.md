@@ -32,6 +32,13 @@ runtime and the only consumer of the bus's event channel. It also owns lockdown,
   controller runs on a cached replica; a live controller leaves them nil). **`Offline` is now
   `func() bool`, not `bool`** — a live question an operator can flip after installation, not a
   fact fixed at process start; see `offline()` below and `app/runtime.go.md`'s `runtime.offline`.
+  **`Location` is now `func() *time.Location`** for the same reason, read freshly on every badge
+  through the `location()` helper (nil, or a nil result, means the host's zone — never a silent
+  fall back to UTC, which is the eight-hour shift GATE 8 exists to avoid). The site timezone is
+  the FIRST thing the setup wizard asks for, on a controller that is already running, and while
+  it was captured at boot that answer reached the database and the Settings screen and nothing
+  else: every fresh install evaluated its schedules and its holiday calendar in whatever zone
+  `config.json` seeded until somebody power-cycled the appliance.
   `CacheAge func() time.Duration` comes from `services.CacheClock` (`services/cache_clock.go.md`),
   which measures the time since anything entitled to change the access rules last reached this
   controller — nil (or unassigned) means "no staleness known", which was every install's actual

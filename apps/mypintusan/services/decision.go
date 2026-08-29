@@ -294,11 +294,25 @@ func scheduleAllows(s Snapshot, scheduleId int64) (allowed, holidayBlocked bool)
 
 // windowCovers reports whether a weekly window covers this weekday and minute-of-day.
 //
-// A window whose end is at or before its start WRAPS PAST MIDNIGHT — 22:00–06:00 is the night
-// shift, and the obvious start <= now && now <= end comparison denies every one of those holders
-// for the whole of their shift. The wrapped tail belongs to the FOLLOWING day, so a Friday
-// 22:00–06:00 window also covers Saturday 02:00.
+// A window whose end is BEFORE its start WRAPS PAST MIDNIGHT — 22:00–06:00 is the night shift, and
+// the obvious start <= now && now <= end comparison denies every one of those holders for the whole
+// of their shift. The wrapped tail belongs to the FOLLOWING day, so a Friday 22:00–06:00 window
+// also covers Saturday 02:00.
+//
+// A window that ends at the exact minute it starts covers NOTHING, and this is the only place in
+// GATE 8 that can fail OPEN. It used to fall into the wrapping branch below, where
+// `minutes >= StartMin` is true from the first minute of the day and the previous day's tail
+// catches the rest — so 09:00–09:00 matched every hour of every day, on all seven weekdays, while
+// displaying on the schedules screen as an overnight window. Nobody types a zero-length window
+// meaning "always"; they type it as a slip, or their client sends field names this API does not
+// read and every window arrives as 0–0. `bench_pintusan_offline.py` did exactly that — it posted
+// `startMinute`/`endMinute` — and granted 24/7 for its whole life while reading as office hours.
+// The create handler now refuses one, and this line is what protects the rows already stored on
+// installs that accepted them.
 func windowCovers(w entities.ScheduleWindow, weekday, minutes int) bool {
+	if w.StartMin == w.EndMin {
+		return false
+	}
 	if w.StartMin < w.EndMin {
 		return w.Weekday == weekday && minutes >= w.StartMin && minutes < w.EndMin
 	}

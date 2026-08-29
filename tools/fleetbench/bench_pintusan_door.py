@@ -205,11 +205,12 @@ def main():
 
     # A schedule that is open all week, so "outside the schedule" is never the reason a check
     # below fails for.
-    r = op.post("/api/schedules", {
-        "name": "Always", "windows": [
-            {"weekday": d, "startMinute": 0, "endMinute": 1439} for d in range(7)
-        ],
-    })
+    # The 24/7 flag, not seven windows. This used to post `startMinute`/`endMinute` — the API
+    # reads `startMin`/`endMin` — so every window arrived as 0-0 and was taken for one wrapping
+    # past midnight, matching at every hour of every day. Every mypintusan bench written before
+    # `bench_pintusan_schedules.py` was riding on that fail-open; a zero-length window is now
+    # refused, so each of them had to say what it actually meant.
+    r = op.post("/api/schedules", {"name": "Always", "always": True})
     sched_id = rid(r)
     check("an always-open schedule can be created", bool(sched_id), brief(r))
 

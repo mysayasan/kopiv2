@@ -57,9 +57,16 @@ overridden by anything later, and an unknown card never reaches a schedule looku
   closes an otherwise-always-open door. Returns whether the holiday calendar specifically was
   the blocker, so the caller can report `ReasonHoliday` instead of the less useful
   `ReasonOutOfSchedule`.
-- `windowCovers(w, weekday, minutes)` — a window whose `EndMin` is at or before `StartMin` wraps
-  past midnight (the night-shift case); a naive `start <= now <= end` comparison denies such
-  holders for their entire shift.
+- `windowCovers(w, weekday, minutes)` — a window whose `EndMin` is BEFORE `StartMin` wraps past
+  midnight (the night-shift case); a naive `start <= now <= end` comparison denies such holders
+  for their entire shift, and the wrapped tail belongs to the FOLLOWING day, so a Friday
+  22:00–06:00 window also covers Saturday 02:00. A window whose `EndMin` EQUALS its `StartMin`
+  covers **nothing** — this is the only place in GATE 8 that could fail open, and until it was
+  guarded such a window fell into the wrapping branch and matched every minute of every day on
+  all seven weekdays. `apis/access_rules.go` refuses to create one; this guard is what protects
+  rows already written on installs that accepted them. Both halves are pinned by
+  `TestZeroLengthWindowCoversNothing`, which also checks that a window wrapping almost the whole
+  way round still grants, so the guard cannot take the night shift with it.
 
 ## Notes
 

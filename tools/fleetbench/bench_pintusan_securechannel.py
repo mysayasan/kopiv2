@@ -176,10 +176,12 @@ def provision(op, door_body):
     r = op.post("/api/groups", {"name": "SC Group"})
     group_id = rid(r)
     op.post("/api/groups/%d/members" % group_id, {"holderId": holder_id})
-    r = op.post("/api/schedules", {
-        "name": "Always",
-        "windows": [{"weekday": d, "startMinute": 0, "endMinute": 1439} for d in range(7)],
-    })
+    # The 24/7 flag, not seven windows. This used to post `startMinute`/`endMinute` — the API
+    # reads `startMin`/`endMin` — so every window arrived as 0-0 and was taken for one wrapping
+    # past midnight, matching at every hour of every day. Every mypintusan bench written before
+    # `bench_pintusan_schedules.py` was riding on that fail-open; a zero-length window is now
+    # refused, so each of them had to say what it actually meant.
+    r = op.post("/api/schedules", {"name": "Always", "always": True})
     sched_id = rid(r)
     op.post("/api/grants", {"groupId": group_id, "doorId": door_id, "scheduleId": sched_id})
     return {"doorId": door_id, "door": stored, "holderId": holder_id}
