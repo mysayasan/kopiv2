@@ -38,3 +38,29 @@ SPA's Settings page (`views/react-webpack/src/views/Settings.js`).
   cache-connectivity test), this is a single section with no audit log yet — the settings surface
   here is new and deliberately small: timezone/tick/PIN-window/offline plus the bus/reader/SCBK
   inventory, nothing else.
+
+## The administrative trail
+
+A save writes `settings.change` and a reset writes `settings.reset` to the append-only trail
+(`apis/audit.go.md`) — and both **name what actually moved**.
+
+The handler reads the live values *before* the write and diffs them (`describeSettingsChange`).
+"Settings changed" is the least useful entry an audit log can hold, and the request body cannot
+answer it either: the screen posts the whole object on every save, so every field looks submitted
+whether or not it changed. The entry says `timezone Asia/Kuala_Lumpur -> UTC` and nothing else.
+
+Only the values that change how the controller **decides** are named — the site timezone (every
+schedule and holiday is evaluated in it), the offline flag, the timer cadences, the shape of the bus
+— plus, individually, a reader's Secure Channel requirement and a rekey, because those are the two
+edits on this screen that weaken or strengthen the wire itself.
+
+Readers are keyed by **bus port and PD address**, never by position: a reader removed from the
+middle of a list would otherwise report every reader after it as changed.
+
+**A rekey is recorded as a fact and never as a value.** The trail is readable by every administrator
+and exported to CSV; a site base key in it is a key handed out, and anyone holding it can decrypt the
+bus and impersonate a reader — the exact attack Secure Channel exists to stop. The live bench asserts
+this over *every* row in the table, not only the ones it wrote.
+
+A reset diffs the same way, because the entries describing the edits it undid are still in the trail
+and nothing else would say they stopped being true.

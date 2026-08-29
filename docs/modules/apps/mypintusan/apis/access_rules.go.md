@@ -113,3 +113,23 @@ grant/membership mutation publishes a notification naming the administrator who 
   rules"), backed by `views/react-webpack/src/lib/access.js`'s typed API functions. Server
   refusals (e.g. "grants still reference it") are shown to the operator verbatim rather than
   translated into a generic error.
+
+## The administrative trail
+
+Every mutation here also writes an entry to the append-only trail (`apis/audit.go.md`):
+`group.create` `group.delete` `group.member_add` `group.member_remove` `schedule.create`
+`schedule.delete` `holiday.create` `holiday.delete` `grant.create` `grant.delete`.
+
+This is **not** the same thing as the `access.rule-change` notification above, and both are kept.
+The notification is how a change is *noticed* — it lands in the local feed and travels up the fleet
+channel while somebody is still watching. The trail is how it is *proven*: the feed is a bounded,
+evicted stream with no filter, no export and no retention policy, and an investigation six months
+later needs a table.
+
+The entries are written to be readable on their own. `schedule.create` carries the **hours**
+("Mon 22:00-06:00"), not just the name — "schedule created" tells an auditor nothing, while the
+window is what lets them see that somebody widened the night shift to cover 02:00 and that the door
+was behaving exactly as configured. `grant.create` names the group, the door **and** the schedule in
+one sentence, and carries all three ids as structured metadata.
+
+`createGroup` was the one mutation in this file that announced nothing at all; it now does both.

@@ -9,6 +9,7 @@ package apis
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -37,11 +38,13 @@ type doorApi struct {
 	rt     Unlocker
 	doors  dbsql.IGenericRepo[entities.Door]
 	reader dbsql.IGenericRepo[entities.Reader]
+	audit  *Auditor
 }
 
 // NewDoorApi registers the door surface.
-func NewDoorApi(router *mux.Router, store *services.SQLStore, rt Unlocker, db dbsql.IDbCrud) {
+func NewDoorApi(router *mux.Router, store *services.SQLStore, rt Unlocker, db dbsql.IDbCrud, audit *Auditor) {
 	a := &doorApi{
+		audit:  audit,
 		store:  store,
 		rt:     rt,
 		doors:  dbsql.NewGenericRepo[entities.Door](db),
@@ -278,6 +281,21 @@ func (a *doorApi) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The SECURITY FIELDS are the reason this entry exists, not the door's name. There is no
+	// PUT /api/doors: the offline policy, the cache TTL and whether the reader must speak Secure
+	// Channel are decided once, at install, by whoever filled in this form — and they are the three
+	// values that decide what the door does on the day the network is gone and nobody is watching.
+	// "Who set this perimeter door to cached with no Secure Channel" had no answer at all before.
+	a.audit.Success(r, services.ActionDoorCreate, services.TargetDoor, ID(door.Id),
+		fmt.Sprintf("door %q created (%s, offline: %s, secure channel: %v)",
+			door.Name, door.Class, door.OfflinePolicy, door.RequireSecureChannel),
+		map[string]any{
+			"name": door.Name, "class": door.Class, "siteId": door.SiteId,
+			"offlinePolicy": door.OfflinePolicy, "offlineTtlSeconds": door.OfflineTTLSeconds,
+			"requireSecureChannel": door.RequireSecureChannel,
+			"unlockSeconds":        door.UnlockSeconds, "heldOpenSeconds": door.HeldOpenSeconds,
+			"busPort": body.BusPort, "osdpAddress": body.OsdpAddress, "readerId": readerId,
+		})
 	controllers.SendResult(w, door)
 }
 
@@ -331,16 +349,24 @@ func (a *doorApi) unlock(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return
 	}
+	// Recorded in BOTH tables on purpose. entities.AccessEvent stays the authority on door
+	// decisions, and this is a decision — but a remote open is also the clearest example of power
+	// being used rather than rules being changed, and somebody reading the administrative trail to
+	// find out what the people with access did should not have to know there is a second table.
+	a.audit.Success(r, services.ActionDoorUnlockRemote, services.TargetDoor, ID(door.Id),
+		fmt.Sprintf("door %q opened remotely", door.Name),
+		map[string]any{"doorName": door.Name, "class": door.Class})
 	controllers.SendResult(w, map[string]any{"doorId": door.Id, "unlocked": true})
 }
 
 type lockdownApi struct {
-	rt Unlocker
+	rt    Unlocker
+	audit *Auditor
 }
 
 // NewLockdownApi registers the site-seal control.
-func NewLockdownApi(router *mux.Router, rt Unlocker) {
-	a := &lockdownApi{rt: rt}
+func NewLockdownApi(router *mux.Router, rt Unlocker, audit *Auditor) {
+	a := &lockdownApi{rt: rt, audit: audit}
 	g := router.PathPrefix("/lockdown").Subrouter()
 	g.HandleFunc("", a.state).Methods("GET")
 	g.HandleFunc("", a.set).Methods("POST")
@@ -369,5 +395,15 @@ func (a *lockdownApi) set(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.rt.SetLockdown(r.Context(), body.Lockdown)
+	// Both directions, and the RELEASE matters at least as much as the seal. A site sealed during
+	// an incident and quietly reopened twenty minutes later by somebody who was not in the room is
+	// the sequence nobody can reconstruct from the access log, because releasing a lockdown
+	// produces no event at all — it just makes the denials stop.
+	detail := "site sealed — every door denies until lockdown is lifted"
+	if !body.Lockdown {
+		detail = "lockdown lifted — doors follow their normal rules again"
+	}
+	a.audit.Success(r, services.ActionLockdownSet, services.TargetSite, "site", detail,
+		map[string]any{"lockdown": body.Lockdown})
 	controllers.SendResult(w, map[string]any{"lockdown": a.rt.Lockdown()})
 }

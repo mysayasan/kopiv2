@@ -60,6 +60,17 @@ func Policy() []PolicyRule
   manage this building's doors remotely), and `/api/deployment` (single-instance on this
   appliance; nothing to grant, but a route absent from the catalog is one nobody can see they are
   not granting).
+- **The administrative trail** (admin-only): `/api/audit` and — as its **own row** — `/api/audit.csv`.
+  The reasoning is the mirror image of the access log's. The access log is granted to every role
+  because a viewer's job is to watch what happened at the doors; the trail is about the people with
+  power over the appliance — which accounts exist, who was given a role, which administrator reset
+  whose password. Handing a receptionist the record of every administrator's actions is a different
+  disclosure from handing them the door log, and not one this app's roles ask for.
+
+  **The second row is not redundant.** Paths are matched segment-wise, so `/api/audit` governs
+  `/api/audit/anything` but **not** `audit.csv`, which is a different first segment. Without its own
+  rule the export would be a route in no catalog rule at all — the one thing this file's header says
+  must never happen, and the same shape as the wrong-segment-count rule #224 found.
 
 Every area that grows an API **must** be added here, including the admin-only ones — a route
 missing from this catalog is a route nobody can see they are not granting. `admin` is absent by

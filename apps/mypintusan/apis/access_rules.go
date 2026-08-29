@@ -11,6 +11,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/apps/mypintusan/entities"
+	"github.com/mysayasan/kopiv2/apps/mypintusan/services"
 	"github.com/mysayasan/kopiv2/domain/notification"
 	sharedapis "github.com/mysayasan/kopiv2/domain/shared/apis"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
@@ -40,10 +41,14 @@ type accessRulesApi struct {
 	doors     dbsql.IGenericRepo[entities.Door]
 	holders   dbsql.IGenericRepo[entities.Holder]
 	notify    *notification.Service
+	// audit is the durable half of the pair. The notification below says a rule changed while
+	// somebody is still watching the feed; this says who changed it, to what, from where, in a
+	// table that is still there next year. Neither replaces the other.
+	audit *Auditor
 }
 
 // NewAccessRulesApi registers the groups / schedules / grants surface.
-func NewAccessRulesApi(router *mux.Router, db dbsql.IDbCrud, notify *notification.Service) {
+func NewAccessRulesApi(router *mux.Router, db dbsql.IDbCrud, notify *notification.Service, audit *Auditor) {
 	a := &accessRulesApi{
 		groups:    dbsql.NewGenericRepo[entities.AccessGroup](db),
 		members:   dbsql.NewGenericRepo[entities.AccessGroupMember](db),
@@ -54,6 +59,7 @@ func NewAccessRulesApi(router *mux.Router, db dbsql.IDbCrud, notify *notificatio
 		doors:     dbsql.NewGenericRepo[entities.Door](db),
 		holders:   dbsql.NewGenericRepo[entities.Holder](db),
 		notify:    notify,
+		audit:     audit,
 	}
 
 	g := router.PathPrefix("/groups").Subrouter()
@@ -132,7 +138,7 @@ func (a *accessRulesApi) listGroups(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *accessRulesApi) createGroup(w http.ResponseWriter, r *http.Request) {
-	actorId, _, ok := requireAdmin(w, r)
+	actorId, actor, ok := requireAdmin(w, r)
 	if !ok {
 		return
 	}
@@ -159,6 +165,13 @@ func (a *accessRulesApi) createGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	group.Id = int64(id)
+	// A group is empty and reaches nothing on the day it is made, which is exactly why its creation
+	// was the one rule change nothing here announced. It is also the first half of every grant that
+	// follows, so an investigation reading backwards has to be able to find it.
+	a.audit.Success(r, services.ActionGroupCreate, services.TargetGroup, ID(group.Id),
+		fmt.Sprintf("access group %q created", group.Name),
+		map[string]any{"name": group.Name, "description": group.Description})
+	a.ruleChanged(r.Context(), actor, fmt.Sprintf("group %q created", group.Name))
 	controllers.SendResult(w, group, "succeed")
 }
 
@@ -194,6 +207,9 @@ func (a *accessRulesApi) deleteGroup(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
+	a.audit.Success(r, services.ActionGroupDelete, services.TargetGroup, ID(group.Id),
+		fmt.Sprintf("access group %q deleted", group.Name),
+		map[string]any{"name": group.Name})
 	a.ruleChanged(r.Context(), actor, fmt.Sprintf("group %q deleted", group.Name))
 	controllers.SendResult(w, map[string]any{"deleted": true}, "succeed")
 }
@@ -264,6 +280,12 @@ func (a *accessRulesApi) addMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.Id = int64(id)
+	// Membership IS access. Adding one person to one group can open every door that group reaches,
+	// at every hour its schedules allow, and the access log will show nothing but ordinary badges.
+	a.audit.Success(r, services.ActionGroupMemberAdd, services.TargetGroup, ID(groupId),
+		fmt.Sprintf("%q added to access group %q", holder.Name, group.Name),
+		map[string]any{"groupId": groupId, "groupName": group.Name,
+			"holderId": holder.Id, "holderName": holder.Name})
 	a.ruleChanged(r.Context(), actor, fmt.Sprintf("%q added to group %q", holder.Name, group.Name))
 	controllers.SendResult(w, m, "succeed")
 }
@@ -292,6 +314,10 @@ func (a *accessRulesApi) removeMember(w http.ResponseWriter, r *http.Request) {
 	if g, err := a.groups.GetById(r.Context(), "", uint64(groupId)); err == nil && g != nil {
 		groupName = g.Name
 	}
+	a.audit.Success(r, services.ActionGroupMemberRemove, services.TargetGroup, ID(groupId),
+		fmt.Sprintf("%q removed from access group %q", holderName, groupName),
+		map[string]any{"groupId": groupId, "groupName": groupName,
+			"holderId": rows[0].HolderId, "holderName": holderName})
 	a.ruleChanged(r.Context(), actor, fmt.Sprintf("%q removed from group %q", holderName, groupName))
 	controllers.SendResult(w, map[string]any{"deleted": true}, "succeed")
 }
@@ -402,6 +428,13 @@ func (a *accessRulesApi) createSchedule(w http.ResponseWriter, r *http.Request) 
 		row.Id = int64(wid)
 		out.Windows = append(out.Windows, row)
 	}
+	// The HOURS are the point of the entry, not the name. "Schedule created" tells an auditor
+	// nothing; "Mon 09:00-17:00, Tue 09:00-17:00" is what lets them see that somebody widened the
+	// night shift to cover 02:00 and that the door was behaving exactly as configured.
+	a.audit.Success(r, services.ActionScheduleCreate, services.TargetSchedule, ID(sched.Id),
+		fmt.Sprintf("schedule %q created (%s)", sched.Name, describeSchedule(sched, out.Windows)),
+		map[string]any{"name": sched.Name, "always": sched.Always,
+			"windows": describeSchedule(sched, out.Windows)})
 	a.ruleChanged(r.Context(), actor, fmt.Sprintf("schedule %q created (%s)",
 		sched.Name, describeSchedule(sched, out.Windows)))
 	controllers.SendResult(w, out, "succeed")
@@ -457,6 +490,9 @@ func (a *accessRulesApi) deleteSchedule(w http.ResponseWriter, r *http.Request) 
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
+	a.audit.Success(r, services.ActionScheduleDelete, services.TargetSchedule, ID(sched.Id),
+		fmt.Sprintf("schedule %q deleted", sched.Name),
+		map[string]any{"name": sched.Name, "always": sched.Always})
 	a.ruleChanged(r.Context(), actor, fmt.Sprintf("schedule %q deleted", sched.Name))
 	controllers.SendResult(w, map[string]any{"deleted": true}, "succeed")
 }
@@ -520,6 +556,9 @@ func (a *accessRulesApi) createHoliday(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.Id = int64(id)
+	a.audit.Success(r, services.ActionHolidayCreate, services.TargetHoliday, ID(h.Id),
+		fmt.Sprintf("holiday %q added on %s (%s)", h.Name, h.Date, h.Behaviour),
+		map[string]any{"name": h.Name, "date": h.Date, "behaviour": h.Behaviour, "siteId": h.SiteId})
 	a.ruleChanged(r.Context(), actor, fmt.Sprintf("holiday %q added on %s (%s)",
 		h.Name, h.Date, h.Behaviour))
 	controllers.SendResult(w, h, "succeed")
@@ -543,6 +582,11 @@ func (a *accessRulesApi) deleteHoliday(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
+	// Deleting a holiday REOPENS a site that was meant to be shut. Of every row in this trail this
+	// is the one most likely to be the answer to "why was the building open that day".
+	a.audit.Success(r, services.ActionHolidayDelete, services.TargetHoliday, ID(h.Id),
+		fmt.Sprintf("holiday %q on %s removed — the site is no longer closed that day", h.Name, h.Date),
+		map[string]any{"name": h.Name, "date": h.Date, "behaviour": h.Behaviour, "siteId": h.SiteId})
 	a.ruleChanged(r.Context(), actor, fmt.Sprintf("holiday %q on %s removed", h.Name, h.Date))
 	controllers.SendResult(w, map[string]any{"deleted": true}, "succeed")
 }
@@ -630,6 +674,16 @@ func (a *accessRulesApi) createGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	gr.Id = int64(id)
+	// THE row this whole file exists for. A grant is the sentence "these people may open this door
+	// at these hours", and until now the only trace it left was its effect: ordinary green badge
+	// events, weeks later, on a door somebody was never meant to reach.
+	a.audit.Success(r, services.ActionGrantCreate, services.TargetGrant, ID(gr.Id),
+		fmt.Sprintf("group %q granted door %q on schedule %q", group.Name, door.Name, sched.Name),
+		map[string]any{
+			"groupId": group.Id, "groupName": group.Name,
+			"doorId": door.Id, "doorName": door.Name,
+			"scheduleId": sched.Id, "scheduleName": sched.Name, "scheduleAlways": sched.Always,
+		})
 	a.ruleChanged(r.Context(), actor,
 		fmt.Sprintf("group %q granted door %q on schedule %q", group.Name, door.Name, sched.Name))
 	controllers.SendResult(w, gr, "succeed")
@@ -657,6 +711,12 @@ func (a *accessRulesApi) deleteGrant(w http.ResponseWriter, r *http.Request) {
 	if d, err := a.doors.GetById(r.Context(), "", uint64(gr.DoorId)); err == nil && d != nil {
 		doorName = d.Name
 	}
+	a.audit.Success(r, services.ActionGrantDelete, services.TargetGrant, ID(gr.Id),
+		fmt.Sprintf("grant revoked: %s no longer reaches %s", groupName, doorName),
+		map[string]any{
+			"groupId": gr.GroupId, "groupName": groupName,
+			"doorId": gr.DoorId, "doorName": doorName, "scheduleId": gr.ScheduleId,
+		})
 	a.ruleChanged(r.Context(), actor,
 		fmt.Sprintf("grant revoked: %s no longer reaches %s", groupName, doorName))
 	controllers.SendResult(w, map[string]any{"deleted": true}, "succeed")

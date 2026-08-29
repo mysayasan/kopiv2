@@ -39,7 +39,9 @@ then carry.
   `ApiEndpoint` service, no `FileStorage`, no `CacheService` — a door controller is a
   single-tenant box on a building's LAN, not a platform.
 - `Entities()` — the shared appliance block (`ApiEndpoint`, `ApiLog`, `UserSession`,
-  `Notification`, `LocalUser`, `AccessRole`, `AccessRolePermission`, `RuntimeSetting`) plus
+  `Notification`, `LocalUser`, `AccessRole`, `AccessRolePermission`, `RuntimeSetting`,
+  `sharedaudit.AuditLog` — the administrative trail shared with myidsan, myseliasan and mymatasan;
+  `AccessEvent` records door *decisions*, this records who decided them) plus
   `services.Entities()` — the 12-table access-control schema (`services/schema.go.md`).
 - `Seeders(seedStatements)` — seeds the `/api/doors`, `/api/readers`, `/api/holders`,
   `/api/events`, `/api/lockdown`, `/api/settings`, `/api/setup`, `/api/notifications` (the unified
@@ -115,6 +117,17 @@ then carry.
      not in the path list — the whole point of offline mode is that badges keep arriving at a
      controller nobody can reach — and a refused edit (non-2xx, via `statusRecorder`) does not
      touch the clock either.
+
+     Then, as the **innermost** middleware, `protected.Use(apis.NewAuditMiddleware(auditor))`
+     followed by `apis.NewAuditApi(protected, auditService)`. Order is load-bearing in both
+     directions: registered outside the auth middleware there would be no principal to attribute an
+     entry to, and registered at all it guarantees that an accepted mutation which reached no
+     handler that audited itself is recorded anyway — see `apis/audit.go.md` for why the default is
+     "recorded" rather than "opt in". The trail itself (`auditService`, `auditor`,
+     `services.DescribeMetrics`, `startAuditRetention`) is constructed **early**, right after the
+     notification service, because a trail wired late is one that quietly misses the first actions
+     after boot. Its trusted-proxy list is the rate limiter's, so "which hops may set
+     `X-Forwarded-For`" has exactly one answer in this app.
   9. **Wires the fleet**, gated on `boolValue(deps.Config.Pairing.Enabled, true)`: resolves
      `openFleetSecretCipher(deps)` (fails closed — see `app/wire_fleet.go.md`), builds the fleet
      via `buildFleet(api, deps, appVersion(m), fleetCipher, notifications, cacheClock)`

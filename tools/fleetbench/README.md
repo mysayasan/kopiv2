@@ -94,6 +94,7 @@ python tools/fleetbench/bench_pintusan_offline.py  # offline mode and the cache 
 python tools/fleetbench/bench_pintusan_schedules.py  # night shifts, holidays and the site timezone
 python tools/fleetbench/bench_pintusan_bus.py    # bus faults, reconnect, lockdown across an outage
 python tools/fleetbench/bench_pintusan_screens.py  # THE SCREENS: 4 languages x 3 roles, offers vs matrix
+python tools/fleetbench/bench_pintusan_trail.py  # is there a record of WHO CHANGED THE RULES?
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o .artifacts/fleetbench/bin/myiotsan ./cmd/myiotsan
 python tools/fleetbench/iotsan_harness.py            # myiotsan + its EMBEDDED broker
 python tools/fleetbench/bench_iotsan_actuation.py    # does anything reach a relay off-path?
@@ -1132,6 +1133,56 @@ Traps this one added, in the order they cost a run:
   anchors on "not refused" rather than 200: a dead simulator answers 400 "PD did not reply", which
   says nothing about whether the operator is allowed. The driver also restarts the simulator between
   passes — a ten-minute run over six browser passes will outlive one.
+
+## mypintusan — the administrative trail
+
+`bench_pintusan_trail.py`, **66/66**. Item 7 of the mypintusan hardening register, and the only
+item on it that was a **feature gap rather than a defect**: there was nothing to bench until the
+trail existed, so this bench and the feature landed together.
+
+`entities.AccessEvent` is the best log in the suite — every badge at every door, granted or denied,
+with the reason. What it never recorded is **who decided they could**. A grant created at 23:40, a
+holiday deleted the morning of a shutdown, a perimeter door's offline policy flipped from `deny` to
+`cached`, a badge issued to somebody nobody added to the roster: every one changes what the access
+log will say tomorrow, and **the access log is what hides them**. A grant edit does not look like an
+incident; it looks like ordinary green badge rows three weeks later, on a door the person was never
+meant to reach, with `decision: granted, reason: ok` beside them.
+
+The bench asserts against **what the product itself stored**, read back through its own API: a site
+is provisioned end to end and every step is looked up in the trail by action *and* by the sentence
+in its detail; the grant entry has to name the group, the door and the schedule; a settings save has
+to say which field moved; a badge revocation has to carry the reason. The roles are driven too —
+#224's lesson that driving a screen as an admin proves nothing — so an operator and a viewer are
+created, signed in (proving the refusal below is a refusal and not a broken login), and each refused
+both `/api/audit` **and** `/api/audit.csv`.
+
+**The claim the design rests on:** `POST /api/setup/complete` is served by shared code this app does
+not own and no handler in `apps/mypintusan` audits it — and it is in the trail, because
+`apis.NewAuditMiddleware` records any accepted mutation that reached no handler which audited
+itself. A route added next year is in the trail on the day it ships rather than the day somebody
+notices it is not. Fifteen reads produce zero entries, so the trail stays a record of changes and
+not a request log.
+
+What the run found, and what it is honest about:
+
+- **The CSV needs a UTF-8 BOM.** The entries are full of em dashes and quoted names, and the
+  export's destination is Excel on somebody's Windows laptop. Without it the one artefact whose job
+  is to be handed to an outsider arrives as mojibake. (The bench then reported a broken header on a
+  correct export until it learned to strip the BOM it had just asked for.)
+- **A Windows console is cp1252 and the trail's own text is not.** The first run died printing the
+  product's output, which reads as a product failure. `sys.stdout.reconfigure(encoding="utf-8")`.
+- **The denied branch is not reachable on the wire, and the bench says so instead of passing.** The
+  audit middleware runs *inside* the permission middleware, so a matrix-level 403 never reaches it;
+  the branch that writes a denied row is a handler's own `administrators only` gate, and in this
+  app's current catalog no role can reach such a route at all. The bench asserts the true statement
+  (a matrix refusal is **not** in the trail — it is in `api_log`) and names the unit test that
+  covers the branch. A green that means nothing is worse than a stated gap.
+- **And open the PNG, again.** The screen pass was 166/166 with the new section in it, and the
+  Arabic screenshot showed `card issued to "Screen Bench Person"` rendered as
+  `"card issued to "Screen Bench Person` — the RTL paragraph direction reordering the quotes of an
+  English sentence that is deliberately **not** translated (an audit record says what it said;
+  re-rendering it in the reader's language would make the trail's text depend on who is looking).
+  `<bdi dir="ltr">` fixes it. Nothing asserts on quote placement, and nothing ever will.
 
 ## `onvifsim.py` — a real ONVIF device, on demand
 

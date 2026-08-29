@@ -81,6 +81,10 @@ body {
   gap: 20px; flex-wrap: wrap; margin-bottom: 18px;
 }
 .screen-head h1 { margin: 0 0 2px; font-size: 20px; }
+/* The trail's header carries a filter row AND an export link, which is one control more than the
+   other screens have. Wraps rather than compressing: on a narrow appliance console the export must
+   not end up as a sliver nobody can hit. */
+.head-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .section-head { font-size: 15px; margin: 22px 0 8px; }
 .muted { color: var(--ui-muted, #93999f); }
 .small { font-size: 12px; }

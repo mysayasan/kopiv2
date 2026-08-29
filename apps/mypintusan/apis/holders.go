@@ -2,6 +2,7 @@ package apis
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -19,13 +20,15 @@ import (
 type holderApi struct {
 	holders dbsql.IGenericRepo[entities.Holder]
 	creds   dbsql.IGenericRepo[entities.Credential]
+	audit   *Auditor
 }
 
 // NewHolderApi registers people and their badges — the operator's daily surface.
-func NewHolderApi(router *mux.Router, db dbsql.IDbCrud) {
+func NewHolderApi(router *mux.Router, db dbsql.IDbCrud, audit *Auditor) {
 	a := &holderApi{
 		holders: dbsql.NewGenericRepo[entities.Holder](db),
 		creds:   dbsql.NewGenericRepo[entities.Credential](db),
+		audit:   audit,
 	}
 	g := router.PathPrefix("/holders").Subrouter()
 	g.HandleFunc("", a.list).Methods("GET")
@@ -95,6 +98,12 @@ func (a *holderApi) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.Id = int64(id)
+	// This is the operator's surface, not an admin's, and that is the reason to record it: a person
+	// created here reaches nothing today and can be added to a group tomorrow by somebody else
+	// entirely. The trail is what joins the two halves back together.
+	a.audit.Success(r, services.ActionHolderCreate, services.TargetHolder, ID(body.Id),
+		fmt.Sprintf("person %q enrolled (%s)", body.Name, body.Kind),
+		map[string]any{"name": body.Name, "ref": body.Ref, "kind": body.Kind})
 	controllers.SendResult(w, body)
 }
 
@@ -205,6 +214,23 @@ func (a *holderApi) issueCredential(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cred.Id = int64(id)
+	// The card's identity is recorded; the SECRET never is. Format, facility code and card number
+	// are what an investigation matches against the access log, and they are already printed on the
+	// card. The PIN and the duress PIN are hashed above and appear nowhere here — the trail is
+	// readable by every administrator and is exported to CSV, so a credential in it would be a
+	// credential handed out.
+	meta := map[string]any{"holderId": holderId, "holderName": holder.Name, "kind": cred.Kind}
+	if cred.Kind == entities.CredCard {
+		meta["format"], meta["facilityCode"], meta["cardNumber"] = cred.Format, cred.FacilityCode, cred.CardNumber
+	}
+	if cred.DuressPinHash != "" {
+		meta["duressPin"] = true
+	}
+	if cred.ValidUntil > 0 {
+		meta["validUntil"] = cred.ValidUntil
+	}
+	a.audit.Success(r, services.ActionCredentialIssue, services.TargetCredential, ID(cred.Id),
+		fmt.Sprintf("%s issued to %q", cred.Kind, holder.Name), meta)
 	controllers.SendResult(w, cred)
 }
 
@@ -252,5 +278,12 @@ func (a *holderApi) revokeCredential(w http.ResponseWriter, r *http.Request) {
 		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
 		return
 	}
+	// The REASON is the field worth having. "Revoked" is a fact the credential row already carries;
+	// "reported stolen at the gate on Friday" is what makes a badge presented on Saturday an
+	// incident rather than a denial.
+	a.audit.Success(r, services.ActionCredentialRevoke, services.TargetCredential, ID(cred.Id),
+		fmt.Sprintf("credential %d marked %s", cred.Id, cred.Status),
+		map[string]any{"holderId": cred.HolderId, "status": cred.Status,
+			"reason": cred.RevokeReason, "kind": cred.Kind})
 	controllers.SendResult(w, cred)
 }

@@ -153,6 +153,10 @@ var servedRoutes = []string{
 	"/api/setup/state", "/api/setup/complete",
 	"/api/pairing/status", "/api/pairing/claim-code", "/api/pairing/unpair", "/api/pairing/fleet-key",
 	"/api/deployment/preflight",
+	// The administrative trail. audit.csv is listed separately because it is a separate SEGMENT —
+	// "/api/audit" does not govern it, and a catalog that covered the listing but not the export
+	// would leave the whole trail downloadable by a rule nobody wrote.
+	"/api/audit", "/api/audit.csv",
 }
 
 // Signing in has to WORK for every role, which means more than /api/auth/login answering 200.

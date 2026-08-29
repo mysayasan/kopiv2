@@ -16,6 +16,7 @@ import (
 	apiaccessenums "github.com/mysayasan/kopiv2/domain/enums/apiaccess"
 	"github.com/mysayasan/kopiv2/domain/notification"
 	sharedapis "github.com/mysayasan/kopiv2/domain/shared/apis"
+	sharedaudit "github.com/mysayasan/kopiv2/domain/shared/audit"
 	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
 	"github.com/mysayasan/kopiv2/infra/apphost"
 	"github.com/mysayasan/kopiv2/infra/db/bootstrap"
@@ -93,6 +94,10 @@ func (m *module) Entities() []any {
 		sharedentities.AccessRole{},
 		sharedentities.AccessRolePermission{},
 		sharedentities.RuntimeSetting{},
+		// The administrative trail, shared with myidsan, myseliasan and mymatasan. The access log
+		// (entities.AccessEvent) records door DECISIONS; this records who decided them — who
+		// changed a grant, a schedule, a holiday, a door's offline policy, and who sealed the site.
+		sharedaudit.AuditLog{},
 	}, services.Entities()...)
 }
 
@@ -120,6 +125,10 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{Title: "Access groups", Description: "named sets of holders", Path: "/api/groups", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Grants", Description: "which groups reach which doors, on what schedule", Path: "/api/grants", AccessTier: apiaccessenums.AuthOnly},
 		{Title: "Schedules", Description: "time policies and the holiday calendar", Path: "/api/schedules", AccessTier: apiaccessenums.AuthOnly},
+		{Title: "Administrative trail", Description: "who changed the rules about who gets in", Path: "/api/audit", AccessTier: apiaccessenums.AuthOnly},
+		// The CSV export is its own row for the same reason it is its own catalog rule: paths here
+		// are matched segment-wise, and "audit.csv" is not a child of "audit".
+		{Title: "Administrative trail (CSV)", Description: "the trail as a download, for an auditor outside the product", Path: "/api/audit.csv", AccessTier: apiaccessenums.AuthOnly},
 	}
 
 	statements := make([]string, 0, len(endpoints)*2)
@@ -163,6 +172,22 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	}
 	notificationRepo := dbsql.NewGenericRepo[sharedentities.Notification](deps.Db)
 	notifications := notification.NewService(notificationRepo, notification.Options{Logger: deps.Logger})
+
+	// The administrative trail, built early because the handlers that record into it are wired
+	// below and a trail wired late is a trail that quietly misses the first actions after boot.
+	//
+	// The trusted-proxy list is the rate limiter's, so "which hops may set X-Forwarded-For" has
+	// exactly one answer in this app: an untrusted caller must not be able to forge the address
+	// recorded next to their change to who may enter the building.
+	services.DescribeMetrics(deps.Metrics)
+	auditService := services.WithAuditMetrics(
+		services.NewAuditService(deps.Db, func(format string, args ...any) {
+			deps.Logger.Warnf("mypintusan.audit", format, args...)
+		}),
+		deps.Metrics,
+	)
+	auditor := apis.NewAuditor(auditService, deps.Config.RateLimit.TrustedProxies)
+	startAuditRetention(deps, auditService)
 
 	store := services.NewSQLStore(deps.Db)
 	alarms := services.NewNotificationAlarmer(notifications, deps.Logger)
@@ -263,19 +288,26 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// keep arriving at a controller nobody can reach), and a refused edit is not contact either.
 	protected.Use(ruleChangeTouch(cacheClock))
 
-	apis.NewSettingsApi(protected, settings)
+	// The administrative trail. Registered as the INNERMOST middleware so the principal, put in
+	// context by the auth middleware above, is available to attribute an entry — and so that
+	// nothing accepted goes unrecorded even if a future handler forgets to audit itself. See
+	// apis.NewAuditMiddleware for why the default is "recorded" rather than "opt in".
+	protected.Use(apis.NewAuditMiddleware(auditor))
+	apis.NewAuditApi(protected, auditService)
+
+	apis.NewSettingsApi(protected, settings, auditor)
 	// Users and roles. Without this the three roles services.EnsureRoles seeds on every boot are
 	// unassignable and the appliance is single-admin — which is what it was until now.
-	apis.NewUserApi(protected, localUser, deps.AccessRoles)
-	apis.NewDoorApi(protected, store, runtime, deps.Db)
-	apis.NewHolderApi(protected, deps.Db)
+	apis.NewUserApi(protected, localUser, deps.AccessRoles, auditor)
+	apis.NewDoorApi(protected, store, runtime, deps.Db, auditor)
+	apis.NewHolderApi(protected, deps.Db, auditor)
 	apis.NewEventApi(protected, deps.Db)
-	apis.NewLockdownApi(protected, runtime)
+	apis.NewLockdownApi(protected, runtime, auditor)
 	apis.NewSetupApi(protected, setupState)
 	// Single-instance by design (the OSDP bus owns its serial port).
 	apis.NewDeploymentApi(protected)
 	apis.NewNotificationsApi(protected, notifications)
-	apis.NewAccessRulesApi(protected, deps.Db, notifications)
+	apis.NewAccessRulesApi(protected, deps.Db, notifications, auditor)
 
 	// --- the fleet -------------------------------------------------------------------
 	//
