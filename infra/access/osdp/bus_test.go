@@ -323,6 +323,13 @@ func TestBusRecoversFromSequenceSkew(t *testing.T) {
 	if !strings.Contains(ev.Reason, "resetting") {
 		t.Errorf("fault reason %q does not mention the recovery action", ev.Reason)
 	}
+	// A sequence skew is a CABLING or firmware fault, and it must be classified as one. Before
+	// Event.Fault existed, mypintusan had no way to tell it from a failed handshake and titled it
+	// "Reader secure channel fault" — the right alarm under a headline that sends the installer
+	// looking for a bus tap.
+	if ev.Fault != FaultProtocol {
+		t.Errorf("sequence fault classified as %s, want protocol", ev.Fault)
+	}
 	if st := h.bus.Stats()[1]; st.SequenceErrs == 0 {
 		t.Error("sequence errors were not counted")
 	}

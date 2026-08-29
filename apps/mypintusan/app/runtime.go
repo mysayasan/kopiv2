@@ -57,6 +57,13 @@ type runtime struct {
 	lockdown bool
 	// live maps a bus port to its current controller; the value is replaced on each reconnect.
 	live map[string]*services.Controller
+	// busDown remembers which segments have already been alarmed as down, so ONE outage produces
+	// ONE alarm however many times the re-dial fails inside it. A serial-to-Ethernet gateway that
+	// is rebooting accepts the connection and drops it again, repeatedly, and without this the
+	// segment-down alarm would page every second or two for as long as that lasts — which is the
+	// alarm-fatigue failure `services/alarm.go` argues against, arriving through the alarm added
+	// to prevent silence. Cleared by a session that ran healthily: that is what ends an outage.
+	busDown map[string]bool
 }
 
 func newRuntime(deps apphost.Dependencies, cfg services.AccessSettings, loc *time.Location,
@@ -66,7 +73,8 @@ func newRuntime(deps apphost.Dependencies, cfg services.AccessSettings, loc *tim
 	r := &runtime{
 		deps: deps, cfg: cfg, store: store, alarms: alarms, decisions: decisions,
 		strikes: strikes, cache: cache,
-		live: map[string]*services.Controller{},
+		live:    map[string]*services.Controller{},
+		busDown: map[string]bool{},
 	}
 	r.SetLocation(loc)
 	// offline is deliberately NOT seeded here. The caller applies it through SetOffline so that a
@@ -182,6 +190,32 @@ func (r *runtime) start(ctx context.Context) error {
 	return nil
 }
 
+// busHealthyRun is how long a bus session must last to count as "the outage ended".
+//
+// Anything shorter is part of the same episode — a gateway that accepts the connection and drops
+// it, a reader set that will not enrol — so it neither resets the re-dial backoff nor re-arms the
+// segment-down alarm.
+const busHealthyRun = 20 * time.Second
+
+// announceBusDown reports whether this segment's loss is NEW, and records that it has been
+// announced. A session that ran healthily ends the previous outage, so the next failure alarms
+// again; a gateway flapping every second alarms once.
+func (r *runtime) announceBusDown(port string, ranHealthy bool) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.busDown == nil {
+		r.busDown = map[string]bool{}
+	}
+	if ranHealthy {
+		delete(r.busDown, port)
+	}
+	if r.busDown[port] {
+		return false
+	}
+	r.busDown[port] = true
+	return true
+}
+
 // superviseBus keeps one segment running, re-dialling whenever the transport dies.
 //
 // THIS LOOP IS THE DIFFERENCE BETWEEN A DOOR CONTROLLER AND A DEMO. Without it a CP that loses its
@@ -204,13 +238,26 @@ func (r *runtime) superviseBus(ctx context.Context, cfg services.BusSettings) {
 	backoff := minBackoff
 
 	for ctx.Err() == nil {
+		started := time.Now()
 		err := r.runBus(ctx, cfg)
 		if ctx.Err() != nil {
 			return
 		}
+		ran := time.Since(started)
 		if err != nil {
-			r.deps.Logger.Errorf("mypintusan.bus", "bus %s went down (%v); re-dialling in %s",
-				cfg.Port, err, backoff)
+			r.deps.Logger.Errorf("mypintusan.bus", "bus %s went down after %s (%v); re-dialling in %s",
+				cfg.Port, ran.Round(time.Second), err, backoff)
+		}
+		// A session that RAN is the end of an outage, not a step deeper into one.
+		//
+		// Without this reset the backoff accumulated over the whole life of the process rather than
+		// over the current fault: a site whose gateway reboots nightly, or whose cable gets knocked
+		// by a cleaner once a week, reached the 30 s cap after five such events and stayed there
+		// for good. Every subsequent knock then left every door on the segment dead for half a
+		// minute after the cable was already back — the exact delay the cap exists to prevent, and
+		// impossible to explain to the person standing outside the door.
+		if ran >= busHealthyRun {
+			backoff = minBackoff
 		}
 		select {
 		case <-ctx.Done():
@@ -241,7 +288,20 @@ func (r *runtime) runBus(ctx context.Context, cfg services.BusSettings) error {
 		},
 	})
 
+	// The Bus closes the port in Run's defer and NOWHERE ELSE, so every path below that returns
+	// without reaching Run has to close it here. It is not a tidiness point: `superviseBus` retries
+	// forever, so a bus whose readers all fail to enrol — one mistyped SCBK on a single-reader
+	// segment is enough — leaked a live TCP connection every re-dial, for the life of the process.
+	closePort := transport.Close
+	started := false
+	defer func() {
+		if !started {
+			_ = closePort()
+		}
+	}()
+
 	enrolled := 0
+	addrs := make([]uint8, 0, len(cfg.Readers))
 	for _, rd := range cfg.Readers {
 		pdCfg := osdp.PDConfig{Address: uint8(rd.Address), RequireSecureChannel: rd.RequireSecureChannel}
 		if key := strings.TrimSpace(rd.SCBK); key != "" {
@@ -268,6 +328,7 @@ func (r *runtime) runBus(ctx context.Context, cfg services.BusSettings) error {
 			continue
 		}
 		enrolled++
+		addrs = append(addrs, uint8(rd.Address))
 	}
 	if enrolled == 0 {
 		return fmt.Errorf("bus %s has no usable readers configured", cfg.Port)
@@ -313,9 +374,30 @@ func (r *runtime) runBus(ctx context.Context, cfg services.BusSettings) error {
 		_ = ctrl.Run(busCtx)
 	})
 
+	started = true
+	sessionStart := time.Now()
 	runErr := bus.Run(busCtx)
 	cancel()
 	<-ctrlDone
+
+	// The segment is gone. Say so — to the alarm feed and to the readers list — before returning to
+	// the re-dial loop. See services.Controller.BusDown: per-reader supervision cannot cover this,
+	// because `failPort` ends the run long before any reader has failed enough transactions to be
+	// declared offline, so the largest-blast-radius fault in the app was the only silent one.
+	//
+	// Not on an ordinary shutdown: the app stopping is not a door alarm. And once per OUTAGE, not
+	// once per failed re-dial — see runtime.busDown.
+	if ctx.Err() == nil && r.announceBusDown(cfg.Port, time.Since(sessionStart) >= busHealthyRun) {
+		reason := "transport closed"
+		if runErr != nil {
+			reason = runErr.Error()
+		}
+		// Detached from busCtx (already cancelled) but bounded: this runs on the re-dial path, and
+		// a store call that hangs must not hold the segment down while it does.
+		downCtx, downCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		ctrl.BusDown(downCtx, addrs, reason)
+		downCancel()
+	}
 	return runErr
 }
 

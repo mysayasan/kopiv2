@@ -75,12 +75,43 @@ func (k EventKind) String() string {
 	return "unknown"
 }
 
+// FaultKind says WHAT KIND of fault an EventFault reports, so a consumer can title it correctly.
+//
+// It exists because "a protocol fault worth surfacing" covers two completely different site visits.
+// A skewed sequence number, a NAK, an undecodable PDID or a card read that will not parse are
+// CABLING, addressing or firmware problems; a Secure Channel that could not be established, or a
+// credential refused because one was required and absent, is a SECURITY problem. mypintusan raised
+// every one of them as "Reader secure channel fault" because EventFault carried no way to tell
+// them apart — which sends an operator hunting for a bus tap when the actual fault is a reader
+// three metres past the end of the segment's rated cable length.
+type FaultKind uint8
+
+const (
+	// FaultProtocol is a framing, sequencing, addressing or decode fault. The reader is present;
+	// the conversation with it is broken.
+	FaultProtocol FaultKind = iota
+	// FaultSecureChannel is about the encrypted session itself: it could not be established, it
+	// was lost, or a credential arrived on a reader that was required to have one and did not.
+	FaultSecureChannel
+)
+
+func (f FaultKind) String() string {
+	if f == FaultSecureChannel {
+		return "secure-channel"
+	}
+	return "protocol"
+}
+
 // Event is something that happened on the bus. Card reads arrive here and nowhere else: a PD hands
 // one over on a poll reply, unprompted, so there is no call that returns a card and never will be.
 type Event struct {
 	At      time.Time
 	Address uint8
 	Kind    EventKind
+	// Fault classifies an EventFault. The zero value is FaultProtocol, which is the safe default:
+	// a fault nobody classified is reported as a wiring problem rather than as a security one, and
+	// over-reporting security faults is how an operator learns to ignore them.
+	Fault FaultKind
 
 	Card   CardRead // EventCard
 	Digits []byte   // EventKeypad
@@ -134,7 +165,9 @@ func (e Event) String() string {
 		}
 		return fmt.Sprintf("addr=%d online serial=%#08x fw=%d.%d.%d %s",
 			e.Address, e.Info.Serial, e.Info.FirmwareMajor, e.Info.FirmwareMinor, e.Info.FirmwareBuild, sc)
-	case EventOffline, EventFault:
+	case EventFault:
+		return fmt.Sprintf("addr=%d %s(%s): %s", e.Address, e.Kind, e.Fault, e.Reason)
+	case EventOffline:
 		return fmt.Sprintf("addr=%d %s: %s", e.Address, e.Kind, e.Reason)
 	case EventStatus:
 		return fmt.Sprintf("addr=%d status tamper=%t mains-fail=%t", e.Address, e.Tamper, e.PowerFail)

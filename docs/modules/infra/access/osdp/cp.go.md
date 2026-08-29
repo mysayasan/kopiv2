@@ -17,7 +17,15 @@ answering badges over a channel just decided to require encryption, before it ex
 ## Key Type: Event / EventKind
 
 `EventCard`, `EventKeypad`, `EventOnline`, `EventOffline`, `EventStatus`, `EventInput`,
-`EventFault`. `EventStatus` carries the LSTATR flags (`Tamper`, `PowerFail`); `EventInput` carries
+`EventFault`. An `EventFault` also carries a **`Fault FaultKind`** — `FaultProtocol` (framing,
+sequencing, addressing, decode: the reader is present and the conversation with it is broken) or
+`FaultSecureChannel` (the encrypted session could not be established, was lost, or a credential
+arrived on a reader required to have one). The zero value is `FaultProtocol`, deliberately: an
+unclassified fault is reported as a wiring problem rather than a security one, because
+over-reporting security faults is how an operator learns to ignore them. It exists because
+`mypintusan` had no way to tell the two apart and titled every one of them "Reader secure channel
+fault" — a skewed sequence number on a reader with no Secure Channel configured at all sent an
+installer hunting for a bus tap. See `MYPINTUSAN_OSDP_PLAN.md` §12. `EventStatus` carries the LSTATR flags (`Tamper`, `PowerFail`); `EventInput` carries
 the ISTATR contact states (`Inputs`), where **input 0 is the door-position contact and true means
 open** — a convention, not something OSDP states, since the protocol reports an input's electrical
 state and leaves the meaning to the installer (per-input polarity is not yet a reader-profile

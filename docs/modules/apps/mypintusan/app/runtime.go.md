@@ -111,6 +111,13 @@ replaced wholesale on each reconnect. `offline` follows the identical reasoning,
   reconnected — events simply stopped, with nothing in the logs saying why — and no unit test
   caught it, because the existing tests run over an in-memory pipe that is never torn down
   mid-run (see `infra/access/osdp/bus.go.md`'s `failPort` for the driver-side half of this fix).
+  - **The backoff resets after a session that ran for 20 s or more.** Without that reset it
+    doubled over the life of the *process* rather than over the current outage, so a site whose
+    gateway reboots nightly reached the 30 s cap after about five events and stayed there for
+    good — every subsequent knock leaving the segment's doors dead for half a minute after the
+    cable was already back, which is the exact delay the cap exists to prevent. Measured live at
+    28.5 s for the sixth knock against 5.2 s for the same knock once the reset was in
+    (`MYPINTUSAN_OSDP_PLAN.md` §12).
 - `runBus(ctx, cfg)` — dials the transport (`dialBus`), builds a fresh `osdp.Bus` and enrols
   every configured reader (refusing, per-reader rather than per-bus, a `RequireSecureChannel`
   reader with a missing or malformed SCBK — a mistyped key must never silently become a
@@ -128,6 +135,20 @@ replaced wholesale on each reconnect. `offline` follows the identical reasoning,
     port on exit, and the per-PD sequence number and Secure Channel session belong to the dead
     session — resuming an old session against a possibly power-cycled or swapped reader is
     exactly the substitution Secure Channel exists to prevent.
+  - **`Bus` closes the port in `Run`'s defer and nowhere else**, so every path that returns
+    without reaching `Run` closes the transport itself. The `enrolled == 0` path did not, and
+    `superviseBus` retries for ever: one `requireSecureChannel` with no key, or one mistyped
+    SCBK, on a single-reader segment leaked a connection per re-dial to a gateway that commonly
+    accepts one to four TCP clients.
+  - **When `Bus.Run` returns, `ctrl.BusDown` is called** with the addresses that were enrolled,
+    so the segment's loss reaches the alarm feed and the readers list before the re-dial loop
+    takes over. Skipped on ordinary shutdown — the app stopping is not a door alarm — and gated
+    by `announceBusDown` so ONE outage produces ONE alarm however many re-dials fail inside it: a
+    gateway that is rebooting accepts the connection and drops it again, repeatedly, and paging on
+    each of those would deliver the alarm-fatigue failure `services/alarm.go` argues against
+    through the very alarm added to prevent silence. A session lasting `busHealthyRun` (20 s) —
+    the same threshold that resets the backoff — ends the outage and re-arms it. See
+    `services/controller.go.md`'s `BusDown`.
 - `stop()` — cancels the runtime's root context, which propagates to every bus supervisor.
 - `SetLockdown(ctx, on)` / `Lockdown()` — set/read the site-wide flag under `mu`, and fan a set
   out to every currently-live controller. `Lockdown()` reads the **runtime's** flag, not a

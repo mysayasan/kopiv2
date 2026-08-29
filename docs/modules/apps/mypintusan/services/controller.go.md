@@ -104,8 +104,19 @@ runtime and the only consumer of the bus's event channel. It also owns lockdown,
   (offline additionally raises `AlarmReaderOffline` — every door on that reader is now unusable
   and a dashboard nobody is watching would not surface it), `EventStatus` tamper raises
   `AlarmTamper` and records the state on the reader row, `EventInput` goes to `contactReported`,
-  `EventFault` raises `AlarmSecureChannel`, `EventKeypad` buffers a PIN, `EventCard` goes to
-  `handleCard`.
+  `EventFault` raises `AlarmBusFault` or, when `Event.Fault` is `osdp.FaultSecureChannel`,
+  `AlarmSecureChannel` — titled by what the fault ACTUALLY IS, because the kind covers both a
+  cabling story and a security one and it used to raise the security headline for both;
+  `EventKeypad` buffers a PIN, `EventCard` goes to `handleCard`.
+- `BusDown(ctx, addrs, reason)` — the ENTIRE segment is gone (adapter unplugged, gateway rebooted,
+  trunk cut). Marks every reader on it offline (leaving `LastSeenAt` alone: the reader was last
+  seen when it last *answered*) and raises one `AlarmBusOffline` naming the port and the reader
+  count. One alarm for the cable, not one per reader. It exists because this was the only silent
+  fault in the app: per-reader supervision alarms on silence because `Bus.Run` keeps polling, but
+  `failPort` ends the run on the very next slot — long before any reader has failed enough
+  transactions — so an unplugged adapter took every door out of service, raised nothing, and left
+  the readers list saying `ok, last seen a moment ago`. Called from `app/runtime.go`'s `runBus`
+  after `Bus.Run` returns, and never on an ordinary shutdown.
 - `takePIN` consumes (not merely expires) a buffered PIN on read, so it can never be offered to
   a second card — otherwise the next person in the queue could open the door, or trigger a
   duress alarm attributed to them, on someone else's PIN. **This implements PIN-then-card only**:
@@ -199,3 +210,21 @@ and `app/app.go.md`. GATE 10 itself, and the gate ordering (a stale cache never 
 revocation), are unchanged by this fix — the bug was entirely in what fed the gate its number, not
 in the gate. The bench's positive control — a critical door denying `offline-not-allowed` for a
 holder not flagged `OfflineAllowed` — is what proves GATE 10 runs on a live controller at all.
+
+## What the fifth live bench confirmed — bus faults, reconnect and lockdown
+
+`tools/fleetbench/bench_pintusan_bus.py` (42/42; 36/42 against the unfixed app) drives the rest of
+the fault table in `MYPINTUSAN_OSDP_PLAN.md` §4.1 against a real appliance and kills the simulator
+to test the reconnect path. Two findings land in this file. `handle`'s `EventFault` branch raised
+`AlarmSecureChannel` for every fault the driver could report, so a skewed sequence number on a
+reader with no Secure Channel configured reached the operator as "Reader secure channel fault";
+it now reads `Event.Fault` and raises `AlarmBusFault` for the protocol ones. And `BusDown` is new
+because nothing at all was raised when the whole segment's transport died — the fault with the
+largest blast radius in the app was its only silent one.
+
+What this file already did right, and is now measured doing it: a reader that dies on a multi-drop
+segment is alarmed offline and its row is marked, while the other doors on the same cable keep
+granting; a reader that replies BUSY is not alarmed; a reader that is present but unusable opens no
+door and is declared offline by the supervision timeout; and `SetLockdown` carried across a
+reconnect really does keep the site sealed — pulled cable, restored cable, badge on the reconnected
+bus still denied `lockdown`, then lifted and the same badge granted.

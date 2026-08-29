@@ -936,3 +936,76 @@ func TestEndToEndBadgeOnUnenrolledReaderIsLogged(t *testing.T) {
 		t.Error("a badge on an unenrolled reader fired a strike")
 	}
 }
+
+// TestProtocolFaultIsNotTitledSecureChannel is the unit-level guard on a mislabel measured live.
+//
+// `EventFault` covers two completely different site visits — a skewed sequence number or an
+// undecodable frame is a CABLING fault, a failed handshake is a SECURITY one — and the controller
+// mapped the whole kind to AlarmSecureChannel. Against the simulator's `bad-sequence` scenario, on
+// a reader with no Secure Channel configured at all, the operator's alarm read "Reader secure
+// channel fault": the right alarm under a headline that sends an installer hunting for a bus tap.
+func TestProtocolFaultIsNotTitledSecureChannel(t *testing.T) {
+	r := newRig(t, ControllerConfig{})
+	r.ctrl.handle(context.Background(), osdp.Event{
+		Kind: osdp.EventFault, Address: 1, Fault: osdp.FaultProtocol,
+		Reason: "reply sequence 1, expected 0 — resetting the session",
+	})
+	r.alarm.awaitAlarm(t, AlarmBusFault, time.Second)
+	if r.alarm.has(AlarmSecureChannel) {
+		t.Fatal("a sequence fault was reported to the operator as a secure channel fault")
+	}
+}
+
+// TestSecureChannelFaultKeepsItsOwnAlarm is the other half: classifying the protocol faults must
+// not quietly demote the security ones, which are the reason this alarm exists.
+func TestSecureChannelFaultKeepsItsOwnAlarm(t *testing.T) {
+	r := newRig(t, ControllerConfig{})
+	r.ctrl.handle(context.Background(), osdp.Event{
+		Kind: osdp.EventFault, Address: 1, Fault: osdp.FaultSecureChannel,
+		Reason: "credential presented but Secure Channel is required and not established — denied",
+	})
+	r.alarm.awaitAlarm(t, AlarmSecureChannel, time.Second)
+	if r.alarm.has(AlarmBusFault) {
+		t.Fatal("a Secure Channel fault was downgraded to a wiring fault")
+	}
+}
+
+// TestBusDownAlarmsTheSegmentAndMarksItsReaders covers the fault with the biggest blast radius and
+// — until this — the only silent one.
+//
+// Per-reader supervision alarms on silence because Bus.Run keeps polling and each timeout counts
+// against OfflineAfter. A dead PORT does not work that way: failPort ends the run on the very next
+// slot, deliberately, so the owner can re-dial — long before any reader has failed three
+// transactions. So an unplugged adapter took every door on the segment out of service, raised
+// nothing, and left the readers list saying `ok, last seen a moment ago`.
+func TestBusDownAlarmsTheSegmentAndMarksItsReaders(t *testing.T) {
+	// NO RUNNING BUS, deliberately, because that is the state this is called in: runBus calls it
+	// after Bus.Run has returned and the controller's event loop has drained. A rig whose bus is
+	// still polling marks the reader back to `ok` on its next status reply, and the test then
+	// measures the rig rather than the product.
+	store := newStore()
+	store.readers[rkey(testPort, 1)] = &entities.Reader{
+		Id: 1, Name: "Front-In", DoorId: 1, Direction: entities.DirectionIn,
+		BusPort: testPort, OsdpAddress: 1, Enabled: true, TamperState: entities.TamperOK,
+		LastSeenAt: 1700000000,
+	}
+	alarm := newAlarm()
+	ctrl := NewController(store, nil, nil, alarm, testPIN, ControllerConfig{BusPort: testPort})
+
+	ctrl.BusDown(context.Background(), []uint8{1}, "port closed by the peer")
+	alarm.awaitAlarm(t, AlarmBusOffline, time.Second)
+
+	reader, err := store.ReaderByBus(context.Background(), testPort, 1)
+	if err != nil || reader == nil {
+		t.Fatalf("reader lookup: %v", err)
+	}
+	// The screen the alarm sends them to must not still say the reader is fine.
+	if reader.TamperState != entities.TamperOffline {
+		t.Fatalf("reader row still reads %q after the whole segment went down", reader.TamperState)
+	}
+	// And it must not claim the reader was seen at the moment the cable came out: it was last seen
+	// when it last answered.
+	if reader.LastSeenAt != 1700000000 {
+		t.Fatalf("LastSeenAt moved to %d when the segment went down", reader.LastSeenAt)
+	}
+}

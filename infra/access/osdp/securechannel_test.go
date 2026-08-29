@@ -597,6 +597,11 @@ func TestBusSecureChannelOptionalDegradesButWarns(t *testing.T) {
 	if !strings.Contains(ev.Reason, "continuing in the clear") {
 		t.Errorf("fault reason %q does not say the reader degraded to cleartext", ev.Reason)
 	}
+	// The other half of the classification: marking the protocol faults must not demote the
+	// security ones, which are the reason a secure-channel alarm exists at all.
+	if ev.Fault != FaultSecureChannel {
+		t.Errorf("secure-channel fault classified as %s, want secure-channel", ev.Fault)
+	}
 
 	// It must still come online and serve, because this door did not require encryption.
 	online := h.awaitKind(3*time.Second, 1, EventOnline)

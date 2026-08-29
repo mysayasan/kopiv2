@@ -183,6 +183,10 @@ func alarmTitle(kind string) string {
 		return "Reader offline — doors out of service"
 	case AlarmSecureChannel:
 		return "Reader secure channel fault"
+	case AlarmBusFault:
+		return "Reader communication fault — check the wiring"
+	case AlarmBusOffline:
+		return "OSDP segment down — every door on it is out of service"
 	case AlarmDegraded:
 		return "Running from cache — access rules cannot be updated"
 	default:
