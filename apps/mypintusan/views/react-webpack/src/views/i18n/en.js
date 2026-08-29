@@ -330,5 +330,30 @@ export default {
   'wizard.done.p1': 'Every badge, allowed or refused, is recorded under Activity.',
   'wizard.done.p2': 'You can change anything you entered here from Settings.',
 
-  'settings.addressHint': 'Each reader on one cable needs its own address. New readers usually arrive set to 0, so a second reader must be changed before it will work.'
+  'settings.addressHint': 'Each reader on one cable needs its own address. New readers usually arrive set to 0, so a second reader must be changed before it will work.',
+
+  // --- Permissions: what this role may do ------------------------------------------------------
+  'doors.noUnlockPermission': 'Your role cannot open doors remotely.',
+  'badge.noIssuePermission': 'Your role cannot issue or revoke badges.',
+  'readers.securityUnknown': 'Not shown',
+  'readers.securityUnknownHint': 'Only an administrator can see whether a reader is encrypted. This is not a statement that the reader is unencrypted.',
+  'access.readOnly': 'You can see the access rules but not change them. Only an administrator can edit a grant, a group, a schedule or the holiday calendar.',
+
+  'users.title': 'Users',
+  'users.hint': 'Who may sign in to this controller, and as what. The role decides what each person can reach \u2014 an operator opens doors and issues badges; a viewer watches and changes nothing.',
+  'users.add': 'Add a user',
+  'users.username': 'Username',
+  'users.displayName': 'Name',
+  'users.password': 'Password',
+  'users.role': 'Role',
+  'users.roleHint': 'Only an administrator can change access rules, seal the site, or add another user.',
+  'users.status': 'Status',
+  'users.active': 'Active',
+  'users.disabled': 'Disabled',
+  'users.empty': 'No users yet.',
+  'users.resetPassword': 'Reset password',
+  'users.resetPrompt': 'New password for {name}',
+  'users.passwordReset': 'Password reset',
+  'users.deleteConfirm': 'Remove {name}? They will not be able to sign in again.',
+  'users.deleted': 'User removed'
 }

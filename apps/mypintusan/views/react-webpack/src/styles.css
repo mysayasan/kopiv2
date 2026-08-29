@@ -303,3 +303,291 @@ body {
 
 .wizard-nav { display: flex; justify-content: space-between; align-items: center; margin-top: 18px; }
 .wizard-nav-right { display: flex; gap: 8px; }
+
+/* --- The shared DataTable ------------------------------------------------------------------
+ *
+ * @shared/DataTable ships MARKUP AND NO STYLE — its own header says the classes are styled by the
+ * consuming app's stylesheet — and this app never wrote them. Four apps in the suite do (three
+ * through rbac-standard.css, myidsan inline); mypintusan was the only one that used the component
+ * and did not, so every table on every screen rendered raw white browser buttons labelled "Sort"
+ * and an unstyled filter control jammed under each column heading, in all four languages, on every
+ * install.
+ *
+ * Nothing caught it because nothing could: the screens rendered, every control was hit-testable,
+ * no dictionary key leaked, and the API answered correctly. It took looking at the screenshots.
+ * Ported from rbac-standard.css and rebound to this app's warm palette.
+ */
+.table-surface {
+  width: 100%;
+  border: 1px solid var(--ui-border, #262b31);
+  border-radius: 8px;
+  background: var(--ui-surface, #161a1f);
+  overflow: hidden;
+}
+
+.table-wrap { position: relative; width: 100%; overflow-x: auto; }
+
+.table-surface table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table-surface th {
+  text-align: start;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--ui-border, #262b31);
+  background: var(--ui-surface-2, #1d2229);
+  color: var(--ui-muted, #93999f);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.table-surface td {
+  padding: 9px 12px;
+  border-top: 1px solid var(--ui-border, #262b31);
+  color: var(--ui-text, #e8eaed);
+}
+
+.column-head { display: grid; gap: 7px; min-width: 120px; }
+.column-title-row,
+.column-actions { display: flex; align-items: center; gap: 6px; }
+.column-title-row { justify-content: space-between; }
+.column-title-row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.column-actions { flex: 0 0 auto; }
+
+/* The filter control is drawn as a funnel from two pseudo-elements rather than an icon font or an
+   SVG sprite: this appliance ships with a default-src 'self' CSP and no egress. */
+.filter-button {
+  position: relative;
+  width: 30px;
+  min-height: 26px;
+  border: 1px solid var(--ui-border-strong, #343b44);
+  border-radius: 6px;
+  background: var(--ui-surface, #161a1f);
+  cursor: pointer;
+  padding: 0;
+}
+.filter-button::before {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 6px;
+  width: 14px;
+  height: 7px;
+  background: var(--ui-muted, #93999f);
+  clip-path: polygon(0 0, 100% 0, 62% 100%, 38% 100%);
+}
+.filter-button::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  top: 13px;
+  width: 5px;
+  height: 6px;
+  background: var(--ui-muted, #93999f);
+  border-radius: 1px 1px 2px 2px;
+}
+.filter-button:hover,
+.filter-button:focus-visible { border-color: var(--ui-accent, #c98a2e); outline: 0; }
+.filter-button.active { border-color: var(--ui-accent, #c98a2e); background: var(--ui-accent, #c98a2e); }
+.filter-button.active::before,
+.filter-button.active::after { background: #1a1206; }
+
+.filter-count {
+  position: absolute;
+  right: -5px;
+  top: -6px;
+  z-index: 1;
+  min-width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--ui-danger, #e08573);
+  color: #1a1206;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.sort-button {
+  border: 1px solid var(--ui-border-strong, #343b44);
+  border-radius: 6px;
+  background: var(--ui-surface, #161a1f);
+  color: var(--ui-muted, #93999f);
+  min-height: 26px;
+  padding: 3px 6px;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.sort-button.active {
+  border-color: var(--ui-accent, #c98a2e);
+  color: var(--ui-accent, #c98a2e);
+  background: var(--ui-accent-soft, rgba(201, 138, 46, 0.14));
+}
+.sort-button span {
+  display: inline-grid;
+  place-items: center;
+  min-width: 16px;
+  height: 16px;
+  margin-inline-start: 5px;
+  border-radius: 999px;
+  background: var(--ui-accent, #c98a2e);
+  color: #1a1206;
+  font-size: 10px;
+}
+
+.filter-popover-backdrop { position: fixed; inset: 0; z-index: 49; border: 0; background: transparent; }
+.filter-popover {
+  position: fixed;
+  z-index: 50;
+  width: 280px;
+  border: 1px solid var(--ui-border-strong, #343b44);
+  border-radius: 8px;
+  background: var(--ui-surface, #161a1f);
+  box-shadow: 0 18px 42px var(--ui-shadow, rgba(0, 0, 0, 0.45));
+  padding: 12px;
+}
+.filter-popover-head,
+.filter-popover-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.filter-popover-head { color: var(--ui-text, #e8eaed); font-weight: 800; }
+.filter-popover-actions { justify-content: flex-end; }
+.filter-popover-body { display: grid; gap: 10px; }
+.filter-condition {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--ui-border, #262b31);
+  border-radius: 8px;
+  background: var(--ui-surface-2, #1d2229);
+}
+.filter-condition-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--ui-muted, #93999f);
+  font-size: 12px;
+  font-weight: 900;
+}
+.filter-condition label { display: grid; gap: 5px; font-size: 12px; color: var(--ui-muted, #93999f); }
+
+.mini-button {
+  border: 0;
+  background: transparent;
+  color: var(--ui-muted, #93999f);
+  min-height: 28px;
+  padding: 2px 0;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.mini-button:hover { color: var(--ui-accent, #c98a2e); }
+
+.empty-cell { color: var(--ui-muted, #93999f); text-align: center; padding: 28px; }
+
+.primary-button {
+  min-height: 34px;
+  border: 1px solid var(--ui-accent, #c98a2e);
+  border-radius: 8px;
+  background: var(--ui-accent, #c98a2e);
+  color: #1a1206;
+  padding: 6px 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.secondary-button {
+  min-height: 34px;
+  border: 1px solid var(--ui-border-strong, #343b44);
+  border-radius: 8px;
+  background: var(--ui-surface, #161a1f);
+  color: var(--ui-text, #e8eaed);
+  padding: 6px 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--ui-border, #262b31);
+  background: var(--ui-surface-2, #1d2229);
+  color: var(--ui-muted, #93999f);
+  font-size: 13px;
+}
+.pager-controls { display: flex; align-items: center; gap: 8px; }
+.pager-meta { display: flex; align-items: center; gap: 8px; }
+.pager-icon {
+  position: relative;
+  width: 34px;
+  min-height: 34px;
+  border: 1px solid var(--ui-border-strong, #343b44);
+  border-radius: 8px;
+  background: var(--ui-surface, #161a1f);
+  cursor: pointer;
+  padding: 0;
+}
+.pager-icon:hover:not(:disabled),
+.pager-icon:focus-visible:not(:disabled) { border-color: var(--ui-accent, #c98a2e); outline: 0; }
+.pager-icon:disabled { opacity: 0.44; cursor: not-allowed; }
+.pager-icon::before,
+.pager-icon::after { content: ""; position: absolute; }
+.pager-icon.previous::before,
+.pager-icon.next::before,
+.pager-icon.first::before,
+.pager-icon.last::before {
+  top: 10px;
+  width: 10px;
+  height: 10px;
+  border-top: 2px solid var(--ui-muted, #93999f);
+  border-right: 2px solid var(--ui-muted, #93999f);
+}
+.pager-icon.previous::before { left: 13px; transform: rotate(-135deg); }
+.pager-icon.next::before { right: 13px; transform: rotate(45deg); }
+.pager-icon.first::before { left: 15px; transform: rotate(-135deg); }
+.pager-icon.last::before { right: 15px; transform: rotate(45deg); }
+.pager-icon.first::after,
+.pager-icon.last::after {
+  top: 9px;
+  width: 2px;
+  height: 14px;
+  background: var(--ui-muted, #93999f);
+  border-radius: 1px;
+}
+.pager-icon.first::after { left: 9px; }
+.pager-icon.last::after { right: 9px; }
+.pager-icon.go::before {
+  left: 10px;
+  top: 9px;
+  width: 10px;
+  height: 16px;
+  border-right: 3px solid var(--ui-muted, #93999f);
+  border-bottom: 3px solid var(--ui-muted, #93999f);
+  transform: rotate(40deg);
+}
+.pager-jump { width: 58px; }
+
+/* The app's own input styling is scoped to `.form`, and NONE of the DataTable's inputs live in a
+   form of this app's — the page-jump box and every field in the filter popover sat outside it and
+   rendered as white browser defaults on a dark screen. Style them by where they actually are. */
+.pager-jump input,
+.pager-size select,
+.filter-condition input,
+.filter-condition select {
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  border: 1px solid var(--ui-border-strong, #343b44);
+  background: var(--ui-surface-2, #1d2229);
+  color: var(--ui-text, #e8eaed);
+  padding: 6px 8px;
+}
+.pager-jump input { min-height: 34px; text-align: center; }
+.pager-size select { min-height: 30px; }
+
+/* The arrows are drawn with left/right offsets and a rotation, so they have to be mirrored for
+   Arabic — otherwise "next page" points backwards on the one locale that reads that way. */
+[dir="rtl"] .pager-icon.next::before { transform: scaleX(-1) rotate(45deg); }
+[dir="rtl"] .pager-icon.last::before { transform: scaleX(-1) rotate(45deg); }
+[dir="rtl"] .pager-icon.previous::before { transform: scaleX(-1) rotate(-135deg); }
+[dir="rtl"] .pager-icon.first::before { transform: scaleX(-1) rotate(-135deg); }

@@ -4,22 +4,29 @@ import * as api from '../lib/access'
 
 // The doors screen is the one an operator leaves open all day: every door, its state, and a button
 // that opens it. Everything else in this app exists to make this screen trustworthy.
-export default function Doors({ user, toast }) {
+export default function Doors({ caps = {}, toast }) {
   const t = useT()
   const [doors, setDoors] = useState(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(0)
   const [lockdown, setLockdownState] = useState(false)
 
+  // The two loads settle INDEPENDENTLY. They were one Promise.all, so a refusal on either rejected
+  // both — and the lockdown state was admin-only, which meant this screen rendered "you do not have
+  // permission for this action" and no doors at all for every viewer and every operator. The door
+  // list is what this screen is for; nothing else failing may be allowed to take it down with it.
   const load = useCallback(async () => {
     try {
-      const [list, ld] = await Promise.all([api.listDoors(), api.getLockdown()])
+      const list = await api.listDoors()
       setDoors(Array.isArray(list) ? list : [])
-      setLockdownState(!!(ld && ld.lockdown))
       setError('')
     } catch (e) {
       setError(e && e.message ? e.message : t('common.error'))
     }
+    try {
+      const ld = await api.getLockdown()
+      setLockdownState(!!(ld && ld.lockdown))
+    } catch { /* the doors still render; the lockdown pill simply says nothing */ }
   }, [t])
 
   useEffect(() => { load() }, [load])
@@ -65,7 +72,10 @@ export default function Doors({ user, toast }) {
           <h1>{t('doors.title')}</h1>
           <p className="muted">{t('doors.subtitle')}</p>
         </div>
-        {user && user.isAdmin ? (
+        {/* The lockdown control is offered only to somebody the server would let use it. Anyone
+            else still has to SEE that the site is sealed — a door screen that hides lockdown from
+            an operator is a screen that cannot explain why nothing is opening. */}
+        {caps.lockdown ? (
           <LockdownControl active={lockdown} onToggle={toggleLockdown} />
         ) : lockdown ? (
           <span className="pill pill-danger">{t('lockdown.active')}</span>
@@ -88,6 +98,7 @@ export default function Doors({ user, toast }) {
             door={door}
             busy={busy === door.id}
             lockdown={lockdown}
+            canUnlock={!!caps.unlockDoor}
             onUnlock={() => unlock(door)}
           />
         ))}
@@ -114,7 +125,7 @@ function LockdownControl({ active, onToggle }) {
   )
 }
 
-function DoorCard({ door, busy, lockdown, onUnlock }) {
+function DoorCard({ door, busy, lockdown, canUnlock, onUnlock }) {
   const t = useT()
   const outOfService = !door.enabled
   const blocked = outOfService || lockdown
@@ -144,9 +155,17 @@ function DoorCard({ door, busy, lockdown, onUnlock }) {
         <p className="muted small"><Ico n="shield" sz={13} /> {t('doors.encrypted')}</p>
       ) : null}
 
-      <button type="button" className="btn btn-primary" disabled={busy || blocked} onClick={onUnlock}>
-        {busy ? t('doors.unlocking') : t('doors.unlock')}
-      </button>
+      {/* No Unlock button at all for a role the server will refuse. A disabled one would be a
+          different lie — it reads as "not right now", when the truth is "not by you, ever" — and
+          an enabled one produces a bare error at the moment somebody is standing at the door.
+          Which roles may open a door is services/rbac.go's decision, asked, not guessed. */}
+      {canUnlock ? (
+        <button type="button" className="btn btn-primary" disabled={busy || blocked} onClick={onUnlock}>
+          {busy ? t('doors.unlocking') : t('doors.unlock')}
+        </button>
+      ) : (
+        <p className="muted small">{t('doors.noUnlockPermission')}</p>
+      )}
     </article>
   )
 }

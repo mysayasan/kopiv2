@@ -24,7 +24,7 @@ async function deploymentApi(path, options) {
 // SECURITY KEYS ARE NEVER LOADED INTO THIS SCREEN. The server redacts them and reports
 // hasScbk/usingDefaultKey instead, and a save sends them back absent — the server carries the
 // stored key forward. That means this page cannot leak a site key, and equally cannot destroy one.
-export default function Settings({ toast }) {
+export default function Settings({ caps = {}, toast }) {
   const t = useT()
   const [form, setForm] = useState(null)
   const [saving, setSaving] = useState(false)
@@ -219,8 +219,192 @@ export default function Settings({ toast }) {
         </div>
       </form>
 
+      {caps.manageUsers ? <UsersSection toast={toast} /> : null}
+
       <FleetSection toast={toast} />
     </div>
+  )
+}
+
+// UsersSection is who may sign in to this controller, and as what.
+//
+// It exists because the API behind it did not, and neither did this panel. services/rbac.go seeds
+// viewer, operator and administrator on every boot and argues at length about the line between
+// them — and there was no way to put a person in one of them, so an appliance had a single admin
+// account and every distinction in that file was theoretical. The screens now render their
+// controls from the signed-in role's capabilities, which makes the role somebody holds the thing
+// that decides what they see, which makes this the screen that decides it.
+function UsersSection({ toast }) {
+  const t = useT()
+  const [users, setUsers] = useState(null)
+  const [roles, setRoles] = useState([])
+  const [adding, setAdding] = useState(false)
+
+  const load = useCallback(async () => {
+    try {
+      const [list, roleList] = await Promise.all([api.listUsers(), api.listRoles()])
+      setUsers(Array.isArray(list) ? list : (list && list.items) || [])
+      setRoles(Array.isArray(roleList) ? roleList : [])
+    } catch (err) {
+      toast(err && err.message ? err.message : t('common.error'), 'error')
+      setUsers([])
+    }
+  }, [t, toast])
+
+  useEffect(() => { load() }, [load])
+
+  // Roles are named by the server (they are rows, and a site may have renamed one), so the name is
+  // rendered as it comes back rather than through the dictionary — a translated label here would
+  // disagree with the one in the role picker on the same screen.
+  const roleName = id => {
+    const r = roles.find(x => x.id === id)
+    return r ? (r.name || '—') : '—'
+  }
+
+  const remove = async user => {
+    if (!window.confirm(t('users.deleteConfirm', { name: user.username }))) return
+    try {
+      await api.deleteUser(user.id)
+      toast(t('users.deleted'), 'ok')
+      load()
+    } catch (err) {
+      // The shared service refuses to remove the last administrator, and says so in words meant
+      // for this reader. On a door controller that guard is the difference between an appliance
+      // somebody can administer and one where nobody can lift a lockdown.
+      toast(err && err.message ? err.message : t('common.error'), 'error')
+    }
+  }
+
+  const resetPassword = async user => {
+    const next = window.prompt(t('users.resetPrompt', { name: user.username }), '')
+    if (!next) return
+    try {
+      await api.resetUserPassword(user.id, next)
+      toast(t('users.passwordReset'), 'ok')
+    } catch (err) {
+      toast(err && err.message ? err.message : t('common.error'), 'error')
+    }
+  }
+
+  return (
+    <section className="form users-section">
+      <h2 className="section-head">{t('users.title')}</h2>
+      <p className="muted small">{t('users.hint')}</p>
+
+      {users === null ? <p>{t('common.loading')}</p> : null}
+      {users && users.length === 0 ? <p className="muted">{t('users.empty')}</p> : null}
+      {users && users.length > 0 ? (
+        <table className="mini-table">
+          <thead>
+            <tr>
+              <th>{t('users.username')}</th>
+              <th>{t('users.displayName')}</th>
+              <th>{t('users.role')}</th>
+              <th>{t('users.status')}</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {users.map(u => (
+              <tr key={u.id}>
+                <td><code>{u.username}</code></td>
+                <td>{u.displayName || '—'}</td>
+                <td>{roleName(u.roleId)}</td>
+                <td>
+                  <span className={`pill pill-${u.isActive ? 'ok' : 'warn'}`}>
+                    {u.isActive ? t('users.active') : t('users.disabled')}
+                  </span>
+                </td>
+                <td>
+                  <button type="button" className="btn btn-quiet" onClick={() => resetPassword(u)}>
+                    {t('users.resetPassword')}
+                  </button>
+                  <button type="button" className="btn btn-quiet" onClick={() => remove(u)}>
+                    {t('common.delete')}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : null}
+
+      {adding ? (
+        <AddUser
+          roles={roles}
+          onClose={() => setAdding(false)}
+          onSaved={() => { setAdding(false); load() }}
+          toast={toast}
+        />
+      ) : (
+        <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>
+          {t('users.add')}
+        </button>
+      )}
+    </section>
+  )
+}
+
+function AddUser({ roles, onClose, onSaved, toast }) {
+  const t = useT()
+  // The role defaults to whichever the appliance lists LAST rather than to an admin: a form that
+  // defaults to the most powerful role is how an operator account becomes an administrator by
+  // nobody's decision.
+  const [form, setForm] = useState({
+    username: '', displayName: '', password: '',
+    roleId: roles.length ? roles[roles.length - 1].id : 0, isActive: true
+  })
+  const [saving, setSaving] = useState(false)
+
+  const submit = async e => {
+    e.preventDefault()
+    setSaving(true)
+    try {
+      await api.createUser({ ...form, roleId: Number(form.roleId) })
+      onSaved()
+    } catch (err) {
+      toast(err && err.message ? err.message : t('common.error'), 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="form form-inset">
+      <div className="form-row">
+        <label>
+          <span>{t('users.username')}</span>
+          <input required value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} />
+        </label>
+        <label>
+          <span>{t('users.displayName')}</span>
+          <input value={form.displayName} onChange={e => setForm({ ...form, displayName: e.target.value })} />
+        </label>
+      </div>
+      <div className="form-row">
+        <label>
+          <span>{t('users.password')}</span>
+          <input
+            type="password" required minLength={8}
+            value={form.password}
+            onChange={e => setForm({ ...form, password: e.target.value })}
+          />
+        </label>
+        <label>
+          <span>{t('users.role')}</span>
+          <select value={form.roleId} onChange={e => setForm({ ...form, roleId: e.target.value })}>
+            {roles.map(r => (
+              <option key={r.id} value={r.id}>{r.description || r.name}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <p className="muted small">{t('users.roleHint')}</p>
+      <div className="form-actions">
+        <button type="button" className="btn btn-quiet" onClick={onClose}>{t('common.cancel')}</button>
+        <button type="submit" className="btn btn-primary" disabled={saving}>{t('common.save')}</button>
+      </div>
+    </form>
   )
 }
 

@@ -241,6 +241,13 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	protected.Use(sharedapis.NewLocalBasicAuth(authCfg, localUser, loginGuard))
 	protected.Use(sharedapis.NewRequireRolePermission(deps.AccessRoles, deps.AccessPerms))
 
+	// BEFORE NewLocalAuthApi: that call mounts a subrouter on the /auth prefix which serves only
+	// the two routes it declares, so registering this one first keeps it from depending on how a
+	// prefix subrouter behaves when none of its children match.
+	//
+	// The screens gate their controls on this rather than on a client-side isAdmin, which is what
+	// stops the rail and the matrix being two independent copies of the same policy.
+	apis.NewCapabilitiesApi(protected, deps.AccessPerms)
 	sharedapis.NewLocalAuthApi(protected, authCfg, localUser)
 
 	// Every accepted administrative change to the access rules resets the offline cache clock.
@@ -257,6 +264,9 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	protected.Use(ruleChangeTouch(cacheClock))
 
 	apis.NewSettingsApi(protected, settings)
+	// Users and roles. Without this the three roles services.EnsureRoles seeds on every boot are
+	// unassignable and the appliance is single-admin — which is what it was until now.
+	apis.NewUserApi(protected, localUser, deps.AccessRoles)
 	apis.NewDoorApi(protected, store, runtime, deps.Db)
 	apis.NewHolderApi(protected, deps.Db)
 	apis.NewEventApi(protected, deps.Db)

@@ -13,16 +13,29 @@ import Access from './Access'
 import Settings from './Settings'
 import Wizard from './Wizard'
 
+// Each section names the CAPABILITY that makes it worth showing, and those capabilities come from
+// the server's permission matrix (GET /api/auth/capabilities) — the same matrix that decides every
+// request.
+//
+// This used to be `admin: true/false`. Two things were wrong with that, and they pulled in
+// opposite directions. Editing a grant IS admin-only, and the catalog says so — but an operator is
+// deliberately granted READ on groups, grants and schedules, "the rules they have to work within",
+// and `admin: true` hid the whole section from them. Meanwhile every other section was shown to
+// everybody regardless of what the server would answer. A rail driven by the matrix cannot make
+// either mistake, and it follows the catalog automatically when the catalog changes.
 const TABS = [
-  { id: 'doors', icon: 'door', label: 'nav.doors', admin: false },
-  { id: 'people', icon: 'user', label: 'nav.people', admin: false },
-  { id: 'activity', icon: 'list', label: 'nav.activity', admin: false },
-  { id: 'readers', icon: 'cpu', label: 'nav.readers', admin: false },
-  // Access rules are admin-only for the reason the RBAC catalog spells out: a grant edit changes
-  // who may enter every door in a group, silently and indefinitely.
-  { id: 'access', icon: 'lock', label: 'nav.access', admin: true },
-  { id: 'settings', icon: 'sliders', label: 'nav.settings', admin: true }
+  { id: 'doors', icon: 'door', label: 'nav.doors', needs: 'viewDoors' },
+  { id: 'people', icon: 'user', label: 'nav.people', needs: 'viewPeople' },
+  { id: 'activity', icon: 'list', label: 'nav.activity', needs: 'viewActivity' },
+  { id: 'readers', icon: 'cpu', label: 'nav.readers', needs: 'viewReaders' },
+  { id: 'access', icon: 'lock', label: 'nav.access', needs: 'viewRules' },
+  { id: 'settings', icon: 'sliders', label: 'nav.settings', needs: 'viewSettings' }
 ]
+
+// While the capabilities are still loading nothing is offered. Showing a control and taking it
+// away half a second later is worse than a beat of nothing — on this screen the control opens a
+// door.
+const NO_CAPS = {}
 
 const LANG_KEY = 'mypintusan.lang'
 
@@ -55,6 +68,7 @@ export default function App() {
 function Shell({ lang, onLang }) {
   const t = useT()
   const [user, setUser] = useState(null)
+  const [caps, setCaps] = useState(NO_CAPS)
   const [booting, setBooting] = useState(true)
   const [tab, setTab] = useState('doors')
   const [needsSetup, setNeedsSetup] = useState(false)
@@ -80,6 +94,12 @@ function Shell({ lang, onLang }) {
       .then(async u => {
         if (cancelled) return
         setUser(u)
+        // Capabilities are fetched with the session, not lazily per screen: the rail is rendered
+        // from them, and a rail that appears one section at a time is a rail nobody trusts.
+        try {
+          const c = await api.capabilities()
+          if (!cancelled) setCaps(c || NO_CAPS)
+        } catch { /* no capabilities means no offers — fail closed, never open */ }
         try {
           const st = await api.setupState()
           if (!cancelled) setNeedsSetup(!(st && st.completed))
@@ -90,17 +110,33 @@ function Shell({ lang, onLang }) {
     return () => { cancelled = true }
   }, [])
 
+  // Signing in has to load the capabilities too. The boot probe above runs once, on mount, and by
+  // then nobody is signed in — so without this the rail after a fresh sign-in is rendered from an
+  // empty capability set and the app looks like it has no screens at all.
+  const signIn = useCallback(async u => {
+    setUser(u)
+    try {
+      setCaps((await api.capabilities()) || NO_CAPS)
+    } catch { /* fail closed: no capabilities, no offers */ }
+    try {
+      const st = await api.setupState()
+      setNeedsSetup(!(st && st.completed))
+    } catch { /* an older install without the flag is treated as already set up */ }
+  }, [])
+
   const signOut = useCallback(async () => {
     try { await api.logout() } catch { /* signing out locally is enough */ }
     setUser(null)
+    setCaps(NO_CAPS)
   }, [])
 
   const groups = useMemo(() => [{
     label: '',
     items: TABS
-      // Settings is admin-only in the permission matrix, so hiding it for everyone else keeps the
-      // nav honest rather than offering a door that leads to a 403.
-      .filter(item => !item.admin || (user && user.isAdmin))
+      // Offer a section only if the server would serve it. Hiding what the matrix refuses keeps
+      // the rail honest rather than offering a door that leads to a 403; showing what the matrix
+      // allows keeps it from hiding something somebody was deliberately granted.
+      .filter(item => !!caps[item.needs])
       .map(item => ({
         id: item.id,
         icon: item.icon,
@@ -108,14 +144,14 @@ function Shell({ lang, onLang }) {
         active: tab === item.id,
         onClick: () => setTab(item.id)
       }))
-  }], [tab, t, user])
+  }], [tab, t, caps])
 
   if (booting) return <div className="boot-screen">{t('common.loading')}</div>
-  if (!user) return <Login onSignedIn={setUser} lang={lang} onLang={onLang} />
-  // Only an admin is offered the wizard: it writes settings and door hardware, which the matrix
-  // reserves for admins anyway. An operator signing into an unconfigured controller sees the
-  // ordinary (empty) screens rather than a wizard that would 403 on every step.
-  if (needsSetup && user.isAdmin) {
+  if (!user) return <Login onSignedIn={signIn} lang={lang} onLang={onLang} />
+  // The wizard writes settings and door hardware, so it is offered only to somebody the matrix
+  // would let do both. An operator signing into an unconfigured controller sees the ordinary
+  // (empty) screens rather than a wizard that would 403 on every step.
+  if (needsSetup && caps.editSettings && caps.createDoors) {
     return <Wizard onFinished={() => setNeedsSetup(false)} />
   }
 
@@ -144,7 +180,7 @@ function Shell({ lang, onLang }) {
         }
       />
       <main className="app-main">
-        <Screen user={user} toast={toast} />
+        <Screen user={user} caps={caps} toast={toast} />
         <AppFooter />
       </main>
       <ToastStack toasts={toasts} onDismiss={id => setToasts(l => l.filter(x => x.id !== id))} />

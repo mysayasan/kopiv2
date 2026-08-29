@@ -71,6 +71,16 @@ longer-but-shallower path above a genuinely deeper one). **On a tie, more litera
 segments wins**, so `/api/cameras/*/ptz` beats `/api/cameras/*/*` — a rule that names the
 action is more specific than one that wildcards it.
 
+`PathGoverns(rulePath, requestPath)` is `accessPathMatches`, **exported so an app's policy catalog
+can be tested against the routes that app actually serves.** A catalog is prose until something
+checks it against the router: `"/api/doors/unlock"` reads like the rule that lets an operator open a
+door and cannot match `"/api/doors/7/unlock"` — three segments against four — so on mypintusan the
+operator role's entire reason to exist was denied on every install, silently, because nothing ever
+asked the matcher whether the rule matched anything. Exporting the matcher is what turns *"does this
+rule govern a real route?"* into an assertion instead of a careful read. See
+`apps/mypintusan/services/rbac_test.go` for the pattern: a list of the paths the app serves, checked
+against the catalog in both directions.
+
 ## Constants
 
 - `RoleSuperadmin = "superadmin"` — the name of the built-in superadmin role.

@@ -29,6 +29,16 @@ async function send(path, method, body) {
 export const login = (username, password) => send('/api/auth/login', 'POST', { username, password })
 export const logout = () => send('/api/auth/logout', 'POST')
 export const session = () => get('/api/auth/session')
+
+// capabilities is what THIS role may do, answered by the server's own permission matrix — the same
+// one that decides every request. Screens gate their controls on it.
+//
+// The alternative, and what this app did before, is for the frontend to re-derive the policy from
+// `user.isAdmin`. That is a second copy of the rules, and it drifted in both directions at once: a
+// viewer was offered an Unlock button on every door card, while an operator who is deliberately
+// granted read on grants and schedules had the whole Access rules section hidden. One source of
+// truth, asked once at sign-in.
+export const capabilities = () => get('/api/auth/capabilities')
 export const changePassword = (currentPassword, newPassword) =>
   send('/api/auth/change-password', 'POST', { currentPassword, newPassword })
 
@@ -99,6 +109,19 @@ export function listEvents({ limit = 200, offset = 0, doorId, holderId, decision
   if (since) q.set('since', String(since))
   return get(`/api/events?${q.toString()}`)
 }
+
+// --- users and roles ----------------------------------------------------------------------------
+
+// Until these existed the three roles this appliance seeds on every boot — viewer, operator,
+// administrator — could not be given to anybody, so a controller had exactly one account and every
+// line services/rbac.go draws between the roles was theoretical.
+export const listRoles = () => get('/api/settings/roles')
+export const listUsers = () => get('/api/settings/users')
+export const createUser = user => send('/api/settings/users', 'POST', user)
+export const updateUser = (id, user) => send(`/api/settings/users/${id}`, 'PUT', user)
+export const deleteUser = id => send(`/api/settings/users/${id}`, 'DELETE')
+export const resetUserPassword = (id, password) =>
+  send(`/api/settings/users/${id}/password`, 'POST', { password })
 
 // --- settings -----------------------------------------------------------------------------------
 

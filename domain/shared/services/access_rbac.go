@@ -318,6 +318,19 @@ func accessNoResult(err error) bool {
 	return err != nil && strings.Contains(strings.ToLower(err.Error()), "no result found")
 }
 
+// PathGoverns is accessPathMatches, exported so an app's policy catalog can be tested against the
+// routes that app actually serves.
+//
+// A catalog is prose until something checks it against the router. "/api/doors/unlock" reads like
+// the rule that lets an operator open a door and cannot match "/api/doors/7/unlock" — three
+// segments against four — so the operator role's entire reason to exist was denied on every
+// mypintusan install, silently, because nothing ever asked the matcher whether the rule matched
+// anything. Exporting the matcher is what makes "does this rule govern a real route?" an assertion
+// instead of a careful read.
+func PathGoverns(rulePath, requestPath string) bool {
+	return accessPathMatches(rulePath, requestPath)
+}
+
 // accessPathMatches reports whether a stored permission path governs a request path.
 //
 // The stored path is a PREFIX, matched SEGMENT-WISE, and a "*" segment matches exactly one
