@@ -325,5 +325,30 @@ export default {
   'wizard.done.p1': '每一次刷卡，无论放行还是拒绝，都会记录在“活动”中。',
   'wizard.done.p2': '您可以随时从“设置”中更改此处输入的任何内容。',
 
-  'settings.addressHint': '同一条线缆上的每个读卡器都需要有自己的地址。新读卡器通常出厂设置为地址 0，因此第二个读卡器必须先更改地址才能正常工作。'
+  'settings.addressHint': '同一条线缆上的每个读卡器都需要有自己的地址。新读卡器通常出厂设置为地址 0，因此第二个读卡器必须先更改地址才能正常工作。',
+
+  // --- 权限：此角色可以做什么 -------------------------------------------------------
+  'doors.noUnlockPermission': '您的角色无法远程开门。',
+  'badge.noIssuePermission': '您的角色无法发放或吊销卡片。',
+  'readers.securityUnknown': '未显示',
+  'readers.securityUnknownHint': '只有管理员才能查看读卡器是否加密。这并不表示该读卡器未加密。',
+  'access.readOnly': '您可以查看门禁规则但无法更改。只有管理员才能编辑授权、群组、时间表或假期日历。',
+
+  'users.title': '用户',
+  'users.hint': '谁可以登录此控制器，以及以什么身份登录。角色决定每个人能访问什么——操作员可以开门和发卡；查看者只能查看，不能更改任何内容。',
+  'users.add': '添加用户',
+  'users.username': '用户名',
+  'users.displayName': '姓名',
+  'users.password': '密码',
+  'users.role': '角色',
+  'users.roleHint': '只有管理员才能更改门禁规则、封锁站点或添加其他用户。',
+  'users.status': '状态',
+  'users.active': '启用',
+  'users.disabled': '已停用',
+  'users.empty': '暂无用户。',
+  'users.resetPassword': '重置密码',
+  'users.resetPrompt': '{name} 的新密码',
+  'users.passwordReset': '密码已重置',
+  'users.deleteConfirm': '移除 {name}？他们将无法再登录。',
+  'users.deleted': '用户已移除'
 }

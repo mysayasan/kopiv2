@@ -91,6 +91,9 @@ python tools/fleetbench/bench_pintusan_door.py  # does the door open for the rig
 python tools/fleetbench/bench_pintusan_securechannel.py  # can a reader you cannot trust still open a door?
 python tools/fleetbench/bench_pintusan_alarms.py  # which of the six alarms can actually fire?
 python tools/fleetbench/bench_pintusan_offline.py  # offline mode and the cache TTL: does it ever expire?
+python tools/fleetbench/bench_pintusan_schedules.py  # night shifts, holidays and the site timezone
+python tools/fleetbench/bench_pintusan_bus.py    # bus faults, reconnect, lockdown across an outage
+python tools/fleetbench/bench_pintusan_screens.py  # THE SCREENS: 4 languages x 3 roles, offers vs matrix
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o .artifacts/fleetbench/bin/myiotsan ./cmd/myiotsan
 python tools/fleetbench/iotsan_harness.py            # myiotsan + its EMBEDDED broker
 python tools/fleetbench/bench_iotsan_actuation.py    # does anything reach a relay off-path?
@@ -1062,6 +1065,73 @@ created, before or after the fix.
   controller detects for itself. `docs/MYPINTUSAN_DATA_MODEL.md` §2's sentence describing "a full
   local replica... refreshed on change" described a topology that never existed and has been
   corrected to say so.
+
+## mypintusan — the screens
+
+`bench_pintusan_screens.py` + `uicheck_pintusan.js` (`_partb`, `_partc`), **166/166** (91/96
+against unfixed main, where the whole operator and viewer half was unreachable and therefore
+unmeasurable). Item 6 of the mypintusan hardening register, and the first screen check this app has
+ever had — six API benches in, it was the last app in the suite with none.
+
+Six passes: PART A in **all four languages** including RTL Arabic (every section renders, has a
+heading, leaks no dictionary key, every enabled control is hit-testable at its own centre), PART B
+admin workflows driven with real input events and confirmed against the server (lockdown engaged
+and released from the Doors screen, a remote unlock that travels OSDP to the strike, a badge issued
+and revoked, a grant revoked, a holiday created, the timezone saved), and PART C for the operator
+and viewer — **does what the screen OFFERS match what the server ALLOWS, in both directions?**
+
+**PART C is the one that paid.** This app decided authorization twice: the server with the
+deny-by-default matrix in `services/rbac.go`, the SPA with a client-side `user.isAdmin`. The two
+drifted in **both** directions at once — a viewer was offered an Unlock button on every door card,
+while an operator granted read on grants and schedules had the entire Access rules section hidden.
+Three of the five defects meant a non-admin could not use the product at all: the session probe was
+not in the catalog (sign in succeeds, then the sign-in card again, forever), the Doors screen
+loaded the door list and the admin-only lockdown state in one `Promise.all` (so the home screen was
+a permission error), and the operator's defining power — `POST /api/doors/{id}/unlock` — was
+governed by a rule written `/api/doors/unlock`, three segments against four, matching nothing.
+
+Fixed at the root rather than patched: `GET /api/auth/capabilities` answers by calling `Authorize`
+on the REAL route each control would send, and every screen renders from it. And
+`apps/mypintusan/services/rbac_test.go` — the first test that catalog has ever had — asserts every
+rule governs a route the app serves and every route is covered by a rule, in both directions, which
+catches the segment-count class of bug at build time. `PathGoverns` is exported from
+`domain/shared/services` so any app's catalog can be tested the same way.
+
+**AND THE ONE NO ASSERTION COULD SEE.** Every check passed while every table on every screen
+rendered **raw white browser buttons labelled "Sort"** jammed under each column heading, in all four
+languages, on every install: `@shared/DataTable` ships markup and no style — "styled by the
+consuming app's stylesheet", says its own header — and mypintusan was the only app in the suite that
+used it and never wrote them. The screens rendered, the controls were hit-testable, no key leaked,
+the API answered correctly. **Open the PNG. It is the third time on this suite that a green screen
+check has coexisted with a visibly broken screen.**
+
+Traps this one added, in the order they cost a run:
+
+- **`timeout python …` strips `TMP`/`TEMP`.** The MSYS `timeout` wrapper drops them crossing into a
+  native Windows process, and `go build` then tries `C:\Windows\go-build…` and fails with "Access is
+  denied" — which reads as a broken toolchain. Use the runner's own timeout, not `timeout`.
+- **A response-body cap silently empties a list.** The first draft sliced `api()` bodies to 6000
+  characters — sensible for an error message, fatal for a hundred access-log rows: `JSON.parse`
+  threw, the unwrap returned null, `items()` handed back `[]`, and every before/after diff compared
+  nothing with nothing. It reported that pressing Unlock had not reached the controller and that
+  revoking a grant told nobody — **two defects that did not exist, in a bench written to find
+  defects that do.** The cap is now 400_000 and `items()` records any OK response that failed to
+  become a list, asserted at the end of PART B.
+- **The sign-out button is a `.nav-item`.** A bare `button.nav-item` sweep clicks it somewhere in
+  the middle of the section sweep, and every later check then fails against a login card. The
+  selector excludes the rail foot, and a check asserts the exclusion is actually holding something
+  back rather than silently matching nothing.
+- **`\s` inside a template literal is `s`.** The blocks passed to `js()` are template literals, so
+  an unrecognised escape loses its backslash before the browser sees it: `/time\s*zone/` arrives as
+  `/times*zone/` and reports a field that is right there on screen as missing. Double them.
+- **A control that exists once per row has to be located through its row.** A bare text match on
+  "Revoke" picked the first badge rather than the one just issued, then reported that the server had
+  not recorded the revocation. It had — the bench revoked something else, and the simulator spent
+  the rest of the run badging a card that was now `lost`.
+- **A probe that really opens a door can fail for reasons that are not permission.** PART C's unlock
+  anchors on "not refused" rather than 200: a dead simulator answers 400 "PD did not reply", which
+  says nothing about whether the operator is allowed. The driver also restarts the simulator between
+  passes — a ten-minute run over six browser passes will outlive one.
 
 ## `onvifsim.py` — a real ONVIF device, on demand
 

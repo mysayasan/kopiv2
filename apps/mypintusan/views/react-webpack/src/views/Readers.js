@@ -4,27 +4,37 @@ import * as api from '../lib/access'
 
 // The readers screen exists mainly to answer two questions an installer asks: is it talking, and is
 // it encrypted. Both are things the operator cannot see from the door itself.
-export default function Readers() {
+export default function Readers({ caps = {} }) {
   const t = useT()
   const [readers, setReaders] = useState(null)
   const [settings, setSettings] = useState(null)
+  // Distinct from `settings === null`: "nobody asked" and "asked and was refused" produce the same
+  // empty value and must not produce the same words on screen. See securityFor.
+  const [postureUnknown, setPostureUnknown] = useState(false)
   const [error, setError] = useState('')
 
   const load = useCallback(async () => {
     try {
       // The enrolled readers come from the database; the security posture comes from the settings,
       // where each configured reader reports whether a key is installed WITHOUT revealing it.
+      // The security posture lives in the access settings, which are ADMIN-ONLY. Asking anyway
+      // and swallowing the 403 is what made this screen lie: `securityFor` then returned null for
+      // every reader and the column rendered "Not encrypted" — about readers running encrypted
+      // sessions. The answer to "is this reader encrypted?" is the one thing this screen exists to
+      // give, and a confident wrong answer about the security of a door is worse than no answer.
+      const canSeePosture = !!caps.viewSettings
       const [list, cfg] = await Promise.all([
         api.listReaders(),
-        api.getSettings().catch(() => null)
+        canSeePosture ? api.getSettings().catch(() => null) : Promise.resolve(null)
       ])
       setReaders(Array.isArray(list) ? list : [])
       setSettings(cfg)
+      setPostureUnknown(!canSeePosture || !cfg)
       setError('')
     } catch (e) {
       setError(e && e.message ? e.message : t('common.error'))
     }
-  }, [t])
+  }, [t, caps.viewSettings])
 
   useEffect(() => { load() }, [load])
 
@@ -45,6 +55,14 @@ export default function Readers() {
       key: 'security',
       label: t('readers.security'),
       render: (_v, r) => {
+        // Say "unknown", not "not encrypted", when this account cannot read the posture at all.
+        if (postureUnknown) {
+          return (
+            <span title={t('readers.securityUnknownHint')}>
+              <span className="pill">{t('readers.securityUnknown')}</span>
+            </span>
+          )
+        }
         const sec = securityFor(r)
         if (!sec || !sec.hasScbk) {
           return <span className="pill pill-warn">{t('readers.notEncrypted')}</span>

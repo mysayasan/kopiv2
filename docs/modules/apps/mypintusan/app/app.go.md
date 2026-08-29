@@ -88,8 +88,15 @@ then carry.
   7. Registers `sharedapis.NewLocalLoginApi` on the **public** router (must be mounted before
      the protected subrouter or the auth middleware swallows it), then mounts `protected` with,
      in order, `NewLocalBasicAuth` then `NewRequireRolePermission` — auth before authorization,
-     since the matrix needs a principal in context to decide against.
-  8. Registers `apis.NewSettingsApi`, `apis.NewDoorApi`, `apis.NewHolderApi`, `apis.NewEventApi`,
+     since the matrix needs a principal in context to decide against. `apis.NewCapabilitiesApi` is
+     registered **before** `sharedapis.NewLocalAuthApi`: that call mounts a subrouter on the `/auth`
+     prefix serving only the two routes it declares, and ordering is the simple way to keep
+     `GET /api/auth/capabilities` from depending on how a prefix subrouter behaves when none of its
+     children match. It is what lets the screens gate their controls on the server's own matrix
+     instead of a client-side `isAdmin` — see `apis/capabilities.go.md`.
+  8. Registers `apis.NewSettingsApi`, `apis.NewUserApi` (users and roles — without it the three
+     roles `services.EnsureRoles` seeds on every boot are unassignable and the appliance is
+     single-admin, which is what it was until then; see `apis/users.go.md`), `apis.NewDoorApi`, `apis.NewHolderApi`, `apis.NewEventApi`,
      `apis.NewLockdownApi`, `apis.NewSetupApi`, `apis.NewDeploymentApi` (deployment mode / Phase 1
      multi-instance safety — a fixed, read-only `GET /api/deployment/preflight` answering
      `Appliance: true, ApplianceReason: sharedservices.ApplianceSerialBus`: the `osdp.Bus` opens

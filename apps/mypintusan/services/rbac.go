@@ -45,9 +45,15 @@ const (
 type PolicyRule = sharedservices.PolicyRule
 
 var (
-	read  = sharedservices.VerbsRead
-	write = sharedservices.VerbsWrite
-	none  = sharedservices.VerbsNone
+	read = sharedservices.VerbsRead
+	// write grants POST **and nothing else**. It does NOT include GET — a rule whose only grant is
+	// `write` gives a role the ability to create a thing it cannot list. That reading cost this app
+	// its operator: `/api/holders` was `Operator: write`, so the receptionist could enrol a person
+	// and then got 403 on the people list, which is the first thing the People screen loads.
+	// `readWrite` is the grant that shape of rule almost always means.
+	write     = sharedservices.VerbsWrite
+	readWrite = sharedservices.Verbs{Get: true, Post: true}
+	none      = sharedservices.VerbsNone
 )
 
 // operatorDescription is what a human sees next to the operator role.
@@ -63,7 +69,20 @@ const operatorDescription = "Day-to-day operator: watch doors, open one remotely
 func Policy() []PolicyRule {
 	return []PolicyRule{
 		// --- Everyone signed in -----------------------------------------------------------
+		//
+		// THE SESSION PROBE IS THE FIRST CALL THE SPA MAKES, and it was not in this catalog. So a
+		// viewer or an operator signed in successfully — /api/auth/login is public and answered 200
+		// — and then GET /api/auth/session was refused by the matrix, `user` stayed null, and the
+		// app rendered the sign-in card again. Correct credentials, no error message, straight back
+		// to the login screen, forever. Every API this catalog carefully grants them was reachable
+		// the whole time; there was simply no way to get past the front door of the UI.
+		{Path: "/api/auth/session", Description: "Read your own session", Viewer: read, Operator: read},
 		{Path: "/api/auth/change-password", Description: "Change your own password", Viewer: write, Operator: write},
+		// What THIS role may do, answered by asking this very matrix. The screens gate their
+		// controls on it instead of on a client-side `isAdmin`, so an offer on screen and a
+		// decision on the server cannot drift apart. Readable by everyone signed in: a role that
+		// cannot ask what it may do gets a UI that guesses.
+		{Path: "/api/auth/capabilities", Description: "What the signed-in role may do", Viewer: read, Operator: read},
 
 		// --- Watching the estate ----------------------------------------------------------
 		{Path: "/api/doors", Description: "See doors and their live state", Viewer: read, Operator: read},
@@ -75,10 +94,17 @@ func Policy() []PolicyRule {
 		// --- Running the building ---------------------------------------------------------
 		// Opening a door remotely is an operator power: it is what a receptionist does all day,
 		// it is instantaneous, and every use of it lands in the same log as a badge.
-		{Path: "/api/doors/unlock", Description: "Open a door remotely", Viewer: none, Operator: write},
+		//
+		// THE WILDCARD IS THE WHOLE RULE. The route is /api/doors/{id}/unlock, so "/api/doors/unlock"
+		// — three segments against four — matched no request an operator could ever make. The most
+		// specific rule that DID match was "/api/doors", which is read-only, so every remote open by
+		// an operator was refused and the one power the role exists for did not exist. Nothing
+		// caught it because this app's catalog had no test at all; see rbac_test.go.
+		{Path: "/api/doors/*/unlock", Description: "Open a door remotely", Viewer: none, Operator: write},
 		// Holders and their credentials are also operator-level: issuing and revoking a badge is
-		// the routine, reversible half of access control.
-		{Path: "/api/holders", Description: "Manage people and their badges", Viewer: read, Operator: write},
+		// the routine, reversible half of access control. readWrite, not write — an operator who
+		// cannot LIST people cannot find the person whose badge they are about to revoke.
+		{Path: "/api/holders", Description: "Manage people and their badges", Viewer: read, Operator: readWrite},
 
 		// --- Changing the rules -----------------------------------------------------------
 		// Admin-only, and the reason is in the file header: editing a grant or a schedule changes
@@ -88,14 +114,32 @@ func Policy() []PolicyRule {
 		{Path: "/api/schedules", Description: "Time policies and the holiday calendar", Viewer: none, Operator: read},
 
 		// --- The building's safety posture ------------------------------------------------
-		{Path: "/api/lockdown", Description: "Seal the site", Viewer: none, Operator: none},
+		// SEALING the site is admin-only. SEEING that it is sealed is not, and the two were one rule.
+		//
+		// The Doors screen loads the door list and the lockdown state together, so a refused GET
+		// here did not merely hide a pill — it rejected the whole load and rendered "you do not
+		// have permission for this action" where the doors should be. The home screen of a door
+		// controller was an error page for every viewer and every operator on every install.
+		// Doors.js no longer lets one refused read blank the screen, and this makes the read a
+		// grant: an operator who cannot see that the site is sealed cannot explain why nothing is
+		// opening, which is the exact minute they most need the screen.
+		{Path: "/api/lockdown", Description: "See whether the site is sealed; sealing it is admin-only", Viewer: read, Operator: read},
 		// Door hardware bindings decide which relay fires and which contact is believed. Wrong
 		// values here do not produce a bad reading, they produce a door that opens for the wrong
 		// person or an alarm that never comes.
-		{Path: "/api/settings", Description: "Users, roles, door hardware and system settings", Viewer: none, Operator: none},
+		{Path: "/api/settings", Description: "Door hardware and system settings", Viewer: none, Operator: none},
+		// Minting an account is its own row, deeper than /api/settings and therefore more specific,
+		// so it stays denied even if somebody widens the settings grant one day. It is the surface
+		// that can hand out every other power on this list.
+		{Path: "/api/settings/users", Description: "Users and the role each one holds", Viewer: none, Operator: none},
+		{Path: "/api/settings/roles", Description: "The roles this appliance offers", Viewer: none, Operator: none},
 		{Path: "/api/setup", Description: "First-run setup wizard", Viewer: none, Operator: none},
 		// Joining or leaving a fleet changes who can manage this building's doors remotely.
 		{Path: "/api/pairing", Description: "Fleet pairing with a control plane", Viewer: none, Operator: none},
+		// Single-instance by design, so there is nothing here to grant — but a route absent from
+		// this catalog is a route nobody can see they are not granting, which is the one thing the
+		// catalog's own header says must never happen.
+		{Path: "/api/deployment", Description: "Deployment mode (single-instance on this appliance)", Viewer: none, Operator: none},
 	}
 }
 

@@ -325,5 +325,30 @@ export default {
   'wizard.done.p1': 'Setiap lencana, dibenarkan atau ditolak, direkodkan di bawah Aktiviti.',
   'wizard.done.p2': 'Anda boleh menukar apa-apa yang anda masukkan di sini daripada Tetapan.',
 
-  'settings.addressHint': 'Setiap pembaca pada satu kabel memerlukan alamatnya sendiri. Pembaca baharu biasanya tiba ditetapkan pada 0, jadi pembaca kedua mesti ditukar dahulu sebelum ia berfungsi.'
+  'settings.addressHint': 'Setiap pembaca pada satu kabel memerlukan alamatnya sendiri. Pembaca baharu biasanya tiba ditetapkan pada 0, jadi pembaca kedua mesti ditukar dahulu sebelum ia berfungsi.',
+
+  // --- Kebenaran: apa yang boleh dilakukan oleh peranan ini -------------------------------------
+  'doors.noUnlockPermission': 'Peranan anda tidak boleh membuka pintu dari jauh.',
+  'badge.noIssuePermission': 'Peranan anda tidak boleh mengeluarkan atau membatalkan lencana.',
+  'readers.securityUnknown': 'Tidak dipaparkan',
+  'readers.securityUnknownHint': 'Hanya pentadbir boleh melihat sama ada pembaca disulitkan. Ini bukan kenyataan bahawa pembaca tidak disulitkan.',
+  'access.readOnly': 'Anda boleh melihat peraturan akses tetapi tidak boleh mengubahnya. Hanya pentadbir boleh menyunting pemberian, kumpulan, jadual atau kalendar cuti.',
+
+  'users.title': 'Pengguna',
+  'users.hint': 'Siapa yang boleh log masuk ke pengawal ini, dan sebagai apa. Peranan menentukan apa yang boleh dicapai setiap orang \u2014 pengendali membuka pintu dan mengeluarkan lencana; pemerhati hanya melihat dan tidak mengubah apa-apa.',
+  'users.add': 'Tambah pengguna',
+  'users.username': 'Nama pengguna',
+  'users.displayName': 'Nama',
+  'users.password': 'Kata laluan',
+  'users.role': 'Peranan',
+  'users.roleHint': 'Hanya pentadbir boleh menukar peraturan akses, mengunci tapak, atau menambah pengguna lain.',
+  'users.status': 'Status',
+  'users.active': 'Aktif',
+  'users.disabled': 'Dilumpuhkan',
+  'users.empty': 'Belum ada pengguna.',
+  'users.resetPassword': 'Set semula kata laluan',
+  'users.resetPrompt': 'Kata laluan baharu untuk {name}',
+  'users.passwordReset': 'Kata laluan telah diset semula',
+  'users.deleteConfirm': 'Buang {name}? Mereka tidak akan dapat log masuk lagi.',
+  'users.deleted': 'Pengguna dibuang'
 }

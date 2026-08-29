@@ -5,7 +5,7 @@ import * as api from '../lib/access'
 // People and their badges — the operator's daily surface. Issuing and revoking a badge is routine,
 // reversible and fully logged, which is why it sits at operator level while the access RULES
 // (groups, schedules, grants) are admin-only.
-export default function People({ toast }) {
+export default function People({ caps = {}, toast }) {
   const t = useT()
   const [holders, setHolders] = useState(null)
   const [selected, setSelected] = useState(null)
@@ -55,9 +55,13 @@ export default function People({ toast }) {
           <h1>{t('people.title')}</h1>
           <p className="muted">{t('people.subtitle')}</p>
         </div>
-        <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>
-          <Ico n="plus" sz={15} /> {t('people.add')}
-        </button>
+        {/* Enrolling somebody is operator-level; a viewer sees who holds what and changes
+            nothing. Offered only if the server would accept it. */}
+        {caps.managePeople ? (
+          <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>
+            <Ico n="plus" sz={15} /> {t('people.add')}
+          </button>
+        ) : null}
       </header>
 
       {error ? <div className="notice notice-error"><p>{error}</p></div> : null}
@@ -73,7 +77,7 @@ export default function People({ toast }) {
         />
       ) : null}
       {selected ? (
-        <Badges holder={selected} onClose={() => setSelected(null)} toast={toast} />
+        <Badges holder={selected} canIssue={!!caps.issueBadges} onClose={() => setSelected(null)} toast={toast} />
       ) : null}
     </div>
   )
@@ -129,7 +133,7 @@ function AddPerson({ onClose, onSaved, toast }) {
   )
 }
 
-function Badges({ holder, onClose, toast }) {
+function Badges({ holder, canIssue, onClose, toast }) {
   const t = useT()
   const [creds, setCreds] = useState(null)
   const [issuing, setIssuing] = useState(false)
@@ -181,7 +185,7 @@ function Badges({ holder, onClose, toast }) {
                   <span className={`pill pill-${c.status === 'active' ? 'ok' : 'warn'}`}>{c.status}</span>
                 </td>
                 <td>
-                  {c.status === 'active' ? (
+                  {c.status === 'active' && canIssue ? (
                     <button type="button" className="btn btn-quiet" onClick={() => revoke(c)}>
                       {t('badge.revoke')}
                     </button>
@@ -204,10 +208,12 @@ function Badges({ holder, onClose, toast }) {
           onSaved={() => { setIssuing(false); load() }}
           toast={toast}
         />
-      ) : (
+      ) : canIssue ? (
         <button type="button" className="btn btn-primary" onClick={() => setIssuing(true)}>
           {t('badge.issue')}
         </button>
+      ) : (
+        <p className="muted small">{t('badge.noIssuePermission')}</p>
       )}
     </Modal>
   )

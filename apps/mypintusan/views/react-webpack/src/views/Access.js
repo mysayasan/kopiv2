@@ -10,7 +10,7 @@ import { Modal } from './People'
 // screen changes who may enter every door in a group, at every hour, until somebody notices.
 // Every change made here is therefore also published to the notification feed, named after the
 // administrator who made it.
-export default function Access({ toast }) {
+export default function Access({ caps = {}, toast }) {
   const t = useT()
   const [groups, setGroups] = useState(null)
   const [schedules, setSchedules] = useState(null)
@@ -18,6 +18,9 @@ export default function Access({ toast }) {
   const [holidays, setHolidays] = useState(null)
   const [doors, setDoors] = useState([])
   const [error, setError] = useState('')
+  // editRules is the catalog's admin-only grant on grants, groups, schedules and holidays. Reading
+  // them is separately granted to an operator, which is why this screen is not simply hidden.
+  const canEdit = !!caps.editRules
 
   const load = useCallback(async () => {
     try {
@@ -57,17 +60,25 @@ export default function Access({ toast }) {
         </div>
       </header>
 
-      <GrantsSection grants={grants} groups={groups} schedules={schedules} doors={doors} onChanged={load} toast={toast} />
-      <GroupsSection groups={groups} onChanged={load} toast={toast} />
-      <SchedulesSection schedules={schedules} onChanged={load} toast={toast} />
-      <HolidaysSection holidays={holidays} onChanged={load} toast={toast} />
+      {/* An operator is deliberately granted READ on groups, grants and schedules — "the rules
+          they have to work within" — and nothing else here. So the sections render for them and
+          every control that would change a rule is withheld: a screen that offers a Revoke button
+          the server refuses teaches people that this screen cannot be trusted, on the one screen
+          where a mistake changes who may enter a building. `canEdit` comes from the server's own
+          matrix, not from a second copy of the policy living in the browser. */}
+      {!canEdit ? <p className="muted small">{t('access.readOnly')}</p> : null}
+
+      <GrantsSection canEdit={canEdit} grants={grants} groups={groups} schedules={schedules} doors={doors} onChanged={load} toast={toast} />
+      <GroupsSection canEdit={canEdit} groups={groups} onChanged={load} toast={toast} />
+      <SchedulesSection canEdit={canEdit} schedules={schedules} onChanged={load} toast={toast} />
+      <HolidaysSection canEdit={canEdit} holidays={holidays} onChanged={load} toast={toast} />
     </div>
   )
 }
 
 // --- grants -------------------------------------------------------------------------------------
 
-function GrantsSection({ grants, groups, schedules, doors, onChanged, toast }) {
+function GrantsSection({ canEdit, grants, groups, schedules, doors, onChanged, toast }) {
   const t = useT()
   const [adding, setAdding] = useState(false)
   const canAdd = groups.length > 0 && schedules.length > 0 && doors.length > 0
@@ -89,7 +100,7 @@ function GrantsSection({ grants, groups, schedules, doors, onChanged, toast }) {
     {
       key: 'actions', label: '',
       render: (_v, r) => (
-        <button type="button" className="btn btn-quiet" onClick={() => revoke(r)}>{t('access.grants.revoke')}</button>
+        canEdit ? <button type="button" className="btn btn-quiet" onClick={() => revoke(r)}>{t('access.grants.revoke')}</button> : null
       )
     }
   ]
@@ -98,9 +109,11 @@ function GrantsSection({ grants, groups, schedules, doors, onChanged, toast }) {
     <section className="access-section">
       <div className="access-section-head">
         <h2 className="section-head">{t('access.grants.title')}</h2>
-        <button type="button" className="btn btn-primary" disabled={!canAdd} onClick={() => setAdding(true)}>
-          <Ico n="plus" sz={14} /> {t('access.grants.add')}
-        </button>
+        {canEdit ? (
+          <button type="button" className="btn btn-primary" disabled={!canAdd} onClick={() => setAdding(true)}>
+            <Ico n="plus" sz={14} /> {t('access.grants.add')}
+          </button>
+        ) : null}
       </div>
       <p className="muted small">{t('access.grants.hint')}</p>
       {!canAdd ? <p className="muted small">{t('access.grants.needAll')}</p> : null}
@@ -177,7 +190,7 @@ function AddGrant({ groups, schedules, doors, onClose, onSaved, toast }) {
 
 // --- groups -------------------------------------------------------------------------------------
 
-function GroupsSection({ groups, onChanged, toast }) {
+function GroupsSection({ canEdit, groups, onChanged, toast }) {
   const t = useT()
   const [adding, setAdding] = useState(false)
   const [name, setName] = useState('')
@@ -214,7 +227,7 @@ function GroupsSection({ groups, onChanged, toast }) {
       render: (_v, r) => (
         <span className="row-actions">
           <button type="button" className="btn btn-quiet" onClick={() => setMembersOf(r)}>{t('access.groups.members')}</button>
-          <button type="button" className="btn btn-quiet" onClick={() => remove(r)}>{t('common.delete')}</button>
+          {canEdit ? <button type="button" className="btn btn-quiet" onClick={() => remove(r)}>{t('common.delete')}</button> : null}
         </span>
       )
     }
@@ -224,9 +237,11 @@ function GroupsSection({ groups, onChanged, toast }) {
     <section className="access-section">
       <div className="access-section-head">
         <h2 className="section-head">{t('access.groups.title')}</h2>
-        <button type="button" className="btn btn-quiet" onClick={() => setAdding(a => !a)}>
-          <Ico n="plus" sz={14} /> {t('access.groups.add')}
-        </button>
+        {canEdit ? (
+          <button type="button" className="btn btn-quiet" onClick={() => setAdding(a => !a)}>
+            <Ico n="plus" sz={14} /> {t('access.groups.add')}
+          </button>
+        ) : null}
       </div>
       {adding ? (
         <form onSubmit={create} className="form form-row-inline">
@@ -236,12 +251,12 @@ function GroupsSection({ groups, onChanged, toast }) {
       ) : null}
       {groups.length === 0 ? <p className="muted">{t('access.groups.empty')}</p> : <DataTable columns={columns} rows={groups} />}
 
-      {membersOf ? <MembersModal group={membersOf} onClose={() => setMembersOf(null)} toast={toast} /> : null}
+      {membersOf ? <MembersModal canEdit={canEdit} group={membersOf} onClose={() => setMembersOf(null)} toast={toast} /> : null}
     </section>
   )
 }
 
-function MembersModal({ group, onClose, toast }) {
+function MembersModal({ canEdit, group, onClose, toast }) {
   const t = useT()
   const [members, setMembers] = useState(null)
   const [holders, setHolders] = useState([])
@@ -294,7 +309,7 @@ function MembersModal({ group, onClose, toast }) {
               <tr key={m.id}>
                 <td>{m.holderName || m.holderId}</td>
                 <td>
-                  <button type="button" className="btn btn-quiet" onClick={() => remove(m)}>{t('common.remove')}</button>
+                  {canEdit ? <button type="button" className="btn btn-quiet" onClick={() => remove(m)}>{t('common.remove')}</button> : null}
                 </td>
               </tr>
             ))}
@@ -302,6 +317,7 @@ function MembersModal({ group, onClose, toast }) {
         </table>
       ) : null}
 
+      {canEdit ? (
       <form onSubmit={add} className="form form-inset">
         <label>
           <span>{t('access.groups.addMember')}</span>
@@ -314,6 +330,7 @@ function MembersModal({ group, onClose, toast }) {
           <button type="submit" className="btn btn-primary" disabled={!holderId}>{t('access.groups.addMemberBtn')}</button>
         </div>
       </form>
+      ) : null}
     </Modal>
   )
 }
@@ -328,7 +345,7 @@ const toMin = hhmm => {
   return (h || 0) * 60 + (m || 0)
 }
 
-function SchedulesSection({ schedules, onChanged, toast }) {
+function SchedulesSection({ canEdit, schedules, onChanged, toast }) {
   const t = useT()
   const [adding, setAdding] = useState(false)
 
@@ -359,7 +376,7 @@ function SchedulesSection({ schedules, onChanged, toast }) {
     {
       key: 'actions', label: '',
       render: (_v, r) => (
-        <button type="button" className="btn btn-quiet" onClick={() => remove(r)}>{t('common.delete')}</button>
+        canEdit ? <button type="button" className="btn btn-quiet" onClick={() => remove(r)}>{t('common.delete')}</button> : null
       )
     }
   ]
@@ -368,9 +385,11 @@ function SchedulesSection({ schedules, onChanged, toast }) {
     <section className="access-section">
       <div className="access-section-head">
         <h2 className="section-head">{t('access.schedules.title')}</h2>
-        <button type="button" className="btn btn-quiet" onClick={() => setAdding(true)}>
-          <Ico n="plus" sz={14} /> {t('access.schedules.add')}
-        </button>
+        {canEdit ? (
+          <button type="button" className="btn btn-quiet" onClick={() => setAdding(true)}>
+            <Ico n="plus" sz={14} /> {t('access.schedules.add')}
+          </button>
+        ) : null}
       </div>
       {schedules.length === 0 ? <p className="muted">{t('access.schedules.empty')}</p> : <DataTable columns={columns} rows={schedules} />}
 
@@ -486,7 +505,7 @@ const BEHAVIOUR_KEYS = {
   ignore: 'access.holidays.ignore'
 }
 
-function HolidaysSection({ holidays, onChanged, toast }) {
+function HolidaysSection({ canEdit, holidays, onChanged, toast }) {
   const t = useT()
   const [adding, setAdding] = useState(false)
 
@@ -519,7 +538,7 @@ function HolidaysSection({ holidays, onChanged, toast }) {
       key: 'actions',
       label: '',
       render: (_v, r) => (
-        <button type="button" className="btn btn-quiet" onClick={() => remove(r)}>{t('common.delete')}</button>
+        canEdit ? <button type="button" className="btn btn-quiet" onClick={() => remove(r)}>{t('common.delete')}</button> : null
       )
     }
   ]
@@ -528,9 +547,11 @@ function HolidaysSection({ holidays, onChanged, toast }) {
     <section className="access-section">
       <div className="access-section-head">
         <h2 className="section-head">{t('access.holidays.title')}</h2>
-        <button type="button" className="btn btn-quiet" onClick={() => setAdding(true)}>
-          <Ico n="plus" sz={14} /> {t('access.holidays.add')}
-        </button>
+        {canEdit ? (
+          <button type="button" className="btn btn-quiet" onClick={() => setAdding(true)}>
+            <Ico n="plus" sz={14} /> {t('access.holidays.add')}
+          </button>
+        ) : null}
       </div>
       <p className="muted small">{t('access.holidays.lead')}</p>
       {rows.length === 0
