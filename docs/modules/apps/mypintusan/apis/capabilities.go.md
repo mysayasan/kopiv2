@@ -48,6 +48,7 @@ Each flag names one thing a screen can offer **and the request it would really s
 | `viewSettings` / `editSettings` | `GET` / `PUT` on `/api/settings/access` |
 | `manageUsers` | `POST /api/settings/users` |
 | `createDoors` | `POST /api/doors` |
+| `viewAudit` | `GET /api/audit` |
 
 The probe path carries a **placeholder id**. The matrix matches segment-wise, so any id decides the
 same way — what matters is that the SHAPE is the shape the browser sends. A probe written
@@ -74,7 +75,9 @@ match. See `app/app.go.md`.
 
 ## Consumers
 
-`views/App.js` fetches it alongside the session and renders the navigation rail from it; `Doors.js`
+`views/App.js` fetches it alongside the session and renders the navigation rail from it — including
+the **Admin trail** section, which is offered only where `viewAudit` says the server would serve it,
+so an admin-only screen is hidden by the same matrix that refuses the request; `Doors.js`
 (`unlockDoor`, `lockdown`), `People.js` (`managePeople`, `issueBadges`), `Access.js` (`editRules`),
 `Readers.js` (`viewSettings`) and `Settings.js` (`manageUsers`) each gate their controls on it.
 Change the catalog and the screens follow.

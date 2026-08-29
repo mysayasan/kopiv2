@@ -51,3 +51,25 @@ appliance, **including the power to open every door**.
 - The role picker defaults to the **last** role the appliance lists rather than to an admin: a form
   that defaults to the most powerful role is how an operator account becomes an administrator by
   nobody's decision.
+
+## The administrative trail
+
+`user.create`, `user.update`, `user.delete` and `user.password_reset` are written to the append-only
+trail (`apis/audit.go.md`).
+
+Auditing matters more on this surface than anywhere else in the app: it can mint an account holding
+every other power on the appliance, including the power to open every door and to change who else
+may. An account created at 02:00 and deleted at 02:20 leaves nothing behind but the doors it opened
+in between.
+
+- **The role is the payload.** "A user was created" is administrative noise; *"a user was created as
+  an administrator"* is somebody handing out the keys to the building.
+- **An update reads the before state**, so a role change reads as `moved from role 3 to role 1`
+  rather than as an unexplained edit. It pages the user list to do it (`lookup`) because the shared
+  appliance user service exposes no by-id read, and adding one to a service four apps depend on is
+  not this feature's business; a door appliance has a handful of accounts, not a directory, and a
+  miss still writes the entry, just with less in it.
+- **A delete reads the account before removing it**, because afterwards there is nothing left to
+  name and `user 4 deleted` is the entry that makes an investigation give up.
+- **A password reset by an administrator is a takeover of that account**, however legitimate the
+  reason. The password itself is never recorded.

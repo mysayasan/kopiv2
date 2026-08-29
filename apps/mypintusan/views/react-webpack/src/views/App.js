@@ -10,6 +10,7 @@ import People from './People'
 import Activity from './Activity'
 import Readers from './Readers'
 import Access from './Access'
+import Trail from './Trail'
 import Settings from './Settings'
 import Wizard from './Wizard'
 
@@ -29,6 +30,9 @@ const TABS = [
   { id: 'activity', icon: 'list', label: 'nav.activity', needs: 'viewActivity' },
   { id: 'readers', icon: 'cpu', label: 'nav.readers', needs: 'viewReaders' },
   { id: 'access', icon: 'lock', label: 'nav.access', needs: 'viewRules' },
+  // The administrative trail sits next to Access rules, not next to Activity, on purpose: it is
+  // read by whoever is asking what was CHANGED, and that question starts on the rules screen.
+  { id: 'trail', icon: 'shield', label: 'nav.trail', needs: 'viewAudit' },
   { id: 'settings', icon: 'sliders', label: 'nav.settings', needs: 'viewSettings' }
 ]
 
@@ -155,7 +159,7 @@ function Shell({ lang, onLang }) {
     return <Wizard onFinished={() => setNeedsSetup(false)} />
   }
 
-  const Screen = { doors: Doors, people: People, activity: Activity, readers: Readers, access: Access, settings: Settings }[tab] || Doors
+  const Screen = { doors: Doors, people: People, activity: Activity, readers: Readers, access: Access, trail: Trail, settings: Settings }[tab] || Doors
 
   return (
     <div className="app-shell">

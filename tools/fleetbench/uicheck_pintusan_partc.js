@@ -53,6 +53,10 @@ module.exports = async function partC(ctx) {
     Activity: '/api/events?limit=5',
     Readers: '/api/readers',
     'Access rules': '/api/grants',
+    // The administrative trail is admin-only in services/rbac.go, so for these two roles this
+    // entry belongs in the HIDDEN half below — and check 2 proves the hiding is real by asking
+    // the server, not by trusting the rail.
+    'Admin trail': '/api/audit',
     Settings: '/api/settings/access',
   };
 

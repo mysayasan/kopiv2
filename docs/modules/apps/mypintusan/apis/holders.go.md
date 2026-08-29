@@ -38,3 +38,22 @@ People and their badges — the operator's daily surface: holder CRUD-lite
   posture for the access log: both are evidentiary records.
 - Live-verified: a holder created, a card credential issued, and revoke exercised end to end
   against a booted app.
+
+## The administrative trail
+
+`holder.create`, `credential.issue` and `credential.revoke` are written to the append-only trail
+(`apis/audit.go.md`).
+
+This is the **operator's** surface, not an administrator's, and that is a reason to record it rather
+than not: a person created here reaches nothing today and can be added to a group tomorrow by
+somebody else entirely — the trail is what joins the two halves back together.
+
+**The card's identity is recorded; the secret never is.** Format, facility code and card number are
+what an investigation matches against the access log, and they are already printed on the card. The
+PIN and the duress PIN are hashed in the handler and appear nowhere in the entry — the trail is
+readable by every administrator and is exported to CSV, so a credential in it would be a credential
+handed out. A duress PIN is recorded only as the boolean fact that one exists.
+
+On a revocation the **reason** is the field worth having. "Revoked" is a fact the credential row
+already carries; *"reported stolen at the gate on Friday"* is what makes a badge presented on
+Saturday an incident rather than a denial.

@@ -80,6 +80,10 @@ var capabilities = []capability{
 	{"editSettings", "/api/settings/access", "PUT"},
 	{"manageUsers", "/api/settings/users", "POST"},
 	{"createDoors", "/api/doors", "POST"},
+	// The administrative trail. Its own capability rather than a lean on viewSettings: the Trail
+	// screen is a separate section in the rail, and a role that could read the trail but not the
+	// settings — or the reverse — must get a rail that says so.
+	{"viewAudit", "/api/audit", "GET"},
 }
 
 func (a *capabilitiesApi) get(w http.ResponseWriter, r *http.Request) {

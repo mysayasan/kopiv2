@@ -114,3 +114,24 @@ an interface specifically so the HTTP layer cannot reach an `osdp.Bus` or a
   (`views/react-webpack/src/views/Wizard.js`) rather than by a direct API call. That path is what
   first exposed the shared SPA's request-double-encoding bug (`lib/api.js` — every write in the
   SPA failed to unmarshal until fixed), since it was the first write the wizard performs.
+
+## The administrative trail
+
+`door.create` and `door.unlock_remote` are written to the append-only trail (`apis/audit.go.md`);
+`lockdown.set` is written by the lockdown handler in this same file.
+
+**`door.create` records the security fields, not the name.** There is no `PUT /api/doors`: the
+offline policy, the cache TTL and whether the reader must speak Secure Channel are decided once, at
+install, by whoever filled in the form — and they are the three values that decide what the door
+does on the day the network is gone and nobody is watching. *"Who set this perimeter door to cached
+with no Secure Channel"* had no answer at all before.
+
+**`door.unlock_remote` duplicates the access log on purpose.** `entities.AccessEvent` stays the
+authority on door decisions, but a remote open is the clearest example of power being *used* rather
+than rules being changed, and somebody reading the administrative trail to find out what the people
+with access did should not have to know there is a second table.
+
+**`lockdown.set` records both directions, and the release matters at least as much as the seal.** A
+site sealed during an incident and quietly reopened twenty minutes later by somebody who was not in
+the room is the sequence nobody can reconstruct from the access log, because lifting a lockdown
+produces no event at all — it just makes the denials stop.

@@ -63,7 +63,7 @@ const isNavLink = (e) => !e.closest('.side-nav-foot') && !e.closest('.nav-footer
 // a card number, a reader name — being reported as a missing translation.
 const KEY_PREFIXES = ['app', 'nav', 'login', 'common', 'doors', 'lockdown', 'people', 'badge',
   'activity', 'readers', 'access', 'group', 'sched', 'grant', 'holiday', 'reason', 'settings',
-  'wiz', 'pairing', 'users', 'role'];
+  'wiz', 'pairing', 'users', 'role', 'trail'];
 
 const SEED = {
   doorName: 'Screen bench lobby',

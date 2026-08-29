@@ -128,6 +128,24 @@ func Policy() []PolicyRule {
 		// values here do not produce a bad reading, they produce a door that opens for the wrong
 		// person or an alarm that never comes.
 		{Path: "/api/settings", Description: "Door hardware and system settings", Viewer: none, Operator: none},
+		// The administrative trail: who changed the rules about who gets in. Admin-only, and
+		// deliberately NOT granted to the operator who can read the rules themselves.
+		//
+		// The reasoning is the mirror image of the access log's. The access log is granted to
+		// everybody signed in because a viewer's job is to watch what happened at the doors. This
+		// table is about the people with power over the appliance — which accounts exist, who was
+		// given a role, who was refused, which administrator reset whose password. Handing a
+		// receptionist the record of every administrator's actions is a different disclosure from
+		// handing them the door log, and it is not one this app's roles ask for.
+		//
+		// A superadmin bypasses the matrix, so "admin-only" here means: absent from the two rows
+		// this catalog fills in.
+		{Path: "/api/audit", Description: "The administrative trail: who changed the rules about who gets in", Viewer: none, Operator: none},
+		// SEGMENT-WISE MATCHING MEANS THIS IS NOT COVERED BY THE RULE ABOVE. "/api/audit" governs
+		// "/api/audit/anything", but "audit.csv" is a different first segment — so without this row
+		// the export would be a route in no catalog rule, which is the one thing rbac.go's header
+		// says must never happen. #224 found the same shape as a rule with the wrong segment count.
+		{Path: "/api/audit.csv", Description: "Download the administrative trail as CSV", Viewer: none, Operator: none},
 		// Minting an account is its own row, deeper than /api/settings and therefore more specific,
 		// so it stays denied even if somebody widens the settings grant one day. It is the surface
 		// that can hand out every other power on this list.

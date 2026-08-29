@@ -2,7 +2,7 @@
 //
 // Everything the SPA does goes through here rather than calling apiRequest inline, so there is one
 // place that knows the endpoint shapes and one place to look when the server contract changes.
-import { apiRequest } from './api'
+import { apiRequest, apiBase } from './api'
 
 // unwrap pulls the payload out of the shared envelope. The Go side answers either
 // {result: ...} for a single object or {data: {result: [...]}} for a paged list, and every caller
@@ -109,6 +109,80 @@ export function listEvents({ limit = 200, offset = 0, doorId, holderId, decision
   if (since) q.set('since', String(since))
   return get(`/api/events?${q.toString()}`)
 }
+
+// --- the administrative trail ---------------------------------------------------------------------
+
+// listAudit reads the trail: who changed the rules about who gets in.
+//
+// This is the OTHER log. listEvents above answers "who went through which door and was it allowed";
+// this answers "who decided they could" — the grant, the schedule, the holiday, the badge, the
+// door's offline policy, the lockdown. The access log cannot show a rule change, because a rule
+// change looks like an ordinary green badge event three weeks later.
+export function listAudit({ limit = 200, offset = 0, action, outcome, actor, targetType, from, to } = {}) {
+  return get(`/api/audit?${auditQuery({ limit, offset, action, outcome, actor, targetType, from, to })}`)
+}
+
+// auditCsvUrl is a plain link, not a fetch: the export is a download, the session is a cookie, and
+// building a blob in the browser only to hand it back to the browser would lose the server's
+// filename and its truncation header.
+export const auditCsvUrl = (filters = {}) => `${apiBase}/api/audit.csv?${auditQuery(filters)}`
+
+function auditQuery({ limit, offset, action, outcome, actor, targetType, from, to } = {}) {
+  const q = new URLSearchParams()
+  if (limit) q.set('limit', String(limit))
+  if (offset) q.set('offset', String(offset))
+  if (action) q.set('action', action)
+  if (outcome) q.set('outcome', outcome)
+  if (actor) q.set('actor', actor)
+  if (targetType) q.set('targetType', targetType)
+  if (from) q.set('from', String(from))
+  if (to) q.set('to', String(to))
+  return q.toString()
+}
+
+// AUDIT_ACTION_KEYS maps the server's action names to i18n keys. The set is closed on the server
+// (apps/mypintusan/services/audit.go) so a filter can offer it; an action arriving here without a
+// key falls back to the raw name rather than rendering blank — an unlabelled row is still evidence.
+export const AUDIT_ACTION_KEYS = {
+  'grant.create': 'trail.action.grantCreate',
+  'grant.delete': 'trail.action.grantDelete',
+  'group.create': 'trail.action.groupCreate',
+  'group.delete': 'trail.action.groupDelete',
+  'group.member_add': 'trail.action.memberAdd',
+  'group.member_remove': 'trail.action.memberRemove',
+  'schedule.create': 'trail.action.scheduleCreate',
+  'schedule.delete': 'trail.action.scheduleDelete',
+  'holiday.create': 'trail.action.holidayCreate',
+  'holiday.delete': 'trail.action.holidayDelete',
+  'holder.create': 'trail.action.holderCreate',
+  'credential.issue': 'trail.action.credentialIssue',
+  'credential.revoke': 'trail.action.credentialRevoke',
+  'door.create': 'trail.action.doorCreate',
+  'door.unlock_remote': 'trail.action.doorUnlock',
+  'lockdown.set': 'trail.action.lockdown',
+  'settings.change': 'trail.action.settingsChange',
+  'settings.reset': 'trail.action.settingsReset',
+  'user.create': 'trail.action.userCreate',
+  'user.update': 'trail.action.userUpdate',
+  'user.delete': 'trail.action.userDelete',
+  'user.password_reset': 'trail.action.userPassword',
+  'audit.retention_purge': 'trail.action.retentionPurge',
+  'api.write': 'trail.action.apiWrite'
+}
+
+// The groups the filter offers, and a note about WHERE they are applied.
+//
+// These narrow the ROWS ALREADY LOADED, in the browser. The server's filter takes one targetType,
+// not a set, and issuing four requests to build one list would be worse than this — but it means an
+// empty result here means "nothing matching in the most recent N entries", not "nothing ever", and
+// the screen has to say exactly that. A filter that silently reports absence is the trap this suite
+// has hit seven times: a check that passes on an empty result is not a check.
+export const AUDIT_FILTERS = [
+  { id: 'rules', label: 'trail.filter.rules', targetTypes: ['grant', 'group', 'schedule', 'holiday'] },
+  { id: 'people', label: 'trail.filter.people', targetTypes: ['holder', 'credential'] },
+  { id: 'doors', label: 'trail.filter.doors', targetTypes: ['door', 'site'] },
+  { id: 'appliance', label: 'trail.filter.appliance', targetTypes: ['user', 'settings', 'api'] }
+]
 
 // --- users and roles ----------------------------------------------------------------------------
 
