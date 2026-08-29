@@ -78,7 +78,13 @@ var scenarios = map[string]scenario{
 	"addr-collision": {
 		"two brand-new readers BOTH at the factory address 0 — the out-of-box onboarding case",
 		func(c config) (*Bus, []func(*Bus)) {
-			return NewBus(c.log, c.verbose, osdp.NewPD(0), osdp.NewPD(0)), nil
+			b := NewBus(c.log, c.verbose, osdp.NewPD(0), osdp.NewPD(0))
+			// BOTH readers present the card, which is the whole point: two PDs answering one
+			// address corrupt each other on the wire, and the question an installer needs
+			// answered is not "was a frame lost" but "does a badge at this address open the
+			// door, and if not, is the CP able to say WHY". Without a card loop this scenario
+			// could only show silence, which is also what an empty address looks like.
+			return b, []func(*Bus){cardLoop(c, 0)}
 		},
 	},
 	"busy": {
@@ -87,10 +93,17 @@ var scenarios = map[string]scenario{
 			pd := osdp.NewPD(1)
 			pd.Faults.Busy = 3
 			b := NewBus(c.log, c.verbose, pd)
-			// Re-arm periodically so the CP meets BUSY repeatedly, not just at startup.
-			return b, []func(*Bus){repeat(2*time.Second, func(bus *Bus) {
-				bus.With(func(pds []*osdp.PD) { pds[0].Faults.Busy = 3 })
-			})}
+			// Re-arm periodically so the CP meets BUSY repeatedly, not just at startup. And BADGE:
+			// "retried rather than declared dead" is a claim about a door still opening, and this
+			// scenario spent its whole life unable to make it — like `bad-sequence`, `bad-crc`,
+			// `garbage` and `addr-collision`, it presented no card at all, so the strongest thing
+			// it could show was that the CP had not given up talking.
+			return b, []func(*Bus){
+				cardLoop(c, 1),
+				repeat(2*time.Second, func(bus *Bus) {
+					bus.With(func(pds []*osdp.PD) { pds[0].Faults.Busy = 3 })
+				}),
+			}
 		},
 	},
 	"bad-sequence": {
@@ -98,7 +111,10 @@ var scenarios = map[string]scenario{
 		func(c config) (*Bus, []func(*Bus)) {
 			pd := osdp.NewPD(1)
 			pd.Faults.SequenceSkew = 1
-			return NewBus(c.log, c.verbose, pd), nil
+			// Badging throughout. "Present but unusable" is a claim about a door, and a reader
+			// that never offers a credential cannot demonstrate that the door stayed shut for
+			// the stated reason rather than because nobody ever tried it.
+			return NewBus(c.log, c.verbose, pd), []func(*Bus){cardLoop(c, 1)}
 		},
 	},
 	"bad-crc": {
@@ -106,7 +122,7 @@ var scenarios = map[string]scenario{
 		func(c config) (*Bus, []func(*Bus)) {
 			pd := osdp.NewPD(1)
 			pd.Faults.BadCRC = true
-			return NewBus(c.log, c.verbose, pd), nil
+			return NewBus(c.log, c.verbose, pd), []func(*Bus){cardLoop(c, 1)}
 		},
 	},
 	"garbage": {
@@ -114,7 +130,7 @@ var scenarios = map[string]scenario{
 		func(c config) (*Bus, []func(*Bus)) {
 			pd := osdp.NewPD(1)
 			pd.Faults.Garbage = true
-			return NewBus(c.log, c.verbose, pd), nil
+			return NewBus(c.log, c.verbose, pd), []func(*Bus){cardLoop(c, 1)}
 		},
 	},
 	"silent": {

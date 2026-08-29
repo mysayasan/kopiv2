@@ -605,7 +605,7 @@ func (b *Bus) secureChannelLost(pd *pdState, reason string) {
 		}
 		return
 	}
-	b.emit(Event{At: time.Now(), Address: pd.address, Kind: EventFault,
+	b.emit(Event{At: time.Now(), Address: pd.address, Kind: EventFault, Fault: FaultSecureChannel,
 		Reason: "Secure Channel unavailable (" + reason + ") — continuing in the clear"})
 	if onlineEv.Kind == EventOnline {
 		b.emit(onlineEv)
@@ -876,7 +876,7 @@ func (b *Bus) handleReply(pd *pdState, sent Command, seq uint8, f *Frame, operat
 		// badge silently served over a channel we required to be encrypted is precisely the
 		// downgrade that makes a tapped RS-485 segment invisible.
 		if b.credentialsBlocked(pd) {
-			b.emit(Event{At: time.Now(), Address: pd.address, Kind: EventFault,
+			b.emit(Event{At: time.Now(), Address: pd.address, Kind: EventFault, Fault: FaultSecureChannel,
 				Reason: "credential presented but Secure Channel is required and not established — denied"})
 			break
 		}
@@ -889,7 +889,7 @@ func (b *Bus) handleReply(pd *pdState, sent Command, seq uint8, f *Frame, operat
 			break
 		}
 		if b.credentialsBlocked(pd) {
-			b.emit(Event{At: time.Now(), Address: pd.address, Kind: EventFault,
+			b.emit(Event{At: time.Now(), Address: pd.address, Kind: EventFault, Fault: FaultSecureChannel,
 				Reason: "PIN entered but Secure Channel is required and not established — denied"})
 			break
 		}

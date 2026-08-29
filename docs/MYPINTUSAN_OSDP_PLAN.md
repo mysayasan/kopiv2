@@ -263,6 +263,12 @@ This is currently exercised by exactly one consumer, `mypintusan`. Any future se
 `infra/access/osdp` must re-dial on this return the same way, or it will silently stop polling on
 its first port failure.
 
+**Two consequences of returning early were only found when this path was live-benched — see §12.**
+Returning on the very next slot means no reader has yet failed enough transactions to be declared
+offline, so a dead port raised no alarm at all and the readers list went on reading `ok`; and the
+re-dial backoff, doubling on every attempt and never reset, accumulated across the process's whole
+life rather than across the current outage.
+
 ---
 
 ## 8. Open items
@@ -283,6 +289,10 @@ its first port failure.
    but nothing yet *checks* the `PDID` reply against it at runtime. Cheap to add, and it is
    what turns a verified profile from a claim into an enforced one.
 6. ~~**SCBK-D never checked at runtime**~~ — partially resolved 2026-08-28. See §9.
+7. **`Bus.Stats()` and `Bus.Dropped()` have no consumer.** The per-reader counter set that makes a
+   sick segment visible before it becomes an outage — and the count of events dropped because the
+   consumer stalled, which is to say badges that never reached a decision — are computed on every
+   appliance and read by nothing but tests. No API field, no endpoint, no screen. See §12.
 
 ---
 
@@ -469,3 +479,123 @@ held throughout.
   something a controller detects for itself. `docs/MYPINTUSAN_DATA_MODEL.md` §2's old sentence
   describing "a full local replica... refreshed on change" described a topology that never existed;
   it has been corrected to say so.
+
+---
+
+## 12. Bus faults, reconnect and lockdown re-application (added 2026-08-29)
+
+`tools/fleetbench/bench_pintusan_bus.py`, **42/42**; 36/42 against the unfixed app. Item 5 of the
+mypintusan hardening register, after Secure Channel (§9), the six alarms (§10), offline mode (§11)
+and schedules. It is the first bench to drive the REST of §4.1's fault table — `busy`,
+`bad-sequence`, `bad-crc`, `garbage`, `one-down`, `slow`, `addr-collision` — and the first to
+exercise the reconnect path described in §7 at all.
+
+**Why it needed a live appliance.** `bus_test.go` is 733 lines and genuinely good, and it cannot
+ask any of this: every one of its cases runs over an in-memory `net.Pipe` that is never torn down
+mid-run, so the whole chain from `failPort` through `Run` returning, `superviseBus` re-dialling, a
+fresh `Bus` and `Controller` being built, and the site's lockdown being carried into them, has no
+coverage at that layer and cannot have one. Killing a simulator is the only way to ask, and that
+takes a real process to kill.
+
+### What was wrong
+
+1. **THE LARGEST-BLAST-RADIUS FAULT WAS THE ONLY SILENT ONE.** A reader that stops answering is
+   alarmed, because `Run` keeps polling and each timeout counts against `OfflineAfter`. A dead
+   PORT is not: §7's `failPort` ends the run on the very next slot — deliberately, so the owner can
+   re-dial — which is long before any reader has failed the three transactions that declare it
+   offline. So unplugging the adapter took every door on the segment out of service, raised **no
+   alarm of any kind**, and left every reader row reading `ok, last seen a moment ago`. Measured:
+   forty-five seconds after the cable came out, the alarm feed held **nothing at all** — not one
+   notification of any category. Fixed: `services.Controller.BusDown` marks every reader on the
+   segment offline (without moving `LastSeenAt`, which belongs to when it last *answered*) and
+   raises one new `AlarmBusOffline` naming the port and the reader count — one alarm for the cable,
+   not one per reader, because eight pages for one cable is how people learn to dismiss alarms. And one
+   alarm per OUTAGE, not per failed re-dial (`runtime.announceBusDown`): a gateway that is
+   rebooting accepts the connection and drops it again for as long as that takes, and paging on
+   each of those would deliver the alarm-fatigue failure `alarm.go` argues against through the
+   alarm added to prevent silence. A session lasting 20 s — the same threshold that resets the
+   backoff in (3) — ends the outage and re-arms it.
+2. **Every protocol fault reached the operator as "Reader secure channel fault".**
+   `osdp.EventFault` covers a skewed sequence number, a NAKed command, an undecodable `PDID`, a
+   card read that will not parse *and* a failed Secure Channel handshake; `handle` mapped the whole
+   kind to `AlarmSecureChannel`. Measured against `bad-sequence`, on a reader with no Secure
+   Channel configured at all: headline "Reader secure channel fault", body "reply sequence 1,
+   expected 0 — resetting the session". That is the right alarm under a headline that sends an
+   installer hunting for a bus tap while the actual fault is cabling or firmware. Fixed:
+   `Event.Fault` (`osdp.FaultProtocol` / `osdp.FaultSecureChannel`, zero value `FaultProtocol` so
+   an unclassified fault errs towards "wiring" rather than "security"), set at the three
+   secure-channel emission sites, and a new `AlarmBusFault` — "Reader communication fault — check
+   the wiring". This was recorded as an unproven lead by §10 and is now settled.
+3. **The re-dial backoff never reset, so every recovery made the next one slower — permanently.**
+   §7's 1s→30s backoff exists so an absent adapter does not spin, and is capped so "a door that
+   comes back must not wait minutes to be polled again". It doubled on every attempt and was never
+   returned to its floor, so it accumulated over the life of the *process* rather than over the
+   current outage: a site whose gateway reboots nightly, or whose cable is knocked once a week,
+   reached the cap after about five events and stayed there. Measured live: after four knocks and
+   thirty seconds of perfectly healthy running, the sixth reconnect took **28.5 s** — against
+   **5.2 s** for the same knock on the fixed build — so every door on the segment stayed dead for
+   half a minute after the cable was already back. Fixed: a session that ran for 20 s or more
+   resets the backoff to its floor, since a session that *ran* is the end of an outage, not a step
+   deeper into one.
+4. **A segment that cannot enrol a reader leaked its connection on every re-dial.** `runBus` dials
+   first and enrols second, and `Bus` closes the port in `Run`'s defer and nowhere else — so the
+   `enrolled == 0` path returned without closing anything, while `superviseBus` retried for ever.
+   One `requireSecureChannel` with no key, or one mistyped 16-byte SCBK, on a single-reader segment
+   is enough to take that path. Measured: **10 established connections after 75 s of re-dialling
+   against a simulator with no reader being polled, where the fixed build holds none** — and
+   bounded only by Go's finalizer eventually closing sockets the process no longer references,
+   which is a garbage-collection schedule, not a resource policy. It matters more than an ordinary leak because the far end is usually a
+   serial-to-Ethernet gateway and those commonly accept one to four TCP clients: correcting the
+   typo does not necessarily recover the segment, because the gateway's client table is full of
+   connections nobody is using. Fixed with a `defer` that closes the transport on every path that
+   does not reach `Run`.
+
+### Proven good, recorded rather than reported as fixed
+
+- **A sick reader does not take out a healthy one.** Three readers on one cable, doors on all
+  three; the middle one dies. It is alarmed and its row goes `offline`, and doors 1 and 3 both
+  still open, within seconds, with their rows still reading `ok`. The same for `slow`: a reader
+  answering at 800 ms against a 1000 ms timeout is not declared offline, and the healthy reader
+  beside it still grants on a cadence the cable sustains.
+- **`BUSY` is retried, not treated as death** — a badge is granted on a reader that replies BUSY to
+  the first commands of every burst, and no `reader-offline` alarm is raised for it.
+- **A reader that is present but unusable does not open a door**, and is declared offline by the
+  supervision timeout — §10's limbo fix holding under live conditions.
+- **The three-way `awaitReply` diagnosis reaches the operator verbatim, and it is the most valuable
+  thing in this area.** `bad-crc` produces "1 frame(s) arrived but failed CRC — check 120Ω
+  termination at both ends, shield grounded at one end only, and cable length"; `addr-collision`
+  produces "20 bytes received but no frame decoded — likely two readers sharing address 0, or a
+  badly terminated segment". Those sentences are the difference between a ten-minute fix and an
+  afternoon, and they are in the alarm body, not only in the debug log.
+- **The appliance survives all of it** — corrupted CRCs, junk with stray SOMs, two PDs fighting
+  over address 0 — with the API still serving after each.
+- **Lockdown survives an unplugged adapter, end to end.** Sealed, badge denied `lockdown`, cable
+  pulled, `GET /api/lockdown` still `true` while the segment is down, cable back, badge on the
+  *reconnected* bus still denied `lockdown`, then lifted and the same badge grants. This is a
+  regression bench on the fix §7 describes, and it is worth its cost precisely because the failure
+  mode is invisible: the door just opens.
+
+### Reported, not built
+
+`Bus.Stats()` returns a full `PDStats` per reader — transactions, timeouts, CRC errors, NAKs, BUSY
+replies, sequence errors, offline transitions, secure-channel failures, unframed bytes — and its
+own comment says why they matter: "a bus with failing termination or a ground loop shows a rising
+`CrcErrors` long before any reader actually drops offline". **Nothing outside a test calls it.**
+Nor does anything call `Bus.Dropped()`, the count of events discarded because the consumer stalled
+— which is to say, badges that never reached a decision. There is no `/api/readers` field, no
+endpoint and no screen carrying any of it, so the one diagnostic that could turn "this segment is
+occasionally flaky" into a number is computed on every appliance and thrown away. Same dead-export
+shape as §11's `CacheAge` and the missing holiday screen; worth its own item.
+
+### Tooling: five more scenarios that could not demonstrate their own claim
+
+§9 fixed `refuse-sc`/`no-sc`/`wrong-key`, which presented no card and so could show a session being
+refused but not what a badge does next. The same was true of **`busy`, `bad-sequence`, `bad-crc`,
+`garbage` and `addr-collision`** — every one of them a claim about a *door*, none of them able to
+present a credential. All five now run a `cardLoop`, which is what lets this bench say "no door
+opens on a cable whose frames cannot be trusted" rather than "no frame was decoded".
+`addr-collision` badges at address 0 from *both* colliding PDs, which is the out-of-box case as an
+installer meets it.
+
+`pintusan_harness.boot()` gained `readers=` (a multi-PD segment; `one-down`, `multidrop` and `slow`
+are unaskable on a one-reader bus) plus `slot_millis` / `reply_timeout_millis` / `status_millis`.

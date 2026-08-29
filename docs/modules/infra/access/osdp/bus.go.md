@@ -112,7 +112,16 @@ poll; it exists because a PD volunteers neither, see `cp.go.md`'s `dueStatus`), 
 
 ## Notes
 
-- `Status`/`Stats`/`Secure`/`Dropped` are read-only snapshots for callers/UI.
+- `Status`/`Stats`/`Secure`/`Dropped` are read-only snapshots for callers/UI. **`Stats` and
+  `Dropped` have no caller outside tests** — the per-reader counters that make a failing segment
+  visible before it becomes an outage, and the count of badges that never reached a decision
+  because the consumer stalled, are computed on every appliance and read by nothing. Recorded as
+  an open item in `MYPINTUSAN_OSDP_PLAN.md` §8.7 rather than quietly left as dead code.
+- **Every `EventFault` carries a `Fault` classification** (`cp.go.md`'s `FaultKind`): the three
+  Secure Channel sites set `FaultSecureChannel`, everything else — sequence skew, NAK, undecodable
+  `PDID`/`PDCAP`, an unparseable card or keypad reply — leaves the zero value `FaultProtocol`.
+  Without it a consumer cannot tell a cabling fault from a security one, and `mypintusan` titled
+  both "Reader secure channel fault" (plan §12).
 - Depends on `frame.go` (framing), `cp.go` (`pdState`, parsers), `transport.go` (`Transport`,
   `countingReader`, `sleepCtx`), `securechannel.go` (session establishment/seal/unseal).
 - `secureChannelLost`'s `StatusOnline` branch (above) is live-benched, not just unit-tested:
@@ -120,6 +129,11 @@ poll; it exists because a PD volunteers neither, see `cp.go.md`'s `dueStatus`), 
   and asserts on the resulting access decision, since a unit test over `Bus` alone cannot show
   what a consumer three layers up does with the event it receives (or, before the fix, does not
   receive).
+- The reconnect path above is live-benched by `tools/fleetbench/bench_pintusan_bus.py` (42/42;
+  36/42 against the unfixed app), which kills and restarts a real simulator process — the one
+  thing no test in this package can do, since they all run over a `net.Pipe` that is never torn
+  down mid-run. That bench is what found that returning early means no reader has yet been
+  declared offline, so a dead port raised no alarm at all.
 - Covered by `bus_test.go`, including `TestBusRunReturnsWhenThePortDies` — the regression test
   for the reconnect fix above, exercised two ways: the peer closing its end of a `net.Pipe`, and
   a transport whose every `Write` fails (`deadTransport`). Both assert `Run` returns a non-nil

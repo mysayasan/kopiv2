@@ -32,7 +32,8 @@ The shipped `services.Alarmer` implementation, built via `NewNotificationAlarmer
 
 - `severity(kind)` — `AlarmDuress`/`AlarmDoorForced` → `Critical` (a person may be in trouble or
   a boundary has been breached; neither can wait for someone to notice a dashboard row); every
-  other alarm kind — including the new `AlarmDegraded` — → `Warning`. A reader going offline is
+  other alarm kind — including `AlarmDegraded`, and the new `AlarmBusFault` and
+  `AlarmBusOffline` — → `Warning`. A reader going offline is
   deliberately *not* critical: every door bound to it is out of service, which is serious but not
   an emergency, and paging on it the same way as duress would train people to ignore alarms
   altogether on a site with one flaky segment — the failure mode worth avoiding is an alarm nobody
@@ -46,7 +47,12 @@ The shipped `services.Alarmer` implementation, built via `NewNotificationAlarmer
 - `alarmTitle(kind)` — the headline an operator sees, kept plain: read at 3am, on a phone, by
   somebody who was asleep. `AlarmDegraded`'s headline is "Running from cache — access rules cannot
   be updated" — the fact an operator most needs, stated in the title rather than buried in the
-  detail.
+  detail. `AlarmBusFault` is "Reader communication fault — check the wiring" and `AlarmBusOffline`
+  is "OSDP segment down — every door on it is out of service"; both exist because every protocol
+  fault used to arrive titled "Reader secure channel fault", and a whole segment going down used
+  to arrive as nothing at all (`MYPINTUSAN_OSDP_PLAN.md` §12). **The headline is the diagnosis**:
+  an installer sent to look for a bus tap by a cabling fault has lost the afternoon before they
+  read the body.
 - `Decision(ctx, ev)` — **new**: publishes an access DECISION (a badge accepted or refused, an
   operator unlock) into the feed at `Info` severity, category `"access.granted"` or
   `"access.denied"`. `Raise` alarms tell a human something is wrong now; `Decision` is the

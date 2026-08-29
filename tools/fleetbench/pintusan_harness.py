@@ -67,7 +67,9 @@ READER_ADDR = 1
 SITE_KEY = "a0a1a2a3a4a5a6a7b0b1b2b3b4b5b6b7"
 
 
-def app_config(reader_scbk=None, reader_requires_sc=False, offline=False, timezone="UTC"):
+def app_config(reader_scbk=None, reader_requires_sc=False, offline=False, timezone="UTC",
+               readers=None, slot_millis=200, reply_timeout_millis=1000,
+               status_millis=None):
     """The app's config for one boot.
 
     reader_scbk / reader_requires_sc are parameters because **buses are seeded from config on
@@ -80,7 +82,18 @@ def app_config(reader_scbk=None, reader_requires_sc=False, offline=False, timezo
     controller into cached-replica mode — the whole of `Decide()`'s GATE 10 — and it is not on the
     Settings screen at all, so config.json's first boot is the ONLY way a site can turn it on. It
     is also read once, at process start, into the runtime; there is no live reload. So a bench that
-    wants a controller in offline mode has to ask for one at boot."""
+    wants a controller in offline mode has to ask for one at boot.
+
+    `readers` is the list of OSDP addresses on the segment, and it is a parameter because a bus with
+    ONE reader cannot ask the question item 5 exists for: **does a sick reader take out a healthy
+    one?** `one-down`, `multidrop` and `slow` all put several PDs on one cable, and a CP that
+    enrols only address 1 would sit there polling the survivor and looking fine. Addresses are
+    seeded from config on first boot like everything else on the bus, so each shape needs its own
+    boot. Pass a list of ints, or of dicts for per-reader keys.
+
+    `slot_millis` / `reply_timeout_millis` are parameters for the `slow` scenario: how long a
+    reader may take to answer, and how much of the bus one slow reader is therefore allowed to
+    eat, is exactly what that episode measures."""
     cfg = base_config(APP, TLS_PORT)
     cfg["localAuth"] = {"enabled": True, "username": ADMIN_USER, "password": ADMIN_PASS}
     # Multicast discovery finds nothing in docker and logs about it forever.
@@ -98,16 +111,23 @@ def app_config(reader_scbk=None, reader_requires_sc=False, offline=False, timezo
         "offline": bool(offline),
     })
     # ONE bus, pointed at the simulator on the host.
-    reader = {"address": READER_ADDR, "requireSecureChannel": bool(reader_requires_sc)}
     key = SITE_KEY if reader_scbk is None else reader_scbk
-    if key:
-        reader["scbk"] = key
-    cfg["buses"] = [{
+    rows = []
+    for spec in (readers if readers is not None else [READER_ADDR]):
+        row = dict(spec) if isinstance(spec, dict) else {"address": int(spec)}
+        row.setdefault("requireSecureChannel", bool(reader_requires_sc))
+        if key and "scbk" not in row:
+            row["scbk"] = key
+        rows.append(row)
+    bus = {
         "port": SIM_ADDR,
-        "slotMillis": 200,
-        "replyTimeoutMillis": 1000,
-        "readers": [reader],
-    }]
+        "slotMillis": slot_millis,
+        "replyTimeoutMillis": reply_timeout_millis,
+        "readers": rows,
+    }
+    if status_millis is not None:
+        bus["statusMillis"] = status_millis
+    cfg["buses"] = [bus]
     return cfg
 
 
@@ -242,7 +262,8 @@ def admin():
 
 
 def boot(reader_scbk=None, reader_requires_sc=False, build_app=True, offline=False,
-         timezone="UTC"):
+         timezone="UTC", readers=None, slot_millis=200, reply_timeout_millis=1000,
+         status_millis=None):
     """Tear down and stand up a FRESH app with the given bus config, returning when it serves.
 
     Fresh every time, deliberately: the data dir carries the seeded bus, so reusing it would
@@ -262,7 +283,9 @@ def boot(reader_scbk=None, reader_requires_sc=False, build_app=True, offline=Fal
 
     write(os.path.join(data, "config.json"),
           app_config(reader_scbk=reader_scbk, reader_requires_sc=reader_requires_sc,
-                     offline=offline, timezone=timezone))
+                     offline=offline, timezone=timezone, readers=readers,
+                     slot_millis=slot_millis, reply_timeout_millis=reply_timeout_millis,
+                     status_millis=status_millis))
     start_app()
     if not wait_up(BASE + "/api/auth/config", timeout=180):
         print(sh("docker", "logs", "--tail", "40", NAME, check=False))

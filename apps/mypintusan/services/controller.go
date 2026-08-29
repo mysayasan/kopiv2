@@ -66,6 +66,21 @@ const (
 	AlarmSecureChannel = "secure-channel"
 	AlarmDoorForced    = "door-forced"
 	AlarmDoorHeldOpen  = "door-held-open"
+	// AlarmBusFault is a protocol fault on a reader that is still present: a skewed sequence
+	// number, a refused command, an undecodable reply.
+	//
+	// It exists because every one of those used to be raised as AlarmSecureChannel. `EventFault`
+	// carried no classification, the controller mapped the whole kind to one alarm, and so a
+	// reader with no Secure Channel configured at all — badly terminated cable, wrong address,
+	// firmware that skews its sequence numbers — woke somebody at 03:00 with "Reader secure
+	// channel fault". The wrong headline on the right alarm is worse than no headline: it sends
+	// an installer looking for a bus tap while the actual fault is 3 m of unterminated cable.
+	AlarmBusFault = "bus-fault"
+	// AlarmBusOffline says an entire RS-485 segment is gone — the adapter unplugged, the
+	// serial-to-Ethernet gateway rebooted, the cable cut at the trunk. Every door on it is out of
+	// service at once, which is a different event from one reader dying and needs a different
+	// headline: the first question is "which cable", not "which reader".
+	AlarmBusOffline = "bus-offline"
 	// AlarmDegraded says the site is running on a cached replica.
 	//
 	// It is the only warning an operator gets that offline mode is on, and it is the alarm the
@@ -476,7 +491,14 @@ func (c *Controller) handle(ctx context.Context, ev osdp.Event) {
 		c.contactReported(ctx, ev)
 
 	case osdp.EventFault:
-		c.raise(ctx, AlarmSecureChannel, ev.Address, ev.Reason)
+		// Titled by what the fault ACTUALLY IS. Only the Secure Channel faults are a security
+		// story; a sequence skew, a NAK or an undecodable frame is a cabling story, and telling
+		// an operator the wrong one costs them the site visit.
+		kind := AlarmBusFault
+		if ev.Fault == osdp.FaultSecureChannel {
+			kind = AlarmSecureChannel
+		}
+		c.raise(ctx, kind, ev.Address, ev.Reason)
 
 	case osdp.EventKeypad:
 		c.mu.Lock()
@@ -734,6 +756,52 @@ func (c *Controller) markReader(ctx context.Context, addr uint8, state string, s
 		return
 	}
 	_ = c.store.MarkReader(ctx, reader.Id, state, at)
+}
+
+// BusDown records that the ENTIRE segment this controller owns has gone: the adapter unplugged, the
+// serial-to-Ethernet gateway rebooted, the trunk cut. `addrs` are the readers that were enrolled on
+// it, which the caller knows and the controller does not.
+//
+// IT EXISTS BECAUSE THE ONE FAULT WITH THE BIGGEST BLAST RADIUS WAS THE ONLY SILENT ONE. Per-reader
+// supervision alarms when a reader stops answering, because `Bus.Run` keeps polling and each
+// timeout counts against OfflineAfter. A dead PORT does not work that way: `failPort` makes `Run`
+// return on the very next slot, deliberately, so the owner can re-dial — and it returns long before
+// any reader has failed three transactions. So the segment vanished, every door on it stopped
+// working, no alarm was raised, and the readers list went on saying `ok, last seen a moment ago`.
+// The only trace was one line in the application log. Measured live: killing the simulator produced
+// no notification of any kind.
+//
+// Both halves are needed. The first live bench of this app's alarms found a reader-offline alarm
+// firing correctly while the readers list still read "ok, last seen never": marking the rows is
+// what stops the screen lying to the person the alarm just woke.
+func (c *Controller) BusDown(ctx context.Context, addrs []uint8, reason string) {
+	c.mu.Lock()
+	c.readerState = map[uint8]readerState{}
+	c.mu.Unlock()
+
+	for _, a := range addrs {
+		// A zero time deliberately: the reader was last SEEN when it last answered, not when the
+		// cable came out, and stamping the moment of the outage makes every dead reader look as
+		// though it had just been heard from.
+		c.markReader(ctx, a, entities.TamperOffline, time.Time{})
+	}
+
+	if c.alarm == nil {
+		return
+	}
+	ev := entities.AccessEvent{At: c.cfg.Now().Unix()}
+	// Bind the alarm to a door if there is one, so it lands somewhere an operator can click. One
+	// alarm for the segment rather than one per reader: a cable that comes out of an eight-reader
+	// bus must not produce eight pages, which is how people learn to dismiss alarms unread.
+	for _, a := range addrs {
+		if r, err := c.store.ReaderByBus(ctx, c.cfg.BusPort, int(a)); err == nil && r != nil {
+			ev.ReaderId, ev.DoorId = r.Id, r.DoorId
+			break
+		}
+	}
+	c.alarm.Raise(ctx, AlarmBusOffline, ev, fmt.Sprintf(
+		"OSDP segment %s went down (%s) — %d reader(s) on it are out of service until it comes back",
+		c.cfg.BusPort, reason, len(addrs)))
 }
 
 func (c *Controller) raise(ctx context.Context, kind string, addr uint8, detail string) {
