@@ -60,3 +60,26 @@ list, and a `minConfidence` outside `[0, 1]`.
 - **Face recognition is biometric data.** The rule-matching logic here is dormant unless (1) an admin
   has enrolled at least one person via `/api/faces` and (2) a camera has an active `detectionType:
   "face"` rule — see `apps/mymatasan/services/face_gallery.go.md` for the enrollment/consent side.
+
+## The confidence floor
+
+`defaultMinFaceConfidence` is **0.40**, and it must not be raised above the worker's own naming
+floor (`MYMATASAN_FACE_MIN_COS`, also 0.40; SFace's documented same-identity point is ~0.36).
+
+It was 0.60, which made ONE decision — "is this the enrolled person?" — get made twice against
+different numbers. Every genuine match in the 0.40–0.60 band was named by the worker and then
+discarded here. Measured against the shipped model, on one subject enrolled from a passport photo
+and seen on a 1080p camera, 2 of 7 ordinary views fell in that band (backlit at the camera, 0.50;
+backlit across the room, 0.59). On a `known` rule they produced no alert at all; on an `unknown`
+rule they were worse than nothing, reporting an **enrolled person as a stranger**.
+
+`face_test.go` pins the relationship so raising it again fails the build rather than the site. A
+site that wants to be stricter sets `minConfidence` per rule, which the camera's AI rules editor
+exposes — the right place for a judgement about one doorway.
+
+## UI note
+
+All three match modes (`known` / `include` / `unknown`) have worked here since face rules shipped,
+but nothing in the UI could choose between them: the People screen hardcoded `known` and the rules
+editor did not know the type existed. Both now expose the choice — per camera on the People page,
+and in full (mode + watchlist + minConfidence) in the camera's AI rules editor.

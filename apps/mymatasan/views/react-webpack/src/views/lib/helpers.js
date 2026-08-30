@@ -699,6 +699,12 @@ export const detectionModes = [
   ['left_behind', 'Left behind'],
   ['direction', 'Direction of travel'],
   ['lpr', 'License plate (LPR)'],
+  // Face recognition. It was MISSING from this list, and the omission was not cosmetic:
+  // modeFromDetectionType falls back to 'presence' for anything it does not know, so a face rule
+  // opened in this editor displayed as a Presence rule and SAVING IT REWROTE detectionType to
+  // 'presence' — silently ending face recognition on that camera and leaving a rule that fires on
+  // every person and car instead. A mode the editor cannot name is a rule the editor destroys.
+  ['face', 'Face recognition'],
 ];
 
 // dwellModes are the modes whose configuration is a DURATION. Grouped because the editor,
@@ -727,7 +733,7 @@ export function modeFromDetectionType(type) {
   if (value === 'presence' || legacyPresenceTypes.includes(value)) {
     return 'presence';
   }
-  if (['crowd', 'intrusion', 'line_crossing', 'multi_line_crossing', 'lpr'].includes(value)) {
+  if (['crowd', 'intrusion', 'line_crossing', 'multi_line_crossing', 'lpr', 'face'].includes(value)) {
     return value;
   }
   if (dwellModes.includes(value)) {
@@ -872,8 +878,69 @@ export function buildRuleConfigForMode(mode, targetClasses, existingConfig) {
     // list, so it carries plates/matchMode/minOcrConfidence instead of classes.
     return lprRuleConfigText(parseLPRRuleConfig(existingConfig));
   }
+  if (mode === 'face') {
+    // Face rules match PEOPLE, not the generic class list: people/matchMode/minConfidence.
+    // Parsed out of the existing config and written back, so an unrelated edit (a zone, a
+    // schedule, a destination) cannot drop the policy that decides who is worth an alert.
+    return faceRuleConfigText(parseFaceRuleConfig(existingConfig));
+  }
   // presence / intrusion
   return JSON.stringify({ classes }, null, 2);
+}
+
+export function isFaceDetectionType(value) {
+  return String(value || '').toLowerCase() === 'face';
+}
+
+// faceMatchModes are the three questions a face rule can ask, and they are genuinely different
+// features sharing one detector: "tell me when someone we know is here" (a staff door), "tell me
+// when one of THESE people is here" (a watchlist), and "tell me when someone we do NOT know is
+// here" (a perimeter). The backend has supported all three since face rules shipped; nothing in
+// the UI could choose between them.
+export const faceMatchModes = ['known', 'include', 'unknown'];
+
+// FACE_MIN_CONFIDENCE must equal defaultMinFaceConfidence in infra/vision/face.go.
+//
+// It is written into every rule these screens save, so a value here that disagrees with the server
+// SILENTLY WINS: the rule carries an explicit number and the server's default never applies to it.
+// That is how this went wrong once already — the server floor was lowered to the model's own
+// same-identity point (0.4) after measuring that 0.6 discarded genuine matches, and every rule the
+// UI had written still pinned 0.6, so the fix reached nothing anybody had created.
+// TestFaceConfidenceDefaultsAgree (apps/mymatasan) reads both files and fails the build on drift.
+export const FACE_MIN_CONFIDENCE = 0.4;
+
+// parseFaceRuleConfig reads a face rule's ruleConfig into { people, matchMode, minConfidence },
+// mirroring parseLPRRuleConfig. Defaults match infra/vision/face.go's parseFaceConfig: an empty
+// mode means "include" when people are named and "known" otherwise, and FACE_MIN_CONFIDENCE is the
+// floor below which a face is treated as unknown rather than risk naming the WRONG person.
+export function parseFaceRuleConfig(value) {
+  let cfg;
+  try {
+    cfg = JSON.parse(value || '{}');
+  } catch (_) {
+    cfg = {};
+  }
+  const people = Array.isArray(cfg.people) ? cfg.people.map((p) => String(p).trim()).filter(Boolean) : [];
+  let matchMode = String(cfg.matchMode || '').toLowerCase();
+  if (!faceMatchModes.includes(matchMode)) {
+    matchMode = people.length ? 'include' : 'known';
+  }
+  const minConfidence = Number(cfg.minConfidence) > 0 ? Number(cfg.minConfidence) : FACE_MIN_CONFIDENCE;
+  return { people, matchMode, minConfidence };
+}
+
+export function faceRuleConfigText(cfg) {
+  const out = {
+    matchMode: faceMatchModes.includes(cfg?.matchMode) ? cfg.matchMode : 'known',
+    minConfidence: Number(cfg?.minConfidence) > 0 ? Number(cfg.minConfidence) : FACE_MIN_CONFIDENCE,
+  };
+  const people = Array.isArray(cfg?.people) ? cfg.people.map((p) => String(p).trim()).filter(Boolean) : [];
+  // Only an include rule carries a people list. Leaving names on a "known"/"unknown" rule would
+  // read, to anyone opening it later, as a watchlist that is not being applied.
+  if (out.matchMode === 'include') {
+    out.people = people;
+  }
+  return JSON.stringify(out, null, 2);
 }
 
 // ruleDestinationsFromConfig reads the per-rule routing list (ruleConfig.destinations)

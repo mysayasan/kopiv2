@@ -17,7 +17,21 @@ const (
 	defaultFaceLabel = "face"
 	// defaultMinFaceConfidence gates which matches are trustworthy enough to name someone. Below it
 	// a face is treated as unknown rather than risk naming the WRONG person — the dangerous failure.
-	defaultMinFaceConfidence = 0.6
+	//
+	// IT MUST NOT BE STRICTER THAN THE WORKER'S OWN FLOOR, and it was. One decision — "is this the
+	// enrolled person?" — was being made twice against different numbers: the worker attaches a name
+	// at cosine >= 0.40 (MYMATASAN_FACE_MIN_COS), SFace's documented same-identity point is ~0.36,
+	// and this said 0.60. Everything in between was a genuine match that the worker had named and
+	// this then threw away — measured against the shipped model on one subject enrolled from a
+	// passport photo and seen on a 1080p camera, 2 of 7 ordinary views (backlit at the camera, 0.50;
+	// backlit across the room, 0.59) landed in that band. On a "known" rule they produced no alert
+	// at all, which is what a screen showing nothing looks like; on an "unknown" rule they were
+	// WORSE THAN NOTHING, reporting an enrolled person as a stranger.
+	//
+	// So the floor is the worker's, and the worker's refusal to name anyone below it is the single
+	// decision. A site that wants to be stricter sets minConfidence per rule (the camera's AI rules
+	// editor exposes it) — which is the right place for a judgement about a particular doorway.
+	defaultMinFaceConfidence = 0.4
 )
 
 // Face rule match modes select which faces a rule fires on.

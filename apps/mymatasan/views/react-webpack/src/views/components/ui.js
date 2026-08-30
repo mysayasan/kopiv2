@@ -196,6 +196,29 @@ export function Tracks({ value }) {
   );
 }
 
+// Toggle is a sliding on/off switch (an accessible styled checkbox). It exists because a
+// bare browser checkbox is both ugly and ambiguous next to a name — "is that tick a state
+// or a selection?" — and because the default control renders at the OS's size, which on
+// Windows is a fat 16px square that dwarfs the 13px labels around it. Used by the Dashboard's
+// anomaly card and the People roster.
+export function Toggle({ checked, disabled, onChange, label, title, ariaLabel }) {
+  return (
+    <label className="switch-row" title={title}>
+      <span className="switch">
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={disabled}
+          onChange={onChange}
+          aria-label={ariaLabel || (typeof label === 'string' ? label : undefined)}
+        />
+        <span className="switch-slider" />
+      </span>
+      {label ? <span className="switch-label">{label}</span> : null}
+    </label>
+  );
+}
+
 export function Message({ value, floating = false }) {
   if (!value) {
     return null;

@@ -7,6 +7,9 @@ import { DeploymentPanel } from '@shared/Deployment';
 import { HelpButton } from '@shared/Manual';
 import { FormBusyOverlay, FieldTitle, FormAlert, AccordionList, AccordionItem } from './ui';
 import { ConsoleLog } from './console';
+// The face-recognition prerequisites are installed from the People screen too; the SAME control is
+// mounted here so an administrator setting the appliance up can do it before anyone needs it.
+import { FaceModelsSetup } from './faces';
 import { PasswordField } from './layout';
 import { defaultYoloConfig, bestYoloDefaults, defaultCaptureConfig, captureModeOptions, defaultAlertNotificationConfig, alertNotificationFields, alertFieldDataKeys, builtinPayloadKeys, notificationCategories, notificationTemplateTokens, defaultDestination, defaultNotificationSettings, defaultHealthSettings, defaultMachineHealthSettings } from '../lib/constants';
 import {iceUrlsText,textToIceUrls,decoderTransportOptions,decoderHWAccelOptions,apiBase } from '../lib/helpers';
@@ -1146,6 +1149,24 @@ function AiRuntimeInstallControl({ authHeader, onMessage, onRestart }) {
       {log ? <pre className="install-output ai-runtime-log">{log}</pre> : null}
     </div>
   );
+}
+
+// FaceModelsControl wraps the People screen's setup panel for Settings: it owns the status fetch
+// (the People page owns its own) and shows the state even when everything is installed, which is
+// what an administrator checking the appliance over wants to see.
+function FaceModelsControl({ authHeader, onMessage }) {
+  const [status, setStatus] = useState(undefined);
+  const check = useCallback(async () => {
+    const headers = {};
+    if (authHeader) headers.Authorization = authHeader;
+    try {
+      const resp = await fetch(`${apiBase()}/api/faces/models`, { credentials: 'include', headers });
+      const payload = await resp.json();
+      setStatus(resp.ok ? (payload?.data?.result ?? payload?.result ?? null) : null);
+    } catch (_) { setStatus(null); }
+  }, [authHeader]);
+  useEffect(() => { check(); }, [check]);
+  return <FaceModelsSetup authHeader={authHeader} status={status} onRefresh={check} onMessage={onMessage} always />;
 }
 
 // UpdatePanel surfaces the self-update state: current vs latest version (checked on a
@@ -2402,6 +2423,7 @@ export function SettingsTab({
             </div>
           ) : null}
           <AiRuntimeInstallControl authHeader={authHeader} onMessage={onMessage} onRestart={onRestart} />
+          <FaceModelsControl authHeader={authHeader} onMessage={onMessage} />
         </section>
         </>)}
 

@@ -36,6 +36,8 @@ Capacity is workload-driven, so treat the camera numbers below as **rough guidan
 
 **AI runtime:** the YOLO worker needs **CPython 3.9–3.13** (PyTorch publishes **no CUDA wheels for 3.14** — see [HOWTO](HOWTO.md)). `ultralytics>=8.3` pulls in `torch` and OpenCV. The bundled `apps/mymatasan/ai/setup.ps1` / `setup.sh` (and the in-app **Install GPU support** button) auto-detect an NVIDIA GPU and install the matching CUDA or CPU build. Without any AI runtime the app still starts and runs **native motion** detection (dependency-free) when `useMotionFallback` is on.
 
+**Face recognition** additionally needs `opencv-python>=4.5.4` plus two OpenCV model-zoo files — YuNet (detection, MIT, ~230 KB) and SFace (recognition, Apache-2.0, ~37 MB) — in `apps/mymatasan/ai/`. Neither ships with the app. `setup.ps1 -Faces` installs them, and so does the in-app **Download and set up** button on the People screen and in Settings › AI, which is the route an operator has: it pip-installs opencv when needed, fetches only the missing models, and verifies they load. Enrolment is refused with a specific message until all of it is present.
+
 ---
 
 ## 3. Hardware tiers

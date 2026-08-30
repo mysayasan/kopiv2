@@ -13,11 +13,14 @@ photo, print JSON, exit) — this file's `_faces_detect` is the **live** counter
 that runs on every sampled frame from a camera with an active face rule. Both
 share `face_model.py` (YuNet detect + SFace embed via `cv2.FaceDetectorYN`/
 `cv2.FaceRecognizerSF`) so an enrolled faceprint and a live faceprint are
-directly comparable. See `apps/mymatasan/services/face_gallery.go.md` and
-`apps/mymatasan/services/face_embedder.go.md` for the Go side; neither
-`face_model.py` nor `faces_worker.py` has its own module doc (same convention as
-`anomaly_worker.py`/`train_worker.py`/`eval_worker.py` — only this file, the
-always-running worker, is individually documented).
+directly comparable — see `apps/mymatasan/ai/face_model.py.md` for the shared
+detector, including the enrolment-vs-live scale ladders that fix the two ends of
+YuNet's "faces within a band of sizes relative to its input frame" limit. See
+`apps/mymatasan/services/face_gallery.go.md` and
+`apps/mymatasan/services/face_embedder.go.md` for the Go side; `faces_worker.py`
+itself still has no separate module doc (same convention as `anomaly_worker.py`/
+`train_worker.py`/`eval_worker.py` — only this file, the always-running worker,
+and the shared `face_model.py` are individually documented).
 
 ## Responsibilities
 

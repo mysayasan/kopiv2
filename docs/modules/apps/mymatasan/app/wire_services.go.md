@@ -19,7 +19,9 @@ thirty free variables pulled out of an 800-line scope.
     see `wire_vision.go.md`), `objectBackend`, `httpsPort`.
   - Domain services: `camera`, `vision`, `detectionClass`, `training`, `teach`,
     `faceGallery` (`*services.FaceGalleryService` — the global enrolled-face gallery, see
-    `services/face_gallery.go.md`), `recording`, `observation`, `sightingSearch`
+    `services/face_gallery.go.md`), `faceModels` (`*services.FaceModelsInstaller` — installs
+    the face-recognition prerequisites, models + opencv, from the People/Settings UI; see
+    `services/face_models_install.go.md`), `recording`, `observation`, `sightingSearch`
     (`*services.SightingSearch` — answers the control plane's federated fleet search over
     this node, W2-4/F-10; see `services/sighting_search.go.md`), `appearance`
     (`*services.AppearanceService` — ranks recorded sightings by how much they look alike,
