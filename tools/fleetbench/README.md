@@ -61,6 +61,7 @@ node   tools/fleetbench/uicheck_failover.js .artifacts/fleetbench ar
 KOPIV2_NODE_IMAGE=debian-ffmpeg-face:bench python tools/fleetbench/bench_w36b_faceredact.py
 node   tools/fleetbench/uicheck_faceredact.js .artifacts/fleetbench en
 node   tools/fleetbench/uicheck_faceredact.js .artifacts/fleetbench ar
+python tools/fleetbench/bench_face_enrol_framing.py  # enrolment + live scale ladders; no harness needed, skips (0) if the face models aren't installed
 python tools/fleetbench/bench_w39_push.py         # W3-9: mobile push, against a REAL push service
 node   tools/fleetbench/uicheck_push.js .artifacts/fleetbench en
 node   tools/fleetbench/uicheck_push.js .artifacts/fleetbench ar

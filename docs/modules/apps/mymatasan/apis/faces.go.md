@@ -16,13 +16,45 @@ superadmin bypass is granted `/api/faces` in the RBAC policy (`services/rbac.go`
 
 | Method   | Path                        | Description |
 |----------|-----------------------------|-------------|
-| `GET`    | `/api/faces`                | List enrolled people. |
+| `GET`    | `/api/faces`                | List enrolled people, each with a `photos` faceprint count (`services.PersonSummary`). |
 | `POST`   | `/api/faces`                | Create a person (`{name, notes, enabled}`). |
 | `PUT`    | `/api/faces/{id}`           | Update a person's name/notes/enabled. |
 | `DELETE` | `/api/faces/{id}`           | Delete a person — crypto-shreds their embeddings (see `services/face_gallery.go.md`). |
 | `POST`   | `/api/faces/{id}/enroll`    | Enroll a faceprint from a base64 image (`{image, source}`). |
 | `GET`    | `/api/faces/{id}/embeddings`| List a person's embeddings (metadata only — no vector bytes). |
 | `DELETE` | `/api/faces/embeddings/{id}`| Delete one embedding. |
+| `GET`    | `/api/faces/models`         | What face recognition still needs on this host (models, worker script, opencv). |
+| `POST`   | `/api/faces/models/install` | Start the background download/install of the missing pieces. |
+| `GET`    | `/api/faces/models/install/status` | Poll the install job (running/done/failed + live log). |
+| `GET`    | `/api/faces/sightings`      | The most recent recognition per person, from the alert log. |
+
+The `models` routes are registered **before** `/{id}` so `models` is never parsed as a person id.
+They are the in-app answer to "face models are not installed" — see
+`services/face_models_install.go.md`. `StartInstall` failures ("already running", "the model
+directory is not writable") come back as `400` with the reason, because both are the caller's
+business.
+
+## Why `GET /api/faces` carries a count
+
+A person with zero embeddings is skipped by the gallery export, so they are recognized by nothing.
+The roster screen states that per person, and it can only do so if the list endpoint says how many
+faceprints each person has — hence `ListPeopleWithCounts` rather than `ListPeople` here.
+
+## Why the roster needs `/sightings`
+
+Enrolling a person and switching a camera on produces alerts, event clips and notifications — all of
+which land on OTHER screens (Notifications, the alert log, the timeline). From the People page the
+feature was indistinguishable from one that does nothing, which is how somebody ends up asking what
+it is for. This route answers "has any of this ever worked, and when", per person, so each card can
+say *seen 4 minutes ago on Lobby Entrance*.
+
+It reads the alert log rather than keeping a tally: the alert IS the record, and a second counter
+would be a second thing to keep true. It scans a bounded window of recent `face` alerts newest-first
+(`?scan=`, default 500, max 2000) and keeps the first row per `personId` — so a person seen once a
+year is absent, which is the right trade for a line that means "recently seen". `unknownAt` /
+`unknownCount` report UNRECOGNIZED faces separately: they belong to nobody so they cannot sit on a
+card, but "strangers are being seen and none of them are enrolled" is exactly what a screen showing
+only known people would otherwise hide.
 
 ## Enrollment body
 

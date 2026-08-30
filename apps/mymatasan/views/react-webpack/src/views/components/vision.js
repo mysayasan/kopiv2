@@ -7,7 +7,7 @@ import { HelpButton } from '@shared/Manual';
 import { FormBusyOverlay } from './ui';
 import { useSnapshotBlob } from '../hooks';
 import { scheduleDayOptions } from '../lib/constants';
-import {apiBase,fieldValue,formatTimestamp,parseMetadata,formatPercent,parseBoundingBox,formatSourceLabel,cameraTitle,parseZonePolygons,defaultZonePolygon,normalizeLineConfig,parseLineRuleConfig,lineRuleConfigText,lineCountFromRule,parseCrowdRuleConfig,parseLPRRuleConfig,lprRuleConfigText,parseDwellRuleConfig,dwellRuleConfigText,dwellModes,headingOptions,detectionModes,modeFromDetectionType,detectionTypeForMode,targetClassesFromRule,buildRuleConfigForMode,ruleDestinationsFromConfig,applyRuleDestinations,ptzRecallFromConfig,applyPTZRecall,relayFromConfig,applyRuleRelay,groupedClassOptions,classDisplayName,defaultVisionRuleDraft,weeklySchedulePolicy,rangeSchedulePolicy,schedulePresetPolicy,scheduleDraftFromPolicy,scheduleSummary } from '../lib/helpers';
+import {apiBase,fieldValue,formatTimestamp,parseMetadata,formatPercent,parseBoundingBox,formatSourceLabel,cameraTitle,parseZonePolygons,defaultZonePolygon,normalizeLineConfig,parseLineRuleConfig,lineRuleConfigText,lineCountFromRule,parseCrowdRuleConfig,parseLPRRuleConfig,lprRuleConfigText,parseFaceRuleConfig,faceRuleConfigText,parseDwellRuleConfig,dwellRuleConfigText,dwellModes,headingOptions,detectionModes,modeFromDetectionType,detectionTypeForMode,targetClassesFromRule,buildRuleConfigForMode,ruleDestinationsFromConfig,applyRuleDestinations,ptzRecallFromConfig,applyPTZRecall,relayFromConfig,applyRuleRelay,groupedClassOptions,classDisplayName,defaultVisionRuleDraft,weeklySchedulePolicy,rangeSchedulePolicy,schedulePresetPolicy,scheduleDraftFromPolicy,scheduleSummary } from '../lib/helpers';
 import { ZoneDrawingPreview, LineDrawingPreview } from './previews';
 
 // classIsLive reports whether a registry class can actually be detected right
@@ -63,10 +63,12 @@ export function CameraAiPanel({
   const lineRule = mode === 'line_crossing' || mode === 'multi_line_crossing';
   const crowdRule = mode === 'crowd';
   const lprRule = mode === 'lpr';
+  const faceRule = mode === 'face';
   const dwellRule = dwellModes.includes(mode);
   const lineRuleConfig = parseLineRuleConfig(ruleDraft.ruleConfig, mode === 'multi_line_crossing' ? 'multi_line_crossing' : 'line_crossing');
   const crowdRuleConfig = parseCrowdRuleConfig(ruleDraft.ruleConfig);
   const lprRuleConfig = parseLPRRuleConfig(ruleDraft.ruleConfig);
+  const faceRuleConfig = parseFaceRuleConfig(ruleDraft.ruleConfig);
   const dwellRuleConfig = parseDwellRuleConfig(ruleDraft.ruleConfig, mode);
   const targetClasses = targetClassesFromRule(ruleDraft);
   const ruleDestinations = ruleDestinationsFromConfig(ruleDraft.ruleConfig);
@@ -80,7 +82,11 @@ export function CameraAiPanel({
   // back — so anything else stored alongside them is destroyed by an unrelated edit.
   // Adding a second key without one place to re-apply both is how a rule silently loses
   // its recall the moment somebody changes its target classes.
-  const withRouting = (config) => applyPTZRecall(withRouting(config), ruleRecall);
+  // NOT `applyPTZRecall(withRouting(config), ...)` — that is what this line said, and a function
+  // whose body calls itself with the same argument recurses until the stack dies. EVERY config
+  // edit below routes through here (mode, target classes, line geometry, crowd count, dwell, LPR),
+  // so changing any of them threw RangeError and the editor did nothing at all.
+  const withRouting = (config) => applyRuleRelay(applyPTZRecall(applyRuleDestinations(config, ruleDestinations), ruleRecall), ruleRelay);
   const classGroups = groupedClassOptions(classes);
   // A zone rule is valid when it has at least one zone and every zone is a real
   // polygon (>=3 points); multi-zone rules must not carry a half-drawn zone.
@@ -288,6 +294,12 @@ export function CameraAiPanel({
       ...ruleDraft,
       ruleConfig: withRouting(dwellRuleConfigText(next, targetClasses, mode)),
     });
+  }
+
+  // changeFaceConfig rewrites the face policy, preserving routing/PTZ/relay like every other path.
+  function changeFaceConfig(patch) {
+    const next = { ...faceRuleConfig, ...patch };
+    onRuleDraft({ ...ruleDraft, ruleConfig: withRouting(faceRuleConfigText(next)) });
   }
 
   function changeLprConfig(patch) {
@@ -546,6 +558,51 @@ export function CameraAiPanel({
                       </div>
                     </section>
                   ) : null}
+                  {faceRule ? (
+                    <section className="schedule-panel">
+                      <header>
+                        <h3>{t('vi.faceTitle')}</h3>
+                        <span className="status-pill">
+                          {faceRuleConfig.matchMode === 'known' ? t('vi.faceAnyKnown')
+                            : faceRuleConfig.matchMode === 'include' ? t('vi.faceWatchN', { n: faceRuleConfig.people.length })
+                            : t('vi.faceStrangers')}
+                        </span>
+                      </header>
+                      <span className="field-hint">{t('vi.faceHint')}</span>
+                      <div className="metadata-row">
+                        <label>
+                          {t('vi.whenAlert')}
+                          <select value={faceRuleConfig.matchMode} onChange={(event) => changeFaceConfig({ matchMode: event.target.value })}>
+                            <option value="known">{t('vi.faceModeKnown')}</option>
+                            <option value="include">{t('vi.faceModeInclude')}</option>
+                            <option value="unknown">{t('vi.faceModeUnknown')}</option>
+                          </select>
+                        </label>
+                        <label>
+                          {t('vi.faceMinConfidence')}
+                          <input
+                            type="number"
+                            min="0.1"
+                            max="1"
+                            step="0.05"
+                            value={faceRuleConfig.minConfidence}
+                            onChange={(event) => changeFaceConfig({ minConfidence: Number(event.target.value) })}
+                          />
+                        </label>
+                      </div>
+                      {faceRuleConfig.matchMode === 'include' ? (
+                        <label>
+                          {t('vi.facePeopleList')}
+                          <textarea
+                            rows="4"
+                            value={faceRuleConfig.people.join('\n')}
+                            onChange={(event) => changeFaceConfig({ people: event.target.value.split('\n') })}
+                          />
+                        </label>
+                      ) : null}
+                      <span className="field-hint">{t('vi.faceEnrolHint')}</span>
+                    </section>
+                  ) : null}
                   {lprRule ? (
                     <section className="schedule-panel">
                       <header>
@@ -616,7 +673,7 @@ export function CameraAiPanel({
                       ) : null}
                     </section>
                   ) : null}
-                  <section className="schedule-panel" style={lprRule ? { display: 'none' } : undefined}>
+                  <section className="schedule-panel" style={lprRule || faceRule ? { display: 'none' } : undefined}>
                     <header>
                       <h3>{t('vi.detectWhat')}</h3>
                       <span className="status-pill">
@@ -876,7 +933,15 @@ export function CameraAiPanel({
                     </label>
                   </div>
                   <div className="action-row">
-                    <button type="submit" disabled={busy || (!lprRule && targetClasses.length < 1) || (!lineRule && !zonesValid) || (lineRule && lineRuleConfig.lines.length < (mode === 'multi_line_crossing' ? 2 : 1)) || (lprRule && lprRuleConfig.matchMode !== 'any' && lprRuleConfig.plates.length < 1)}>
+                    {/* A face rule has NO target classes (it matches people) and needs NO zone (an
+                        empty one means the whole frame, which is what a doorway camera wants). Both
+                        guards below would otherwise be true forever, leaving Save permanently
+                        disabled — the rule could be opened and never saved. The zone is left
+                        optional rather than seeded, because the default zone is an inset box and
+                        quietly shrinking a rule's coverage during an unrelated edit is worse than
+                        having no zone at all. The last clause is the face equivalent of the LPR
+                        one: a watchlist with nobody on it is refused by the server. */}
+                    <button type="submit" disabled={busy || (!lprRule && !faceRule && targetClasses.length < 1) || (!lineRule && !faceRule && !zonesValid) || (lineRule && lineRuleConfig.lines.length < (mode === 'multi_line_crossing' ? 2 : 1)) || (lprRule && lprRuleConfig.matchMode !== 'any' && lprRuleConfig.plates.length < 1) || (faceRule && faceRuleConfig.matchMode === 'include' && faceRuleConfig.people.length < 1)}>
                       <span className="btn-icon"><Ico n="save" /> {t('vi.saveRule')}</span>
                     </button>
                     <button type="button" className="quiet" onClick={closeEditor} disabled={busy}>

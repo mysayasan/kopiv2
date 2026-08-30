@@ -14,15 +14,28 @@ with cosine similarity. The database's only job is durable, portable storage —
 
 ## Responsibilities
 
-- **People CRUD**: `ListPeople`, `CreatePerson(name, notes, actor)`, `UpdatePerson(id, name, notes,
-  enabled, actor)`, `DeletePerson(id)`.
+- **People CRUD**: `ListPeople`, `ListPeopleWithCounts`, `CreatePerson(name, notes, actor)`,
+  `UpdatePerson(id, name, notes, enabled, actor)`, `DeletePerson(id)`.
+- **`PersonSummary`** (`ListPeopleWithCounts`) — a person plus `Photos`, the number of faceprints
+  enrolled for them. The count is not decoration: `rebuildGallery` skips a person with zero
+  embeddings, so such a person is enrolled in name only and is never recognized. The roster has to
+  be able to say that, which means the list endpoint has to carry the number. The count comes from
+  the query's total (`countEmbeddings`), so the encrypted vectors are never loaded just to be
+  counted.
 - **Enrollment**: `Enroll(ctx, personId, imageJPEG, source, actor)` calls the `FaceEmbedder` seam,
   applies `pickEnrollFace` to enforce exactly one clear, large-enough face, encrypts+stores the
-  vector, sets the person's roster `Thumbnail` from the first enrolled face if unset, and rebuilds
-  the gallery file. Never echoes the stored ciphertext back to the caller (`row.Vector = ""` before
+  vector, stores the cropped face as the embedding's own `Thumbnail`, sets the person's roster
+  `Thumbnail` from the first enrolled face if unset, and rebuilds the gallery file. Never echoes the stored ciphertext back to the caller (`row.Vector = ""` before
   return).
 - **Embeddings**: `ListEmbeddings(personId)` (metadata only — `Vector` stripped before return),
   `DeleteEmbedding(id)` (rebuilds the gallery after delete).
+- **Gallery export integrity**: `rebuildGallery` drops an embedding whose decoded vector is empty,
+  or whose length disagrees with the first one kept for that person (what a model change leaves
+  behind). THE FAILURE THIS PREVENTS IS NOT LOCAL: the worker builds one matrix per person with
+  `np.asarray(embeddings)`, which raises on a ragged list, and that call sits inside a try wrapping
+  the WHOLE gallery load — so one malformed row does not degrade one person, it aborts the load and
+  nobody is recognized on any camera, with a single line on the worker's stderr as the only symptom.
+  Regression-tested in `face_gallery_test.go`.
 - **`FaceEmbedder` interface** — the one model-dependent seam: `Embed(ctx, imageJPEG)
   ([]DetectedFace, error)` + `Model() string`. Production runs `pythonFaceEmbedder`
   (`face_embedder.go.md`); tests substitute a fake.

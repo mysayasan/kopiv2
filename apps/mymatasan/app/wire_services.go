@@ -47,6 +47,8 @@ type wiring struct {
 	training       services.ITrainingService
 	teach          services.ITeachService
 	faceGallery    *services.FaceGalleryService
+	// faceModels installs the face-recognition prerequisites (models + opencv) from the UI.
+	faceModels *services.FaceModelsInstaller
 	recording      services.IRecordingService
 	observation    *services.ObservationService
 	// sightingSearch answers the control plane's federated fleet search over this node.
@@ -163,6 +165,7 @@ func (w *wiring) validate() error {
 	check("training", w.training != nil)
 	check("teach", w.teach != nil)
 	check("faceGallery", w.faceGallery != nil)
+	check("faceModels", w.faceModels != nil)
 	check("recording", w.recording != nil)
 	check("observation", w.observation != nil)
 	check("sightingSearch", w.sightingSearch != nil)

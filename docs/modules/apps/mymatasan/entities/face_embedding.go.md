@@ -18,6 +18,12 @@ robust than averaging them into a single prototype.
 - `Model` — the embedder identity string that produced this vector (`"opencv-sface-128"`).
 - `Source` — `"upload"` or `"camera"`, i.e. how the enrollment image was captured.
 - `Quality` — the detector's confidence score for the face this vector was extracted from.
+- `Thumbnail` — small base64 JPEG of the **cropped face** this vector was computed from, for the
+  enrollment UI only (never used for matching). It is what lets the People screen show *which*
+  photos are enrolled, so a bad enrollment can be found and removed; without it a faceprint is an
+  invisible row. The crop is stored, not the original photo — the original is somebody's picture and
+  there is no reason to hold it. Added by the additive auto-migrator, so rows enrolled before it
+  simply carry an empty string and the UI shows a placeholder tile.
 - `CreatedAt`.
 
 ## Portability

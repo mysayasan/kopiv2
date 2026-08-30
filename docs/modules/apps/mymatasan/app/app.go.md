@@ -93,9 +93,14 @@ sequencing, and the helpers that don't belong to any one subsystem.
    publishes the pointers to the process environment for the Python worker, and builds the
    shared object-detection backend used by both the live monitor and the training
    auto-labeler.
-7. Constructs `trainingService`, then the **face-recognition** pair —
+7. Constructs `trainingService`, then the **face-recognition** trio —
    `services.NewPythonFaceEmbedder` (the one-shot enrollment embedder, wired to
-   `detectorPaths.FacesWorkerScript`/`FaceYunetFile`/`FaceSfaceFile`) and
+   `detectorPaths.FacesWorkerScript`/`FaceYunetFile`/`FaceSfaceFile`),
+   `services.NewFaceModelsInstaller` (the in-app fix for "face models are not installed":
+   downloads the same two model files `ai/setup.ps1 -Faces` fetches plus `opencv-python`;
+   resolves its Python interpreter per call via `services.DetectorCommandFromConfig(deps.ConfigPath)`,
+   falling back to `appCfg.Vision.Detector.Command`, so a runtime installed or repointed later
+   is the one probed — see `services/face_models_install.go.md`) and
    `services.NewFaceGalleryService` (`repo.FacePerson`, `repo.FaceEmbedding`, the shared
    `atrestCipher`, that embedder, `detectorPaths.FacesGalleryFile`, and
    `trainingService.ReloadDetector` as the gallery-file-changed callback) — then

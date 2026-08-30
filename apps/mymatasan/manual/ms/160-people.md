@@ -35,9 +35,47 @@ Jika anda tidak pasti anda mempunyai kebenaran, jangan daftarkan. Setiap ciri pe
 produk ini berfungsi pada *apa* dan bukan *siapa*, dan tiada satu pun daripadanya membawa
 tanggungjawab ini.
 
+## Persediaan sekali sahaja {#setup}
+
+Pengecaman wajah menggunakan dua fail model yang tidak disertakan bersama peranti — ia dilesenkan
+secara berasingan dan model pengecaman bersaiz kira-kira 37 MB. Selagi ia tiada pada mesin,
+pendaftaran foto akan ditolak.
+
+Anda tidak memerlukan gesaan arahan untuk ini. Skrin Orang memaparkan panel **Pengecaman wajah
+memerlukan persediaan sekali sahaja** dengan butang **Muat turun dan sediakan** apabila ada sesuatu
+yang tiada; kawalan yang sama ada di **Tetapan › AI**. Ia mengambil hanya apa yang tiada, memasang
+pakej `opencv-python` jika masa jalan AI tidak memilikinya, memastikan model benar-benar dimuatkan,
+dan memaparkan lognya semasa ia berjalan. Tiada apa-apa perlu dimulakan semula selepas itu —
+daftarkan foto terus.
+
+Ia memerlukan akses internet keluar ke `github.com` untuk muat turun. Pada peranti tanpa laluan
+keluar, jalankan `ai/setup.ps1 -Faces` (atau `setup.sh`) pada mesin yang mempunyainya dan salin
+kedua-dua fail `.onnx` ke folder yang dinamakan oleh panel itu.
+
+Jika panel menyatakan **masa jalan AI** tiada, pasang ia dahulu (Tetapan › AI): model wajah
+dimuatkan olehnya, jadi tiada tempat untuk model itu berjalan sehingga ia ada.
+
 ## Mendaftarkan {#enrolling}
 
-Tambahkan seseorang mengikut nama, kemudian tambahkan gambar mereka.
+Tambahkan seseorang mengikut nama, kemudian tambahkan gambar mereka. Menamakan seseorang sahaja
+tidak melakukan apa-apa: orang tanpa gambar tiada dalam galeri yang dibaca pengecam, jadi mereka
+tidak akan dipadankan. Senarai menyatakannya pada kad mereka, dan skrin membawa anda terus ke
+gambar mereka apabila anda menambahkannya.
+
+Terdapat dua cara untuk menambah gambar, bersebelahan dalam panel yang sama:
+
+- **Dari komputer ini** — pilih atau seret masuk fail imej. Beberapa sekaligus juga boleh.
+- **Ambil foto** — gunakan kamera pada komputer yang anda duduki. Pandang terus ke arahnya dan
+  penuhi bingkai dengan wajah.
+
+Apa pun caranya, hanya cap wajah dan keratan kecil wajah disimpan; gambar yang anda berikan tidak
+disimpan. Setiap gambar yang didaftarkan muncul dalam panel bersama kualitinya, dan boleh dibuang
+satu persatu — berbaloi dilakukan jika gambar yang buruk telah menyelinap masuk, kerana satu cap
+wajah yang buruk merosakkan setiap padanan selepas itu.
+
+Pelayar hanya menawarkan kamera pada alamat **HTTPS** atau pada **localhost**. Jika dibuka melalui
+alamat LAN `http://` biasa, pilihan "Ambil foto" akan menyatakannya dan bukan kelihatan rosak; muat
+naik gambar sebagai ganti, atau capai perakam melalui HTTPS.
 
 Apa yang membuatkannya berfungsi:
 
@@ -47,9 +85,47 @@ Apa yang membuatkannya berfungsi:
   kamera.
 - **Tepat satu wajah besar bagi setiap gambar.** Gambar berkumpulan ditolak, dan wajah yang hanya
   beberapa piksel lebarnya tidak membawa butiran yang berguna.
+- **Seluruh kepala dalam bingkai.** Gambar pasport, potret telefon dan fail kamera bersaiz penuh
+  semuanya berfungsi, pada apa jua saiz — tetapi keratan yang terlalu ketat sehingga dagu atau bahagian
+  atas kepala terpotong tidak memberi pengesan apa-apa untuk diproses, dan itulah satu-satunya bingkai
+  yang masih ditolak.
 
 Gambar yang diambil daripada kamera anda sendiri, di tempat pengecaman akan berlaku, mengatasi
 gambar studio yang bagus. Padankan keadaannya, bukan kualitinya.
+
+## Apa yang berlaku apabila seseorang dikecam {#what-happens}
+
+Padanan bukan sekadar satu baris dalam log. Setiap satu ini berlaku, mengikut urutan:
+
+1. **Satu amaran** ditulis, dilabelkan dengan nama orang itu dan keyakinan padanan — *Aminah Yusof
+   (94%)* — atau *Wajah tidak dikenali* bagi seseorang yang tidak didaftarkan. Ia membawa petikan
+   gambar dengan wajah dikotakkan.
+2. **Klip peristiwa** dirakam sekitar detik itu, jika kamera tersebut sedang merakam.
+3. **Pemberitahuan** dihantar ke loceng dan ke destinasi yang anda tetapkan (webhook, Telegram,
+   MQTT), berserta petikan gambar. `{{person}}` boleh digunakan dalam templat pemberitahuan.
+4. Secara pilihan, **kamera bergerak** ke kedudukan tersimpan dan **geganti dipicu** (siren, lampu
+   denyar, pintu pagar) — kedua-duanya ditetapkan pada peraturan itu sendiri, dalam tab **Pengesanan
+   AI** kamera.
+
+Anda melihat hasilnya dalam **Pemberitahuan**, dalam log amaran kamera, dan pada Garis Masa — bukan
+pada halaman Orang, sebab itu senarai juga memaparkan penampakan terkini setiap orang.
+
+## Memilih apa yang perlu dimaklumkan {#alert-modes}
+
+Peraturan wajah setiap kamera menanyakan satu daripada tiga soalan, dipilih di halaman Orang di
+sebelah suis kamera:
+
+- **Sesiapa yang didaftarkan** — beritahu saya apabila seseorang yang kita kenal berada di sini.
+  Sesuai untuk pintu kakitangan.
+- **Hanya orang yang dipilih** — beritahu saya apabila salah seorang daripada *mereka* berada di
+  sini. Senarai perhatian; pilih nama di bawahnya. Peraturan tanpa sesiapa dalam senarai akan
+  ditolak, kerana ia tidak akan memaklumkan sesiapa pun.
+- **Wajah tidak dikenali (orang asing)** — beritahu saya apabila seseorang yang kita *tidak* kenal
+  berada di sini. Sesuai untuk perimeter. Ia tidak menamakan sesiapa; ia melaporkan bahawa wajah
+  yang tidak dikenali telah muncul, dan itulah yang jujur untuk dikatakan.
+
+Kamera yang berbeza biasanya mahukan jawapan yang berbeza. Pilihan yang sama, berserta had keyakinan
+dan tindakan penghalaan/geganti/PTZ, tersedia sepenuhnya dalam tab **Pengesanan AI** kamera.
 
 ## Memilih tempat ia berjalan {#per-camera}
 

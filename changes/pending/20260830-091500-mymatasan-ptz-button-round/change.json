@@ -1,0 +1,5 @@
+{
+  "type": "fixed",
+  "scope": "mymatasan",
+  "summary": "Live view: the saved-positions/home/guard-tours button beside the PTZ ring was an oval, not a circle like the speaker button next to it. It sets a 26x26 box, but the global `button` rule's `min-height: 38px` outranks `block-size`, so it rendered 26x38 - the same trap the audio mute button already carries a comment about. Overridden with `min-block-size: 0`."
+}

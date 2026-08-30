@@ -23,5 +23,11 @@ type FaceEmbedding struct {
 	Model     string  `json:"model" form:"model" query:"model"`
 	Source    string  `json:"source" form:"source" query:"source"` // "upload" | "camera"
 	Quality   float64 `json:"quality" form:"quality" query:"quality"`
+	// Thumbnail is a small base64 JPEG of the cropped face this faceprint was computed from,
+	// for the enrollment UI only (never used for matching). It is what lets the People screen
+	// show WHICH photos are enrolled: without it a faceprint is an invisible row, and an
+	// operator can neither confirm a good enrollment nor spot the bad one poisoning matches.
+	// Nullable/added by the auto-migrator; rows enrolled before this column show a placeholder.
+	Thumbnail string  `json:"thumbnail" form:"thumbnail" query:"thumbnail"`
 	CreatedAt int64   `json:"createdAt" form:"createdAt" query:"createdAt"`
 }

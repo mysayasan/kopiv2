@@ -24,3 +24,11 @@ In-app installer for a **self-contained AI Python runtime** — a standalone Pyt
 - The download can be large (200 MB – 2.5 GB for the CUDA torch build); the HTTP client has a 30-minute timeout.
 - A restart is required after a successful install for the detector to pick up the new `vision.detector.command`.
 - The stock `yolo11n.pt` model is bundled in every distribution channel (archives, `.deb`/`.rpm`, Windows installer — see `.goreleaser.yaml`, `packaging/stage-archive.sh`, `packaging/windows/mymatasan.iss`), so only the heavy Python/torch runtime is fetched by this installer, not the model weights.
+
+## DetectorCommandFromConfig
+
+`detectorCommand` is now a thin wrapper over the exported `DetectorCommandFromConfig(configPath)`,
+which reads `vision.detector.command` straight from the config FILE rather than the boot-time
+struct — so a caller sees an interpreter this installer (or the operator) repointed after startup.
+Shared with `FaceModelsInstaller`, which has the same "which Python will actually run this?"
+question about the face models.

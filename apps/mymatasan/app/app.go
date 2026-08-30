@@ -332,6 +332,18 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		appCfg.Vision.Detector.Command, detectorPaths.FacesWorkerScript,
 		detectorPaths.FaceYunetFile, detectorPaths.FaceSfaceFile,
 		func(f string, a ...any) { deps.Logger.Infof("mymatasan.faces", f, a...) })
+	// The in-app repair for "face models are not installed": the same two model files ai/setup.ps1
+	// -Faces fetches, plus opencv-python, installed from the People screen. The interpreter is
+	// resolved per call from the config FILE so a Python installed later (or repointed by the AI
+	// runtime installer) is the one probed.
+	faceModelsInstaller := services.NewFaceModelsInstaller(
+		detectorPaths.FaceYunetFile, detectorPaths.FaceSfaceFile, detectorPaths.FacesWorkerScript,
+		func() string {
+			if cmd := strings.TrimSpace(services.DetectorCommandFromConfig(deps.ConfigPath)); cmd != "" {
+				return cmd
+			}
+			return appCfg.Vision.Detector.Command
+		})
 	faceGalleryService := services.NewFaceGalleryService(
 		repo.FacePerson, repo.FaceEmbedding, atrestCipher, faceEmbedder,
 		detectorPaths.FacesGalleryFile, trainingService.ReloadDetector,
@@ -711,6 +723,7 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 		training:       trainingService,
 		teach:          teachService,
 		faceGallery:    faceGalleryService,
+		faceModels:     faceModelsInstaller,
 		recording:      recordingService,
 		observation:    observationService,
 		sightingSearch: sightingSearch,
@@ -1229,6 +1242,80 @@ func (m *module) APIDocs() apidocs.SpecConfig {
 			Description: "Runtime-generated OpenAPI docs for shared and app-specific endpoints.",
 		},
 		Endpoints: map[string]apidocs.EndpointDoc{
+			// Face recognition. FACE TEMPLATES ARE BIOMETRIC DATA: every route here is
+			// administrator-only, and the descriptions say what is stored rather than only what the
+			// call does, because that is the question somebody reading this API has to answer for
+			// their own site.
+			"GET /api/faces": {
+				Summary: "List enrolled people",
+				Description: "Each person carries a `photos` count of enrolled faceprints. The count is not decoration: " +
+					"a person with zero faceprints is skipped by the gallery the recognizer reads, so they are enrolled " +
+					"in name only and will never be matched.",
+				Tags: []string{"faces"},
+			},
+			"POST /api/faces": {
+				Summary: "Add a person",
+				Description: "Creates a named person with no faceprints. Nothing is recognized until at least one photo " +
+					"is enrolled against them.",
+				Tags: []string{"faces"},
+			},
+			"PUT /api/faces/{id}": {
+				Summary:     "Update a person",
+				Description: "Renames a person or pauses them. A paused person keeps their faceprints and is left out of the recognizer's gallery.",
+				Tags:        []string{"faces"},
+			},
+			"DELETE /api/faces/{id}": {
+				Summary: "Delete a person and crypto-shred their faceprints",
+				Description: "Deletes the embeddings first, then the person, then rewrites the gallery. The stored vectors are " +
+					"encrypted at rest, so removing the rows destroys them. Not reversible.",
+				Tags: []string{"faces"},
+			},
+			"POST /api/faces/{id}/enroll": {
+				Summary: "Enroll a faceprint from a photo",
+				Description: "Body `{image, source}` where image is a base64 JPEG (a data: URL prefix is stripped) and source is " +
+					"\"upload\" or \"camera\" — the SAME endpoint serves an uploaded file and a snapshot the browser grabbed " +
+					"from a webcam. Refused with a specific reason when the image is not exactly one clear, large-enough face: " +
+					"a bad enrolment silently poisons every future match. The photo itself is not stored; only the faceprint and " +
+					"a small crop of the face.",
+				Tags: []string{"faces"},
+			},
+			"GET /api/faces/{id}/embeddings": {
+				Summary:     "List a person's faceprints",
+				Description: "Metadata and the face crop only. The vector bytes are never returned by the API.",
+				Tags:        []string{"faces"},
+			},
+			"DELETE /api/faces/embeddings/{id}": {
+				Summary:     "Delete one faceprint",
+				Description: "Removes a single enrolled photo's faceprint and rewrites the gallery. Use it when a bad photo has crept in.",
+				Tags:        []string{"faces"},
+			},
+			"GET /api/faces/models": {
+				Summary: "What face recognition still needs on this host",
+				Description: "Reports the two model files (YuNet detector, SFace recognizer), the worker script, and whether the " +
+					"detector's Python has an opencv that exposes the face classes. A host can have both models and still fail, " +
+					"because the models are loaded BY opencv — that is a different repair, and this says which one is needed.",
+				Tags: []string{"faces"},
+			},
+			"POST /api/faces/models/install": {
+				Summary: "Install the face-recognition prerequisites",
+				Description: "Starts a background job: pip-installs opencv-python when the detector's interpreter lacks it, downloads " +
+					"only the MISSING models, and verifies they load. Returns immediately; poll the status route. Needs outbound " +
+					"access to github.com. Refused with a reason when one is already running or the model directory is not writable.",
+				Tags: []string{"faces"},
+			},
+			"GET /api/faces/models/install/status": {
+				Summary:     "Poll the face-model install",
+				Description: "Returns running/done/failed plus the live log, so a 37MB download is not a spinner with no output.",
+				Tags:        []string{"faces"},
+			},
+			"GET /api/faces/sightings": {
+				Summary: "Most recent recognition per person",
+				Description: "Reduces a bounded window of recent face alerts (`?scan=`, default 500, max 2000) to the latest sighting " +
+					"per person, so a roster can say when somebody was last seen and on which camera. Unrecognized faces are " +
+					"reported separately as a count and a timestamp — they belong to nobody, but \"strangers are being seen\" is " +
+					"not something a list of known people should hide.",
+				Tags: []string{"faces"},
+			},
 			"GET /api/deployment/preflight": {
 				Summary: "Deployment answer (single instance by design)",
 				Description: "Read-only. Reports that mymatasan cannot be replicated behind a load balancer, with the reason: " +

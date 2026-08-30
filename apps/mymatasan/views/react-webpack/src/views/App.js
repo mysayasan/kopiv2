@@ -7,7 +7,7 @@ import { AppFooter } from '@shared/AppFooter';
 import { ManualProvider, ManualLibrary } from '@shared/Manual';
 import { enBundle, loadLocaleDict } from './i18n';
 import { THEMES, emptyLogin, defaultStreamConfig, defaultRuntimeSettings, defaultNotificationSettings, defaultHealthSettings, defaultMachineHealthSettings, defaultVisionThreshold, defaultVisionMinFrames } from './lib/constants';
-import {readLiveViewsCookie,saveLiveViewsCookie,bestLiveViewLayout,unwrap,errorMessage,apiBase,parseMetadata,cameraTitle,normalizeScanDevice,orderedSavedCameras,isActionableVisionAlert,latestAlertsByCamera,sameCamera,liveSource,normalizeRuntimeSettings,normalizeMachineHealthSettings,defaultZonePolygon,isLineDetectionType,defaultLineRuleConfig,lineRuleConfigText,defaultVisionRuleDraft,playAlertSound,hasH264VideoTrack,isVisionAlertNotification,apiJson } from './lib/helpers';
+import {readLiveViewsCookie,saveLiveViewsCookie,bestLiveViewLayout,unwrap,errorMessage,apiBase,parseMetadata,cameraTitle,normalizeScanDevice,orderedSavedCameras,isActionableVisionAlert,latestAlertsByCamera,sameCamera,liveSource,normalizeRuntimeSettings,normalizeMachineHealthSettings,defaultZonePolygon,isFaceDetectionType,isLineDetectionType,defaultLineRuleConfig,lineRuleConfigText,defaultVisionRuleDraft,playAlertSound,hasH264VideoTrack,isVisionAlertNotification,apiJson } from './lib/helpers';
 import { LoginPage, ChangePasswordPage, RecoveryGatePage, MagicWordEasterEgg, SideNav, WorkspaceHeader } from './components/layout';
 import { DashboardTab } from './components/dashboard';
 import { SetupWizard } from './components/setup';
@@ -1784,7 +1784,12 @@ function AppInner({ lang, onLangChange }) {
       cameraId: rule.cameraId || '',
       name: rule.name || '',
       detectionType: rule.detectionType || 'presence',
-      zonePolygon: rule.zonePolygon || defaultZonePolygon,
+      // A rule with NO zone means the whole frame. Seeding the default polygon here would be
+      // invisible in the editor and shrink that rule's coverage to the middle 70% of the picture
+      // the next time somebody saved it for an unrelated reason — so a face rule (the People page
+      // creates them without a zone, deliberately: a doorway camera watches all of the doorway)
+      // keeps its empty zone. Every other type is drawn on a zone by design.
+      zonePolygon: rule.zonePolygon || (isFaceDetectionType(rule.detectionType) ? '' : defaultZonePolygon),
       ruleConfig: rule.ruleConfig || (isLineDetectionType(rule.detectionType) ? lineRuleConfigText(defaultLineRuleConfig(rule.detectionType), rule.detectionType) : ''),
       schedulePolicy: rule.schedulePolicy || '',
       threshold: rule.threshold || defaultVisionThreshold,

@@ -59,7 +59,7 @@ type DetectedFace struct {
 var (
 	// ErrNoFace / ErrMultipleFaces make enrollment fail LOUDLY — a bad enrollment silently poisons
 	// every future match, so we refuse an image that is not exactly one clear face.
-	ErrNoFace        = errors.New("no face found in the image — use a clear, front-facing photo")
+	ErrNoFace        = errors.New("no face found in the image — use a clear, front-facing photo with the whole head visible")
 	ErrMultipleFaces = errors.New("more than one face in the image — enroll one person per photo")
 	ErrFaceTooSmall  = errors.New("the face is too small — use a closer, higher-resolution photo")
 )
@@ -94,6 +94,39 @@ func (s *FaceGalleryService) ListPeople(ctx context.Context) ([]*appentities.Fac
 	rows, _, err := s.persons.Get(ctx, "", 1000, 0, nil,
 		[]sqldataenums.Sorter{{FieldName: "Name", Sort: sqldataenums.ASC}})
 	return rows, err
+}
+
+// PersonSummary is a person plus the number of faceprints enrolled for them. The count is not
+// decoration: a person with zero faceprints is NOT in the gallery the worker matches against
+// (rebuildGallery skips them), so they are enrolled in name only and will never be recognized.
+// The roster has to be able to say that, which means the list endpoint has to carry the number.
+type PersonSummary struct {
+	*appentities.FacePerson
+	Photos int `json:"photos"`
+}
+
+// ListPeopleWithCounts is ListPeople plus each person's faceprint count. The count comes from the
+// query's total, so the encrypted vectors are never loaded just to be counted.
+func (s *FaceGalleryService) ListPeopleWithCounts(ctx context.Context) ([]PersonSummary, error) {
+	people, err := s.ListPeople(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]PersonSummary, 0, len(people))
+	for _, p := range people {
+		n, err := s.countEmbeddings(ctx, p.Id)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, PersonSummary{FacePerson: p, Photos: n})
+	}
+	return out, nil
+}
+
+func (s *FaceGalleryService) countEmbeddings(ctx context.Context, personId int64) (int, error) {
+	_, total, err := s.embeddings.Get(ctx, "", 1, 0,
+		[]sqldataenums.Filter{{FieldName: "PersonId", Compare: sqldataenums.Equal, Value: personId}}, nil)
+	return int(total), err
 }
 
 func (s *FaceGalleryService) CreatePerson(ctx context.Context, name, notes string, actor int64) (*appentities.FacePerson, error) {
@@ -166,6 +199,12 @@ func (s *FaceGalleryService) Enroll(ctx context.Context, personId int64, imageJP
 	row := appentities.FaceEmbedding{
 		PersonId: personId, Vector: enc, Dim: len(f.Vector), Model: s.embedder.Model(),
 		Source: defaultStr(source, "upload"), Quality: f.Quality, CreatedAt: now,
+	}
+	// Keep the cropped face beside the faceprint so the enrollment screen can show what was
+	// actually enrolled. The crop, not the original photo: the original is somebody's picture
+	// and we have no reason to store it, while the crop is the thing the model looked at.
+	if len(f.ThumbJPEG) > 0 {
+		row.Thumbnail = base64.StdEncoding.EncodeToString(f.ThumbJPEG)
 	}
 	id, err := s.embeddings.Create(ctx, "", row)
 	if err != nil {
@@ -262,6 +301,20 @@ func (s *FaceGalleryService) rebuildGallery(ctx context.Context) error {
 			v, err := s.decodeVector(r.Vector)
 			if err != nil {
 				s.logf("face gallery: skip unreadable embedding %d: %v", r.Id, err)
+				continue
+			}
+			// A ZERO-LENGTH OR ODD-LENGTH VECTOR MUST NEVER REACH THE WORKER. It loads each
+			// person's embeddings with np.asarray(embs), which raises on a ragged list — so ONE
+			// malformed row does not degrade that one person, it fails the whole gallery load and
+			// nobody is recognized on any camera, with a line on the worker's stderr as the only
+			// symptom. Skipping here keeps a bad row local to itself.
+			if len(v) == 0 {
+				s.logf("face gallery: skip empty embedding %d for person %d", r.Id, p.Id)
+				continue
+			}
+			if len(vecs) > 0 && len(v) != len(vecs[0]) {
+				s.logf("face gallery: skip embedding %d for person %d: %d dimensions, expected %d (a model change leaves incompatible faceprints behind)",
+					r.Id, p.Id, len(v), len(vecs[0]))
 				continue
 			}
 			vecs = append(vecs, v)

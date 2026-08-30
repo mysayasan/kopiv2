@@ -4,7 +4,8 @@ Invoked by the Go side once per enrollment photo/frame:
 
     python faces_worker.py --embed <image.jpg> --yunet <yunet.onnx> --sface <sface.onnx>
 
-It detects the faces in the image, embeds each, and prints a single JSON line:
+It detects the faces in the image (with the enrolment ladder — a photo is not a camera frame),
+embeds each, and prints a single JSON line:
 
     {"faces": [{"vector": [128 floats], "box": [x,y,w,h], "quality": 0.98, "thumb": "<b64 jpeg>"}]}
 
@@ -41,7 +42,9 @@ def main():
         print(json.dumps({"error": f"face model load failed: {e}"}))
         return
 
-    faces = model.detect_embed(img)
+    # thorough=True: an uploaded photo is a portrait or a passport crop, not a camera frame, and
+    # YuNet does not find a face in either at their native size. See FaceModel's enrolment ladder.
+    faces = model.detect_embed(img, thorough=True)
     out = []
     for f in faces:
         thumb = ""

@@ -3,6 +3,9 @@ import { useT } from '@shared/i18n';
 import { HelpButton } from '@shared/Manual';
 import { StatCard, DonutChart, BarChart, TimeSeriesChart, Heatmap, ChartCard } from '@shared/charts';
 import { Ico } from './icons';
+// Toggle lives in ./ui so the People roster uses the SAME switch rather than a second
+// copy that drifts from this one.
+import { Toggle } from './ui';
 import {
   apiBase,
   cameraTitle,
@@ -33,20 +36,6 @@ function resolveWindow(rangeId) {
   const days = rangeId === '30d' ? 30 : 7;
   // Include today + the previous (days-1) whole days = `days` daily buckets.
   return { from: startOfToday - (days - 1) * 86400, to: now, bucket: 'day' };
-}
-
-// Toggle is a small sliding on/off switch (an accessible styled checkbox) used in
-// the Anomaly detection card in place of plain checkboxes.
-function Toggle({ checked, disabled, onChange, label }) {
-  return (
-    <label className="switch-row">
-      <span className="switch">
-        <input type="checkbox" checked={checked} disabled={disabled} onChange={onChange} />
-        <span className="switch-slider" />
-      </span>
-      {label ? <span className="switch-label">{label}</span> : null}
-    </label>
-  );
 }
 
 // InfoTip is a small muted info icon with a hover/focus tooltip explaining a control.

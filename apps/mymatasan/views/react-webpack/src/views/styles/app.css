@@ -7810,6 +7810,11 @@ input.input-error:focus,
   justify-content: center;
   inline-size: 26px;
   block-size: 26px;
+  /* Override the base button min-height (38px), which otherwise wins over
+     block-size and stretches this into a 26x38 oval instead of a circle —
+     the same trap .audio-mute-btn already carries a note about. */
+  min-block-size: 0;
+  box-sizing: border-box;
   padding: 0;
   border: 1px solid rgba(255, 255, 255, 0.35);
   border-radius: 50%;
@@ -7821,6 +7826,767 @@ input.input-error:focus,
 .ptz-presets-button:hover {
   background: rgba(15, 23, 33, 0.92);
   border-color: rgba(255, 255, 255, 0.6);
+}
+
+/* --- People (face enrollment) -----------------------------------------------------------------
+   This page had NO stylesheet at all: it was written against a `.page` / `.page-head` vocabulary
+   that never existed in app.css, so every element fell back to browser defaults — bulleted lists,
+   OS checkboxes, a bare file input. It now uses the app's own furniture (.workspace, .settings-panel,
+   .toolbar, .switch) plus the roster/enrolment pieces below. */
+
+.faces-page .toolbar {
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.faces-add {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex: 0 1 auto;
+}
+
+.faces-add input {
+  min-width: 220px;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+/* One line saying whether recognition is actually happening. Face recognition needs an enrolled
+   person AND a switched-on camera, and somebody who has done one of the two has every reason to
+   assume it is running — so the page says which of the two conditions are met, both times. */
+.faces-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--border-divider);
+  border-left-width: 3px;
+  border-radius: 6px;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+.faces-state.is-live {
+  border-color: var(--ok-text);
+  background: var(--ok-bg);
+  color: var(--ok-text);
+}
+
+.faces-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.faces-card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-panel);
+  border-radius: 10px;
+  background: var(--bg-subtle);
+  overflow: hidden;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.faces-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 6px 18px var(--shadow-panel);
+}
+
+/* A person switched off keeps their photos and their place; they are simply not being looked for.
+   Dimmed, not hidden — an operator who paused somebody must be able to find them again. */
+.faces-card.is-off {
+  opacity: 0.68;
+}
+
+.faces-card-main {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  min-height: 0;
+  padding: 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: start;
+  cursor: pointer;
+}
+
+.faces-card-main:hover {
+  background: var(--accent-bg);
+}
+
+.faces-card-text {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.faces-card-name {
+  font-weight: 700;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.faces-card-go {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+.faces-avatar {
+  flex: 0 0 auto;
+  inline-size: 46px;
+  block-size: 46px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-surface);
+}
+
+.faces-avatar--sm {
+  inline-size: 34px;
+  block-size: 34px;
+}
+
+.faces-avatar.is-placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-badge);
+  color: var(--text-secondary);
+  font-weight: 800;
+  font-size: 17px;
+}
+
+.faces-avatar--sm.is-placeholder {
+  font-size: 13px;
+}
+
+/* The photo count is the whole truth of the card: at zero this person is not in the gallery the
+   matcher reads, so they are not recognized by anything. It is coloured accordingly. */
+.faces-pill {
+  justify-self: start;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border-divider);
+  background: var(--status-neutral-bg);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.faces-pill.is-warn {
+  border-color: var(--warn-border);
+  background: var(--warn-bg);
+  color: var(--warn-text);
+}
+
+.faces-pill.is-thin {
+  border-color: var(--border-soft);
+}
+
+.faces-pill.is-ok {
+  border-color: var(--ok-text);
+  background: var(--ok-bg);
+  color: var(--ok-text);
+}
+
+.faces-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+}
+
+.faces-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 28px;
+  block-size: 28px;
+  /* The base button rule sets min-height: 38px, which would stretch a 28px square into an
+     oval — the same trap .audio-mute-btn documents. */
+  min-block-size: 0;
+  padding: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.faces-icon-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.faces-icon-btn.danger-text:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.faces-empty {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 30px 16px;
+  border: 1px dashed var(--border-soft);
+  border-radius: 10px;
+  background: var(--bg-subtle);
+  text-align: center;
+}
+
+.faces-empty-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 52px;
+  block-size: 52px;
+  border-radius: 50%;
+  background: var(--accent-badge);
+  color: var(--accent);
+}
+
+.faces-empty-title {
+  margin: 0;
+  font-weight: 700;
+}
+
+.faces-camera-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+/* The row is a GRID, not a flex row: it holds the camera line AND (when the mode is a watchlist)
+   the list of people under it. Left as `display: flex; align-items: center`, the two were laid out
+   as side-by-side flex items and the camera's on/off switch came to sit ON TOP of the first name's
+   checkbox — so ticking the first person in a watchlist switched the camera off instead. */
+.faces-camera-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+}
+
+.faces-camera-list li.is-on {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.faces-camera-mark {
+  display: inline-flex;
+  color: var(--text-faint);
+}
+
+.faces-camera-list li.is-on .faces-camera-mark {
+  color: var(--accent);
+}
+
+.faces-camera-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+/* --- Face-recognition setup panel (People + Settings > AI) ------------------------------------
+   Shown only while the host is missing something enrolment needs. It is deliberately the loudest
+   thing on the page in that state: nothing else on this screen can work until it is dealt with. */
+
+.faces-setup {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--warn-border);
+  border-radius: 10px;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+}
+
+.faces-setup.is-ready {
+  border-color: var(--ok-text);
+  background: var(--ok-bg);
+  color: var(--ok-text);
+}
+
+.faces-setup.is-failed {
+  border-color: var(--danger);
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
+.faces-setup-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  inline-size: 34px;
+  block-size: 34px;
+  border-radius: 50%;
+  background: var(--bg-surface);
+  color: inherit;
+}
+
+.faces-setup-body {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.faces-setup-title {
+  margin: 0;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+/* The hints inside the panel inherit its tone rather than the page's muted grey, which would be
+   unreadable on the amber. */
+.faces-setup .settings-hint {
+  color: inherit;
+  opacity: 0.85;
+}
+
+.faces-setup-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 5px;
+  font-size: 12.5px;
+}
+
+.faces-setup-list li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.faces-setup-size {
+  margin-inline-start: auto;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+
+.faces-setup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+/* Install logs (this panel, the ffmpeg installer and the AI-runtime installer). `.install-output`
+   had no rule at all, so a pip log rendered as an unstyled <pre> that grew without bound and
+   pushed the buttons off screen. */
+.install-output {
+  margin: 0;
+  max-block-size: 220px;
+  overflow: auto;
+  padding: 9px 11px;
+  border: 1px solid var(--border-divider);
+  border-radius: 6px;
+  background: var(--bg-video);
+  color: #cfe3d6;
+  font-family: Consolas, "SF Mono", Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Camera row: name, what it alerts on, and the switch. The mode select is the row's second
+   decision and sits beside the switch rather than under it, because "on" and "on for whom" are
+   read together. */
+.faces-camera-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+/* The base rule is `input, select, textarea { width: 100% }`, so a select dropped into a flex row
+   eats the whole row and squeezes the camera name to nothing. Sized to its content instead, with a
+   cap so a long option ("Unknown faces (strangers)") cannot push the switch off the panel. */
+.faces-camera-mode {
+  flex: 0 1 auto;
+  width: auto;
+  max-inline-size: 220px;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+
+.faces-watchlist {
+  display: grid;
+  gap: 6px;
+  margin-block-start: 8px;
+  padding: 9px 11px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-surface);
+}
+
+.faces-watchlist-names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.faces-watchlist-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+}
+
+/* Same story as the select: without this the checkbox inherits width:100% + min-height:38px +
+   padding from the base input rule and renders as a large empty box beside its own label. */
+.faces-watchlist-name input {
+  width: 16px;
+  min-width: 16px;
+  min-height: 16px;
+  margin: 0;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+/* A watchlist rule with nobody on it matches nobody. Said in the panel, because the rule is
+   switched ON and looks like it is working. */
+.faces-watchlist-warn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--warn-text);
+}
+
+.faces-actions-note,
+.faces-unknown-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-block-start: 4px;
+}
+
+/* Last seen, on the person's own card. */
+.faces-seen {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.faces-card [data-seen]:not([data-seen="0"]) {
+  color: var(--ok-text);
+}
+
+/* --- Consent gate --- */
+
+.faces-consent {
+  max-width: 640px;
+}
+
+.faces-consent-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.faces-consent-head h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.faces-consent-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 42px;
+  block-size: 42px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--warn-bg);
+  color: var(--warn-border);
+}
+
+.faces-consent p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+/* --- Enrolment dialog --- */
+
+.modal-card.faces-enroll {
+  max-width: min(560px, 100%);
+  max-height: 88vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: start;
+}
+
+/* Once the dialog is tall enough to scroll, its rows must keep their own height. The mode
+   switcher is an `overflow: hidden` box, so its automatic minimum size is zero and a shrinking
+   layout squashes it to a sliver — which is exactly what happened the first time an error
+   message pushed the content past the max-height. */
+.modal-card.faces-enroll > * {
+  flex: 0 0 auto;
+}
+
+.faces-enroll-head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.faces-enroll-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+/* .modal-card h2 is red (it was written for the destructive-action dialogs); this one is a
+   heading, not a warning. */
+.modal-card.faces-enroll h2 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-primary);
+}
+
+.faces-enroll-modes {
+  align-self: flex-start;
+}
+
+.faces-enroll-modes button {
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+}
+
+.faces-enroll-modes button.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.faces-drop {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  padding: 22px 16px;
+  border: 1px dashed var(--border-soft);
+  border-radius: 10px;
+  background: var(--bg-subtle);
+  text-align: center;
+}
+
+.faces-drop.is-dragging {
+  border-color: var(--accent);
+  border-style: solid;
+  background: var(--accent-bg);
+}
+
+.faces-drop-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 46px;
+  block-size: 46px;
+  border-radius: 50%;
+  background: var(--accent-badge);
+  color: var(--accent);
+}
+
+.faces-drop-title {
+  margin: 0;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+/* The native input opens the picker; nobody needs to look at it. */
+.faces-file-input {
+  display: none;
+}
+
+.faces-webcam {
+  display: grid;
+  gap: 10px;
+}
+
+.faces-webcam-stage {
+  position: relative;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-video);
+  aspect-ratio: 4 / 3;
+  display: grid;
+  place-items: center;
+}
+
+.faces-webcam-stage video {
+  inline-size: 100%;
+  block-size: 100%;
+  object-fit: cover;
+  /* A webcam preview that is not mirrored feels broken to the person sitting in front of it:
+     they move left and the picture goes right. The captured frame is taken from the video
+     element itself, so the stored photo is unmirrored regardless. */
+  transform: scaleX(-1);
+  display: none;
+}
+
+.faces-webcam-stage.is-live video {
+  display: block;
+}
+
+.faces-webcam-idle {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  color: var(--text-faint);
+}
+
+.faces-webcam-idle .settings-hint {
+  color: var(--text-faint);
+}
+
+.faces-webcam-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.faces-shots {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 12px;
+}
+
+.faces-shots h3 {
+  margin: 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.faces-shots ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 8px;
+}
+
+.faces-shots li {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+}
+
+.faces-shots img,
+.faces-shot-none {
+  inline-size: 56px;
+  block-size: 56px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--status-neutral-bg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+}
+
+.faces-shot-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.faces-shot-del {
+  position: absolute;
+  inset-block-start: 2px;
+  inset-inline-end: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 22px;
+  block-size: 22px;
+  min-block-size: 0;
+  padding: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 50%;
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.faces-shots li:hover .faces-shot-del,
+.faces-shot-del:focus-visible {
+  opacity: 1;
+}
+
+.faces-shot-del:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+@media (max-width: 720px) {
+  .faces-page .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .faces-add input {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
 }
 
 .modal-card.ptz-panel {

@@ -162,10 +162,18 @@ func (p *PythonInstaller) probeInterpreter(ctx context.Context, exe string) Pyth
 // detectorCommand reads vision.detector.command from the app config (the interpreter the
 // detector runs with), or "" when unset/unreadable.
 func (p *PythonInstaller) detectorCommand() string {
-	if strings.TrimSpace(p.configPath) == "" {
+	return DetectorCommandFromConfig(p.configPath)
+}
+
+// DetectorCommandFromConfig reads vision.detector.command straight from the config FILE rather than
+// the boot-time struct, so a caller sees an interpreter this installer (or the operator) repointed
+// after startup. Returns "" when there is nothing to read. Shared with the face-model installer,
+// which has the same "which Python will actually run this?" question.
+func DetectorCommandFromConfig(configPath string) string {
+	if strings.TrimSpace(configPath) == "" {
 		return ""
 	}
-	data, err := os.ReadFile(p.configPath)
+	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return ""
 	}
