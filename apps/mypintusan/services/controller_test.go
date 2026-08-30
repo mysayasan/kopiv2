@@ -140,6 +140,41 @@ func (m *memStore) MarkReader(_ context.Context, readerId int64, tamperState str
 	return nil
 }
 
+// readerRow returns a COPY of a reader row, taken under the store's lock.
+//
+// THE ROWS ARE POINTERS THE CONTROLLER ALSO HOLDS. It stamps LastSeenAt and TamperState on them
+// from its own goroutine every time the bus polls, so reading a field straight off the pointer from
+// the test goroutine is a data race even though the map lookup itself is guarded — the mutex here
+// protects the map, not the structs it points at. The nightly race detector caught exactly that, on
+// a line that reads like a plain assertion:
+//
+//	if got := r.store.readers[rkey(testPort, 1)]; got.LastSeenAt == 0 {
+//
+// Copying under the lock is what makes an assertion about a live row safe to write.
+func (m *memStore) readerRow(t *testing.T, port string, addr int) entities.Reader {
+	t.Helper()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row := m.readers[rkey(port, addr)]
+	if row == nil {
+		t.Fatalf("no reader row for %s", rkey(port, addr))
+	}
+	return *row
+}
+
+// editDoor mutates a door row under the lock. Tests that change a door's policy AFTER the rig is
+// running are writing to a row the controller is concurrently reading through Door().
+func (m *memStore) editDoor(t *testing.T, id int64, fn func(*entities.Door)) {
+	t.Helper()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row := m.doors[id]
+	if row == nil {
+		t.Fatalf("no door row for %d", id)
+	}
+	fn(row)
+}
+
 // awaitEvent waits for the next recorded access event.
 func (m *memStore) awaitEvent(t *testing.T, within time.Duration) entities.AccessEvent {
 	t.Helper()
@@ -449,7 +484,7 @@ func TestReaderTamperMarksTheReaderRow(t *testing.T) {
 	r := newRig(t, ControllerConfig{})
 	r.waitOnline()
 
-	if got := r.store.readers[rkey(testPort, 1)]; got.LastSeenAt == 0 {
+	if got := r.store.readerRow(t, testPort, 1); got.LastSeenAt == 0 {
 		t.Error("a reader that came online was never stamped as seen")
 	}
 	r.pdMu.Lock()
@@ -459,9 +494,7 @@ func TestReaderTamperMarksTheReaderRow(t *testing.T) {
 	r.alarm.awaitAlarm(t, AlarmTamper, 3*time.Second)
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		r.store.mu.Lock()
-		state := r.store.readers[rkey(testPort, 1)].TamperState
-		r.store.mu.Unlock()
+		state := r.store.readerRow(t, testPort, 1).TamperState
 		if state == entities.TamperTripped {
 			return
 		}
@@ -559,7 +592,9 @@ func TestEndToEndLockdownDeniesEveryone(t *testing.T) {
 // that requires one must not open.
 func TestEndToEndSecureChannelRequiredFailsClosed(t *testing.T) {
 	r := newRig(t, ControllerConfig{})
-	r.store.doors[1].RequireSecureChannel = true
+	// newRig has already started the controller, which reads this row through Door(), so the write
+	// goes under the store's lock. Same shape as the reader race above; only the timing spared it.
+	r.store.editDoor(t, 1, func(d *entities.Door) { d.RequireSecureChannel = true })
 	r.waitOnline()
 
 	r.badge(7, 1234)
