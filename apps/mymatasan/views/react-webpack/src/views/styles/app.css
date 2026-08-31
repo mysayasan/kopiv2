@@ -4270,6 +4270,10 @@ dd {
   white-space: nowrap;
 }
 
+/* A person's name is data: it is drawn exactly as it was enrolled. Capitalising it,
+   which is right for the raw class name "face", turns "van der Berg" into "Van Der Berg". */
+.alert-modal-bb-label.is-identity { text-transform: none; }
+
 .alert-modal-snap-msg {
   color: #6688aa;
   font-size: 13px;
@@ -7467,35 +7471,270 @@ input.input-error:focus,
 
 /* --- Case files (W3-3) ---------------------------------------------------------------
    Logical properties throughout (inline-start/end, not left/right) so the screen mirrors
-   correctly in Arabic without a second stylesheet. */
-.cases-panel .cases-layout {
+   correctly in Arabic without a second stylesheet.
+
+   The screen teaches as well as works: a guide across the top, a progress rail on the open
+   case, and empty states that name where evidence comes from. Everything here is written
+   against the --* theme tokens, never a literal colour, so all three themes follow. */
+
+.cases-page { gap: 14px; }
+
+.cases-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.cases-head-titles {
+  flex: 1 1 460px;
+  min-inline-size: 0;
+}
+
+.cases-head-titles h3 { margin: 0 0 2px; }
+
+.cases-head-titles p {
+  margin: 0;
+  max-inline-size: 68ch;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.cases-head-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* --- The guide ------------------------------------------------------------------------
+   Four cards, one per step of a case, each a doorway into the manual section that explains
+   it. Dismissible and remembered — a guide, not a nag. */
+.case-guide {
+  border: 1px solid var(--border-panel);
+  border-radius: 12px;
+  background: linear-gradient(180deg, var(--accent-bg) 0%, var(--bg-surface) 62%);
+  padding: 14px 16px 16px;
+}
+
+.case-guide-head {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-block-end: 12px;
+}
+
+.case-guide-mark {
+  inline-size: 30px;
+  block-size: 30px;
+  border-radius: 8px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-soft);
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.case-guide-titles { flex: 1 1 auto; min-inline-size: 0; }
+.case-guide-titles strong { display: block; font-size: 14px; }
+
+.case-guide-titles p {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  max-inline-size: 76ch;
+}
+
+.case-guide-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: grid;
-  grid-template-columns: minmax(220px, 300px) 1fr;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 1100px) {
+  .case-guide-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 620px) {
+  .case-guide-steps { grid-template-columns: 1fr; }
+}
+
+.case-guide-steps li {
+  position: relative;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 12px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.case-guide-num {
+  position: absolute;
+  inset-block-start: -9px;
+  inset-inline-start: 12px;
+  inline-size: 20px;
+  block-size: 20px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.case-guide-ico { color: var(--accent); margin-block-start: 2px; }
+
+.case-guide-steps strong { font-size: 13px; }
+
+.case-guide-steps p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  flex: 1 1 auto;
+}
+
+.case-guide-more {
+  align-self: flex-start;
+  background: none;
+  border: 0;
+  padding: 2px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-link);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.case-guide-more:hover { text-decoration: underline; }
+
+/* --- Layout ---------------------------------------------------------------------------- */
+.cases-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) 1fr;
   gap: 18px;
   align-items: start;
 }
 
-@media (max-width: 900px) {
-  .cases-panel .cases-layout { grid-template-columns: 1fr; }
+@media (max-width: 980px) {
+  .cases-layout { grid-template-columns: 1fr; }
+}
+
+/* --- The list -------------------------------------------------------------------------- */
+.cases-list {
+  border: 1px solid var(--border-panel);
+  border-radius: 12px;
+  background: var(--bg-surface);
+  padding: 12px;
 }
 
 .cases-list-head {
   display: flex;
   gap: 8px;
   align-items: center;
-  margin-bottom: 10px;
+  margin-block-end: 10px;
 }
 
-.cases-list-head select { flex: 1 1 auto; }
+.cases-search {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  padding-inline: 8px;
+  color: var(--text-faint);
+}
+
+.cases-search:focus-within { border-color: var(--accent); }
+
+.cases-search input {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  border: 0;
+  background: none;
+  padding: 7px 0;
+  color: var(--text-primary);
+}
+
+.cases-search input:focus { outline: none; }
+.cases-search button { padding: 2px; }
+
+/* Three choices switched between constantly cost one click, not two, and the one in force
+   is readable without opening anything. */
+.cases-filter {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--bg-subtle2);
+  border: 1px solid var(--border-subtle);
+  margin-block-end: 12px;
+}
+
+.cases-filter-btn {
+  flex: 1 1 0;
+  border: 0;
+  background: none;
+  border-radius: 999px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.cases-filter-btn:hover { color: var(--text-primary); }
+
+.cases-filter-btn.active {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  box-shadow: 0 1px 3px var(--shadow-panel);
+}
+
+.cases-filter-count {
+  font-size: 10.5px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 0 5px;
+  background: var(--accent-badge);
+  color: var(--text-secondary);
+}
 
 .cases-new {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin-bottom: 10px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--accent-bg);
+  padding: 10px;
+  margin-block-end: 12px;
 }
 
-.cases-new input { flex: 1 1 140px; }
+.cases-new .case-field { margin-block-end: 6px; }
+
+.cases-new-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
 
 .cases-list ul,
 .case-items {
@@ -7509,26 +7748,111 @@ input.input-error:focus,
   inline-size: 100%;
   text-align: start;
   background: var(--bg-subtle);
-  border: 1px solid var(--border-soft);
-  border-radius: 8px;
-  padding: 8px 10px;
-  margin-bottom: 6px;
+  border: 1px solid var(--border-subtle);
+  border-inline-start: 3px solid transparent;
+  border-radius: 10px;
+  padding: 9px 10px;
+  margin-block-end: 6px;
   cursor: pointer;
   color: var(--text-primary);
 }
 
-.cases-list-item:hover { background: var(--bg-subtle2); }
-.cases-list-item.active { border-color: var(--accent); }
+.cases-list-item:hover {
+  background: var(--bg-subtle2);
+  border-color: var(--border-soft);
+}
 
-.cases-list-title { display: block; font-weight: 600; }
+/* The global "button.active" makes a pressed button a solid accent slab with white text.
+   A selected list row is not that button, and inheriting its colour left the selected
+   case's own title all but invisible on the tinted row. Stated here, in both properties,
+   rather than left to specificity. */
+.cases-list-item.active {
+  background: var(--accent-bg);
+  border-color: var(--border-soft);
+  border-inline-start-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.cases-list-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cases-list-title {
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
 
 .cases-list-meta {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   align-items: center;
   flex-wrap: wrap;
   font-size: 11px;
   color: var(--text-muted);
+  margin-block-start: 4px;
+}
+
+.cases-list-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.cases-list-when { margin-inline-start: auto; }
+
+.cases-list-who {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-block-start: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.cases-list-who--none { color: var(--text-faint); }
+
+.case-avatar {
+  inline-size: 20px;
+  block-size: 20px;
+  border-radius: 999px;
+  background: var(--accent-badge);
+  color: var(--text-secondary);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.case-avatar--none {
+  background: var(--status-neutral-bg);
+  color: var(--text-faint);
+}
+
+.cases-list-empty {
+  text-align: center;
+  padding: 22px 10px;
+  color: var(--text-faint);
+}
+
+.cases-list-empty p {
+  margin: 8px 0 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.cases-search-none,
+.cases-list-truncated {
+  font-size: 12px;
+  margin: 8px 2px 0;
 }
 
 .case-status {
@@ -7536,10 +7860,21 @@ input.input-error:focus,
   padding: 1px 8px;
   font-size: 11px;
   font-weight: 600;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
-.case-status--open { background: var(--status-ok-bg, var(--bg-subtle2)); color: var(--text-secondary); }
+.case-status--open { background: var(--ok-bg); color: var(--ok-text); }
 .case-status--closed { background: var(--status-neutral-bg); color: var(--text-muted); }
+
+/* --- The open case --------------------------------------------------------------------- */
+.cases-detail {
+  border: 1px solid var(--border-panel);
+  border-radius: 12px;
+  background: var(--bg-surface);
+  padding: 16px 18px 18px;
+  min-inline-size: 0;
+}
 
 .cases-detail-head {
   display: flex;
@@ -7548,7 +7883,162 @@ input.input-error:focus,
   gap: 12px;
 }
 
-.cases-detail-head h4 { margin: 0 0 2px; }
+.cases-detail-titles { min-inline-size: 0; }
+.cases-detail-head h4 { margin: 0 0 2px; font-size: 17px; overflow-wrap: anywhere; }
+.cases-detail-head p { margin: 0; font-size: 12px; }
+
+/* The welcome pane. An empty half-screen saying "pick a case" teaches nothing. */
+.cases-welcome {
+  text-align: center;
+  padding: 26px 12px 22px;
+}
+
+.cases-welcome-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 62px;
+  block-size: 62px;
+  border-radius: 999px;
+  background: var(--accent-bg);
+  color: var(--accent);
+  margin-block-end: 12px;
+}
+
+.cases-welcome h4 { margin: 0 0 6px; font-size: 17px; }
+
+.cases-welcome > p {
+  margin: 0 auto 18px;
+  max-inline-size: 62ch;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.cases-welcome-steps {
+  list-style: none;
+  margin: 0 0 18px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  text-align: start;
+}
+
+@media (max-width: 700px) {
+  .cases-welcome-steps { grid-template-columns: 1fr; }
+}
+
+.cases-welcome-steps li {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 2px 8px;
+  align-items: start;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.cases-welcome-steps li > span:first-child {
+  grid-row: span 2;
+  color: var(--accent);
+  display: inline-flex;
+  padding-block-start: 2px;
+}
+
+.cases-welcome-steps strong { font-size: 12.5px; }
+
+.cases-welcome-body {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* --- Progress rail --------------------------------------------------------------------- */
+.case-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin: 14px 0 4px;
+}
+
+@media (max-width: 760px) {
+  .case-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.case-step {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: start;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 8px 10px;
+  cursor: pointer;
+  color: var(--text-muted);
+  min-inline-size: 0;
+}
+
+.case-step:hover { border-color: var(--border-soft); background: var(--bg-subtle2); }
+
+.case-step-dot {
+  inline-size: 24px;
+  block-size: 24px;
+  border-radius: 999px;
+  background: var(--status-neutral-bg);
+  color: var(--text-faint);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.case-step.is-done .case-step-dot { background: var(--ok-bg); color: var(--ok-text); }
+
+.case-step.is-current {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.case-step.is-current .case-step-dot { background: var(--accent); color: #fff; }
+
+.case-step-text {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+}
+
+.case-step-text strong {
+  font-size: 12.5px;
+  color: var(--text-primary);
+}
+
+.case-step-text em {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- The numbers ----------------------------------------------------------------------- */
+.case-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+
+@media (max-width: 760px) {
+  .case-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.case-stats .stat-card { background: var(--bg-subtle); }
+.case-stats .stat-value { font-size: 24px; }
 
 /* The hold is the claim the whole screen rests on, so it is stated at the top of the case
    rather than as a footnote under the evidence. */
@@ -7556,60 +8046,134 @@ input.input-error:focus,
   display: flex;
   gap: 10px;
   align-items: flex-start;
-  background: var(--bg-subtle);
-  border: 1px solid var(--border-soft);
-  border-inline-start: 3px solid var(--accent);
-  border-radius: 8px;
+  background: var(--ok-bg);
+  border: 1px solid var(--border-subtle);
+  border-inline-start: 3px solid var(--ok-text);
+  border-radius: 10px;
   padding: 10px 12px;
-  margin: 12px 0;
+  margin: 12px 0 16px;
+  color: var(--ok-text);
 }
 
-.case-hold-panel p { margin: 4px 0 0; font-size: 12px; }
-.case-hold-beyond { color: var(--warn-text, var(--text-secondary)); }
-.case-hold-missing { color: var(--danger-text, var(--text-secondary)); }
+.case-hold-panel > div { color: var(--text-secondary); }
+.case-hold-panel strong { color: var(--text-primary); font-size: 13px; }
+.case-hold-panel p { margin: 4px 0 0; font-size: 12px; line-height: 1.5; }
+
+.case-hold-panel.is-empty {
+  background: var(--bg-subtle);
+  border-inline-start-color: var(--border-soft);
+  color: var(--text-faint);
+}
+
+.case-hold-panel.is-released {
+  background: var(--bg-subtle);
+  border-inline-start-color: var(--border-soft);
+  color: var(--text-faint);
+}
+
+.case-hold-beyond { color: var(--warn-text); font-weight: 600; }
+.case-hold-missing { color: var(--danger-text); font-weight: 600; }
+
+/* --- Sections -------------------------------------------------------------------------- */
+.case-section {
+  border-block-start: 1px solid var(--border-divider);
+  padding-block-start: 14px;
+  margin-block-start: 14px;
+  border-radius: 8px;
+  scroll-margin-block-start: 12px;
+}
+
+.case-section-head { margin-block-end: 10px; }
+
+.case-section-head h5 {
+  margin: 0;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary);
+}
+
+.case-section-head h5 svg { color: var(--accent); }
+
+.case-section-head p {
+  margin: 3px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  max-inline-size: 78ch;
+}
+
+/* The progress rail jumps here; the flash is the answer to that click and then it is gone.
+   Motion is dropped entirely when the reader has asked for less of it. */
+.case-section.is-flash { animation: case-flash 1.4s ease-out; }
+
+@keyframes case-flash {
+  0% { background: var(--accent-bg); }
+  100% { background: transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .case-section.is-flash { animation: none; outline: 2px solid var(--accent); outline-offset: 4px; }
+}
 
 .case-field {
   display: block;
-  margin-bottom: 10px;
+  margin-block-end: 12px;
 }
 
 .case-field > span {
   display: block;
   font-size: 12px;
-  color: var(--text-muted);
-  margin-bottom: 3px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-block-end: 4px;
 }
 
 .case-field textarea,
 .case-field input,
 .case-field select { inline-size: 100%; }
 
+.case-field-hint {
+  display: block;
+  margin-block-start: 4px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-faint);
+}
+
 .case-hint {
   display: flex;
   gap: 6px;
   align-items: flex-start;
-  font-size: 11px;
+  font-size: 11.5px;
   line-height: 1.45;
   color: var(--text-muted);
   margin: 4px 0 10px;
 }
 
-.case-evidence-heading { margin: 16px 0 8px; }
+.case-hint svg { flex: 0 0 auto; margin-block-start: 1px; }
 
+/* --- Evidence -------------------------------------------------------------------------- */
 .case-item {
   display: flex;
-  gap: 10px;
-  padding: 10px 0;
-  border-block-start: 1px solid var(--border-soft);
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  margin-block-end: 8px;
+  background: var(--bg-subtle);
 }
 
-.case-item--note { opacity: 0.95; }
+.case-item:hover { border-color: var(--border-soft); }
+.case-item--note { background: var(--bg-surface); }
+.case-item--gone { border-inline-start: 3px solid var(--danger); }
 
 .case-thumb {
-  inline-size: 100px;
-  block-size: 60px;
+  inline-size: 108px;
+  block-size: 64px;
   object-fit: cover;
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--bg-video);
   flex: 0 0 auto;
   display: inline-flex;
@@ -7617,6 +8181,37 @@ input.input-error:focus,
   justify-content: center;
   color: var(--text-faint);
 }
+
+/* The frame is the play button. Clicking a still of the moment is the gesture people
+   already have; the labelled button below stays for keyboard and for clarity. */
+.case-thumb-btn {
+  position: relative;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  flex: 0 0 auto;
+  line-height: 0;
+  border-radius: 8px;
+}
+
+.case-thumb-play {
+  position: absolute;
+  inset-block-end: 5px;
+  inset-inline-end: 5px;
+  inline-size: 24px;
+  block-size: 24px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.85;
+}
+
+.case-thumb-btn:hover .case-thumb-play { opacity: 1; }
+.case-thumb-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .case-item-body { flex: 1 1 auto; min-inline-size: 0; }
 
@@ -7628,10 +8223,19 @@ input.input-error:focus,
   font-size: 12px;
 }
 
-.case-item-where { color: var(--text-secondary); }
+.case-item-where {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.case-item-where svg { color: var(--text-faint); }
 
 .case-item-label {
-  background: var(--bg-subtle2);
+  background: var(--accent-badge);
+  color: var(--text-secondary);
   border-radius: 999px;
   padding: 1px 8px;
   font-size: 11px;
@@ -7641,11 +8245,23 @@ input.input-error:focus,
   display: inline-flex;
   gap: 4px;
   align-items: center;
-  color: var(--danger-text, var(--text-secondary));
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  border-radius: 999px;
+  padding: 1px 8px;
   font-size: 11px;
+  font-weight: 600;
 }
 
-.case-item-note { margin: 4px 0; font-size: 13px; }
+.case-item-partial {
+  font-size: 11px;
+  color: var(--warn-text);
+  background: var(--warn-bg);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.case-item-note { margin: 5px 0; font-size: 13px; line-height: 1.5; }
 .case-item-note em { color: var(--text-faint); }
 
 .case-item-edit {
@@ -7653,7 +8269,7 @@ input.input-error:focus,
   gap: 6px;
   align-items: flex-start;
   flex-wrap: wrap;
-  margin: 4px 0;
+  margin: 6px 0;
 }
 
 .case-item-edit textarea { flex: 1 1 220px; }
@@ -7662,51 +8278,218 @@ input.input-error:focus,
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+  align-items: center;
 }
+
+.case-item-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--danger-text);
+  background: var(--danger-bg);
+  border-radius: 8px;
+  padding: 2px 4px 2px 8px;
+}
+
+/* The empty state names the screens the evidence comes FROM. "Nothing here yet" would be
+   true and useless: an empty case almost always means the button was never found. */
+.case-evidence-empty {
+  border: 1px dashed var(--border-soft);
+  border-radius: 10px;
+  background: var(--bg-subtle);
+  padding: 16px;
+  color: var(--text-faint);
+  text-align: center;
+}
+
+.case-evidence-empty strong {
+  display: block;
+  margin: 6px 0 10px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.case-evidence-empty ul {
+  list-style: none;
+  margin: 0 auto;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  max-inline-size: 62ch;
+  text-align: start;
+}
+
+.case-evidence-empty li {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.case-evidence-empty li svg { flex: 0 0 auto; margin-block-start: 2px; color: var(--accent); }
 
 .case-add-note {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   align-items: flex-start;
-  margin: 10px 0 16px;
+  margin: 12px 0 4px;
 }
 
 .case-add-note textarea { flex: 1 1 auto; }
 
 .case-outcome {
   background: var(--bg-subtle);
-  border-radius: 8px;
-  padding: 10px 12px;
-  margin: 12px 0;
+  border: 1px solid var(--border-subtle);
+  border-block-start: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 12px 14px;
 }
 
-.case-outcome p { margin: 4px 0 0; }
+.case-outcome p { margin: 4px 0 0; line-height: 1.5; }
 
-.case-export {
-  border-block-start: 1px solid var(--border-soft);
-  padding-block-start: 12px;
-  margin-block-start: 12px;
+/* --- Export ---------------------------------------------------------------------------- */
+.case-export-contents {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: grid;
+  gap: 5px;
 }
 
-.case-export h4 { margin: 0 0 8px; }
-.case-export-status { font-size: 12px; color: var(--text-muted); }
-.case-export-ready p { margin: 0 0 6px; }
+.case-export-contents li {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.case-export-contents li svg { flex: 0 0 auto; margin-block-start: 2px; color: var(--text-faint); }
+
+.case-export-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.case-spinner {
+  inline-size: 14px;
+  block-size: 14px;
+  border-radius: 999px;
+  border: 2px solid var(--border-soft);
+  border-block-start-color: var(--accent);
+  animation: case-spin 0.8s linear infinite;
+  flex: 0 0 auto;
+}
+
+@keyframes case-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .case-spinner { animation-duration: 3s; }
+}
+
+.case-export-ready {
+  border: 1px solid var(--ok-text);
+  border-radius: 10px;
+  background: var(--ok-bg);
+  padding: 12px 14px;
+}
+
+.case-export-done {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 10px;
+  font-weight: 600;
+  color: var(--ok-text);
+}
+
+.case-export-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
 
 .case-detail-actions {
   display: flex;
-  gap: 8px;
-  margin-block-start: 14px;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  border-block-start: 1px solid var(--border-divider);
+  padding-block-start: 14px;
+  margin-block-start: 16px;
 }
 
-.case-dialog { max-inline-size: 520px; }
+.case-detail-actions-hint {
+  margin: 0;
+  margin-inline-end: auto;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-muted);
+  max-inline-size: 60ch;
+}
+
+/* --- Dialogs ---------------------------------------------------------------------------- */
+/* The .video-dialog shell is a hardcoded dark slab. That is right for a video player and
+   wrong for a form: the case dialogs inherited it and rendered light-theme label and hint
+   colours on near-black chrome, so "Outcome" and the sentence explaining why it is
+   required were all but invisible in the theme most installs run. They are forms, so they
+   take the surface, exactly as the teach dialog already does. The shell also has no inline
+   padding of its own, which left every field running edge to edge. */
+.case-dialog {
+  max-inline-size: 520px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  padding-block-end: 16px;
+}
+
+.case-dialog .video-dialog-header {
+  background: var(--bg-surface);
+  border-block-end: 1px solid var(--border-panel);
+  color: var(--text-primary);
+  padding: 14px 18px;
+  margin-block-end: 14px;
+}
+
+.case-dialog > *:not(.video-dialog-header) { margin-inline: 18px; }
+
+.case-dialog-lead {
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
 
 .case-evidence-lines {
   list-style: none;
-  margin: 0 0 10px;
-  padding: 0;
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-subtle);
   font-size: 12px;
   color: var(--text-secondary);
+  display: grid;
+  gap: 4px;
+  max-block-size: 148px;
+  overflow-y: auto;
 }
+
+.case-evidence-lines li {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.case-evidence-lines li svg { flex: 0 0 auto; margin-block-start: 2px; color: var(--text-faint); }
 
 .case-dialog-actions {
   display: flex;
@@ -7714,12 +8497,6 @@ input.input-error:focus,
   gap: 8px;
   margin-block-start: 12px;
 }
-
-.case-item-partial {
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
 
 /* --- Video wall (W3-3b) ---------------------------------------------------------------
    Logical properties throughout so the bar mirrors in Arabic without a second sheet. */

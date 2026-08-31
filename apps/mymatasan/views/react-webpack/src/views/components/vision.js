@@ -1435,6 +1435,19 @@ export function AlertDetailModal({ alert, rule, authHeader, onClose }) {
 
   const title = meta.objectLabel || alert.label || alert.detectionType || t('vi.detectionEvent');
 
+  // The box drawn over the snapshot says WHO on a face alert, not "face". This overlay is
+  // the client-side twin of services.BuildAlertSnapshot's burned-in box (the download
+  // button below hands out that one), and the two have to agree — the model's class name
+  // over a recognized person throws away the entire content of the alert.
+  //
+  // The detector always writes `recognized` and nothing else does, so its presence — not
+  // the name, which is empty for a stranger — is what makes this a face alert.
+  const isFace = typeof meta.recognized === 'boolean';
+  const facePerson = String(meta.personName || '').trim();
+  const boxLabel = isFace
+    ? (meta.recognized && facePerson ? facePerson : t('vi.unknownFace'))
+    : (meta.objectLabel || alert.label || '');
+
   // Download the snapshot with the detection box drawn in (server-side), matching
   // the notification image. Uses an auth'd fetch since the endpoint is protected.
   async function downloadAnnotated() {
@@ -1483,7 +1496,10 @@ export function AlertDetailModal({ alert, rule, authHeader, onClose }) {
                   width: `${(bb.w * 100).toFixed(3)}%`,
                   height: `${(bb.h * 100).toFixed(3)}%`,
                 }}>
-                  <span className="alert-modal-bb-label">{meta.objectLabel || alert.label || ''}</span>
+                  {/* A person's name is data and is shown as enrolled, so the label's
+                      text-transform:capitalize — right for the class name "face", wrong
+                      for "van der Berg" — is turned off for an identity. */}
+                  <span className={`alert-modal-bb-label${isFace ? ' is-identity' : ''}`}>{boxLabel}</span>
                 </div>
               )}
             </div>
