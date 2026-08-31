@@ -18,7 +18,7 @@ Maps object detector candidates to reusable vision detection rules.
 
 ## Face detection branch
 
-When `faceMatch` succeeds, the recognized identity (`personId`, `personName`, `faceConfidence`, `recognized`) is likewise promoted to top-level metadata — `personName` is empty for an unrecognized face — and the alert label is set via `faceLabel` (`"Alice (94%)"` or `"Unknown face"`). See `face.go.md` for the rule policy (known/include/unknown match modes).
+When `faceMatch` succeeds, the recognized identity (`personId`, `personName`, `faceConfidence`, `recognized`) is likewise promoted to top-level metadata so notification templates (`{{person}}`, `{{recognized}}`, `{{faceConfidence}}`) and filtering can reach it — `personName` is empty for an unrecognized face — and the alert label is set via `faceLabel` (`"Alice (94%)"` or `"Unknown face"`). See `face.go.md` for the rule policy (known/include/unknown match modes) and `apps/mymatasan/services/notification.go.md`'s *Face fields in rendered alerts* for how the promoted metadata reaches webhook/MQTT/Telegram/email payloads and body text.
 
 ## Notes
 

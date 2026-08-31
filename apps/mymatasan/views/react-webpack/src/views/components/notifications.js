@@ -481,9 +481,38 @@ function NotificationRow({
       data.cameraName ||
       cameraTitle((saved || []).find((d) => Number(d.id) === Number(notif.cameraId))) ||
       (notif.cameraId ? t('notif.cameraN', { id: notif.cameraId }) : '');
+    // WHO or WHICH — the entire point of a face or plate alert, and this row showed neither.
+    // `objectLabel` is the RAW worker label ("face", "license plate") and it deliberately wins
+    // over alert.label so the Object row means the same thing on every alert type. That leaves
+    // the identity to come from the alert's own metadata, where the detector promotes it — and
+    // nothing here was reading it, so a recognized person appeared on this screen as
+    // "Object: face" and a read plate as "Object: license plate".
+    //
+    // The detector always writes `recognized` on a face alert and nothing else does, so its
+    // presence — not the name, which is empty for a stranger — is what makes this a face alert.
+    const isFace = typeof alertMeta.recognized === 'boolean';
+    const personName = String(alertMeta.personName || '').trim();
+    const plate = String(alertMeta.plate || '').trim();
+    const faceConfidence = Number(alertMeta.faceConfidence || 0);
     const fields = [
+      // A stranger is named "unknown" rather than left out: "a face appeared and we do not know
+      // whose" is a different statement from "no face field", and on this screen it is the
+      // more alarming of the two.
+      // NOT `cap`. That class is text-transform:capitalize, which is right for a raw model label
+      // ("face") and wrong for a person: it renders an enrolled "van der Berg" as "Van Der Berg"
+      // and "bin Ismail" as "Bin Ismail". A person's name is data — it is shown as enrolled.
+      isFace ? { k: 'Person', v: alertMeta.recognized && personName ? personName : t('notif.unknownPerson') } : null,
+      plate ? { k: 'Plate', v: plate } : null,
       objectLabel ? { k: 'Object', v: objectLabel, cap: true } : null,
-      confidence > 0 ? { k: 'Confidence', v: `${(confidence * 100).toFixed(0)}%` } : null,
+      // The generic Confidence is SUPPRESSED on a face alert and replaced by the match score.
+      // They are not two numbers: the detector stores max(matchScore, 0.5) as the alert's
+      // confidence, so on a recognized face this row was a floored copy of the match, and on an
+      // UNRECOGNIZED one it was a hard-coded 50% presented as if it had been measured.
+      isFace
+        ? (alertMeta.recognized && faceConfidence > 0
+          ? { k: 'Match', v: `${(faceConfidence * 100).toFixed(0)}%` }
+          : null)
+        : (confidence > 0 ? { k: 'Confidence', v: `${(confidence * 100).toFixed(0)}%` } : null),
       source ? { k: 'Source', v: source } : null,
       detectionType ? { k: 'Type', v: detectionTypeLabel(detectionType) } : null,
     ].filter(Boolean);

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  SideNav, BrandLogo, ToastStack, LangProvider, useT, normalizeLang, LanguageDropdown, AppFooter
+  SideNav, BrandLogo, ToastStack, LangProvider, useT, normalizeLang, LanguageDropdown, AppFooter,
+  useStickyTab, clearStickyTab
 } from '@shared'
 import { enBundle, loadLocaleDict } from './i18n'
 import * as api from '../lib/access'
@@ -41,6 +42,10 @@ const TABS = [
 // door.
 const NO_CAPS = {}
 
+// Names this app's remembered section (see @shared/stickyTab). The prefix keeps the five apps
+// from reading each other's value when they are served from the same host.
+const TAB_KEY = 'mypintusan_active_tab'
+
 const LANG_KEY = 'mypintusan.lang'
 
 export default function App() {
@@ -74,7 +79,21 @@ function Shell({ lang, onLang }) {
   const [user, setUser] = useState(null)
   const [caps, setCaps] = useState(NO_CAPS)
   const [booting, setBooting] = useState(true)
-  const [tab, setTab] = useState('doors')
+  // The section survives a refresh (see @shared/stickyTab). The permitted set is derived from
+  // the SAME capability matrix that builds the rail below, so a restored section can never be
+  // one the rail would refuse to offer — which matters here more than anywhere else in the
+  // suite, because these screens open doors.
+  const allowedTabs = useMemo(() => TABS.filter(item => !!caps[item.needs]).map(item => item.id), [caps])
+  // Land on the first section this operator actually has rather than always on Doors: somebody
+  // granted only the trail has no business being dropped on a door list that will 403.
+  const fallbackTab = allowedTabs[0] || 'doors'
+  // While the capabilities are still loading nothing is decided — passing the (empty) allowed
+  // set there would bounce every operator off their restored section on every single reload,
+  // because at first paint nobody has any capability yet.
+  // Guard only while somebody is actually signed in. With no user the capability set is empty,
+  // which the hook reads as "may reach nothing" and answers by writing the fallback back into
+  // the key sign-out had just cleared.
+  const [tab, setTab] = useStickyTab(TAB_KEY, fallbackTab, (booting || !user) ? null : allowedTabs)
   const [needsSetup, setNeedsSetup] = useState(false)
   const [toasts, setToasts] = useState([])
 
@@ -130,6 +149,10 @@ function Shell({ lang, onLang }) {
 
   const signOut = useCallback(async () => {
     try { await api.logout() } catch { /* signing out locally is enough */ }
+    // Forget the section too, so the next person to sign in on this terminal starts at the
+    // top of the rail rather than inside the last operator's work. On a door controller the
+    // previous operator's whereabouts is itself worth not leaving on the screen.
+    clearStickyTab(TAB_KEY)
     setUser(null)
     setCaps(NO_CAPS)
   }, [])
