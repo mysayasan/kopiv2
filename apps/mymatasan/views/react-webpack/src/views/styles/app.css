@@ -7879,6 +7879,304 @@ input.input-error:focus,
   color: var(--ok-text);
 }
 
+/* --- Roster controls: what turns a wall of cards into a directory ---
+   Search, state chips, sort and a view switch, laid out as one band above the list. Toolbar
+   rather than a sidebar on purpose: there are four controls, they apply to one list, and a
+   filter rail would cost more width than the roster it filters. */
+.faces-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  padding-block-end: 12px;
+  border-block-end: 1px solid var(--border-subtle);
+  margin-block-end: 12px;
+}
+
+/* The search field owns the leftover width: it is the control that scales past 100 names. */
+.faces-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 220px;
+  min-inline-size: 180px;
+  padding-inline: 10px;
+  border: 1px solid var(--border-panel);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  color: var(--text-faint);
+}
+
+.faces-search:focus-within {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* The base input rule paints its own border, background and full width; inside the field
+   shell all three have to go, or the box renders nested inside itself. */
+.faces-search input {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.faces-search input:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+/* Chrome draws its own clear cross on type=search, in its own colours and its own place. */
+.faces-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.faces-search-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 20px;
+  block-size: 20px;
+  min-block-size: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--status-neutral-bg);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.faces-search-clear:hover {
+  color: var(--danger);
+}
+
+.faces-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Every chip carries its own count. That is the whole reporting layer of this screen: how many
+   people still have no photos is the number that decides whether face recognition works at
+   all, and it should not need a click to read. */
+.faces-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-block-size: 0;
+  padding: 5px 10px;
+  border: 1px solid var(--border-divider);
+  border-radius: 999px;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.faces-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.faces-chip.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.faces-chip-n {
+  padding-inline: 6px;
+  border-radius: 999px;
+  background: var(--status-neutral-bg);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.faces-chip.active .faces-chip-n {
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+}
+
+.faces-controls-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-inline-start: auto;
+}
+
+.faces-sort {
+  inline-size: auto;
+  min-inline-size: 150px;
+  font-size: 12.5px;
+}
+
+.faces-view button {
+  padding: 6px 10px;
+}
+
+/* --- Row view: the roster at scale ---
+   A card is ~150px tall, a row ~44px. Past a couple of dozen people the question stops being
+   "who is this face" and becomes "find this name", and rows answer that three times as fast
+   per screenful. */
+.faces-rows {
+  /* Widest photo-count label, measured against the longest of the four locales. */
+  --faces-pill-col: 200px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border-panel);
+  border-radius: 10px;
+  background: var(--bg-subtle);
+}
+
+/* NOT `overflow: hidden` to clip the corners: an overflow clip makes this box the nearest
+   scrollport, and a box that never scrolls means the sticky letters below never stick — they
+   just scroll away with their rows. Measured, not guessed. The ends are rounded by hand. */
+.faces-rows > :first-child,
+.faces-rows > :first-child .faces-row-main {
+  border-start-start-radius: 10px;
+  border-start-end-radius: 10px;
+}
+
+.faces-rows > :last-child,
+.faces-rows > :last-child .faces-row-main {
+  border-end-start-radius: 10px;
+  border-end-end-radius: 10px;
+}
+
+.faces-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-inline-end: 10px;
+  border-block-start: 1px solid var(--border-subtle);
+}
+
+.faces-row:first-child {
+  border-block-start: 0;
+}
+
+/* Same rule as the card: a person switched off keeps their place and their photos, they are
+   simply not being looked for. Dimmed, never hidden. */
+.faces-row.is-off {
+  opacity: 0.68;
+}
+
+.faces-row-main {
+  display: grid;
+  /* The pill track is FIXED, not auto. Each row is its own grid container, so an auto track is
+     measured per row — which lines the photo counts up at a different x on every line and takes
+     away the one thing a row view is for: reading down a column. */
+  grid-template-columns: auto minmax(120px, 1fr) var(--faces-pill-col) minmax(0, 1.2fr);
+  align-items: center;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  min-block-size: 0;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: start;
+  cursor: pointer;
+}
+
+.faces-row-main:hover {
+  background: var(--accent-bg);
+}
+
+.faces-row-name {
+  font-weight: 650;
+  font-size: 13.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Backstop for a translation longer than the track: the pill clips rather than shunting the
+   "last seen" column out of line. */
+.faces-row .faces-pill {
+  justify-self: start;
+  max-inline-size: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.faces-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+/* A-Z dividers, and they STICK: scrolled 200 rows deep, the letter is the only thing that says
+   where you are. Drawn only when the sort actually is A-Z. */
+.faces-row-letter {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 1;
+  padding: 6px 12px;
+  border-block-start: 1px solid var(--border-subtle);
+  /* Opaque, and it casts a line: once pinned it has a scrolling row passing underneath it, and
+     without an edge that reads as a glitch rather than a heading. */
+  background: var(--bg-surface);
+  box-shadow: 0 1px 0 var(--border-divider);
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+/* Paging rather than an infinite scroll: the button states how many are still hidden, which a
+   scroll that quietly stops loading never does. */
+.faces-more {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding-block-start: 12px;
+}
+
+.faces-more .settings-hint {
+  margin-inline-end: auto;
+}
+
+.faces-more-all {
+  min-block-size: 0;
+  padding: 6px 4px;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 12.5px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* Narrow screens: the name keeps its line, "last seen" drops under it rather than squeezing
+   both to ellipses. */
+@media (max-width: 760px) {
+  .faces-row-main {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    row-gap: 2px;
+  }
+
+  .faces-row-main .faces-seen {
+    grid-column: 2 / -1;
+  }
+
+  .faces-controls-right {
+    margin-inline-start: 0;
+  }
+}
+
 .faces-grid {
   list-style: none;
   margin: 0;
@@ -8257,10 +8555,14 @@ input.input-error:focus,
   background: var(--bg-surface);
 }
 
+/* Every enrolled person is a checkbox here, so this box grows with the roster — at a hundred
+   people it would push the camera list off the screen. Capped, and it scrolls itself. */
 .faces-watchlist-names {
   display: flex;
   flex-wrap: wrap;
   gap: 6px 14px;
+  max-block-size: 168px;
+  overflow-y: auto;
 }
 
 .faces-watchlist-name {
@@ -8309,7 +8611,8 @@ input.input-error:focus,
   white-space: nowrap;
 }
 
-.faces-card [data-seen]:not([data-seen="0"]) {
+.faces-card [data-seen]:not([data-seen="0"]),
+.faces-row [data-seen]:not([data-seen="0"]) {
   color: var(--ok-text);
 }
 
@@ -8441,6 +8744,45 @@ input.input-error:focus,
 /* The native input opens the picker; nobody needs to look at it. */
 .faces-file-input {
   display: none;
+}
+
+/* Uploading a batch of photos takes several round trips, and for all of them the dialog must
+   look like it is working and refuse to be closed. This is the notice that says both, and it
+   sits above the picker so it is the first thing in the operator's eye line. */
+.faces-uploading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--accent-bg);
+}
+
+/* Same spinner as the form-busy overlay, sized to sit on a line of text. */
+.faces-uploading-spin {
+  inline-size: 20px;
+  block-size: 20px;
+  border-width: 2px;
+  flex: 0 0 auto;
+}
+
+.faces-uploading-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.faces-uploading-text strong {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+/* While a batch is going up the drop zone is not a target: a drop mid-batch would start a
+   second run against the same person. */
+.faces-drop.is-busy {
+  opacity: 0.55;
+  pointer-events: none;
 }
 
 .faces-webcam {

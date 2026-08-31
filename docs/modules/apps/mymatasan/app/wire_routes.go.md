@@ -16,7 +16,15 @@ previously just inline statements in the middle of an 800-line function.
      being swallowed by auth. `apis.NewManualApi(api)` (`apis/manual.go.md`) is mounted
      right after it, also on the public router and for a structural reason of its own: the
      built-in manual must be readable from the sign-in screen and the first-run wizard,
-     both of which have no session either.
+     both of which have no session either. Then `apis.NewLocalLoginApi(api, w.localUser,
+     w.loginGuard, w.loginLockoutNotifier)` — new — mounts the PUBLIC `POST /api/auth/login`
+     and `POST /api/auth/logout` (`apis/local_auth.go.md`, `domain/shared/apis/
+     local_login_api.go.md`): it must sit ahead of the protected catch-all for the same
+     reason as the two routes above (it is the endpoint that authenticates, so it cannot sit
+     behind the middleware that demands authentication), and it is what lets the SPA
+     exchange a credential once for the session cookie instead of holding the password in
+     memory and replaying HTTP Basic on every request — the same endpoints `myiotsan` and
+     `mypintusan` already mounted.
   2. Creates `protected := api.PathPrefix("").Subrouter()` and applies middleware in order:
      - `apis.NewResetGate(...)` — sheds load with a clean 503 while a factory reset is
        running. Runs FIRST, before auth, because the reset closes the DB pool and keeps

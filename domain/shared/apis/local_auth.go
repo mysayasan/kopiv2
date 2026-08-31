@@ -53,6 +53,19 @@ func (c LocalAuthConfig) realm() string {
 // when a must-change user touches any route other than the change endpoint.
 const passwordChangeRequiredCode = "password_change_required"
 
+// localAuthCookieTTL is how long a signed-in browser stays signed in.
+//
+// It SLIDES: a request that authenticates by cookie past the halfway mark gets a fresh one
+// (see renewLocalAuthCookie). Without that, the clock started at sign-in and never moved, so
+// an operator who had the app open all day was dropped to the login screen mid-shift, and a
+// page refresh after the twelfth hour looked exactly like "refreshing logs me out".
+const localAuthCookieTTL = 12 * time.Hour
+
+// localAuthCookieRenewAfter is the age past which a cookie-authenticated request re-issues
+// the cookie. Half the TTL: often enough that any active session is continuously extended,
+// rare enough that a busy SPA is not handed a Set-Cookie on every poll.
+const localAuthCookieRenewAfter = localAuthCookieTTL / 2
+
 type localAuthContextKey struct{}
 
 // LocalUserFromContext returns the authenticated local appliance user.
@@ -170,15 +183,23 @@ func NewLocalBasicAuth(cfg LocalAuthConfig, userService services.ILocalUserServi
 				return
 			}
 
-			// No Basic header (e.g. <img>/<video> media requests that cannot send
-			// one) — fall back to the session cookie.
+			// No Basic header — fall back to the session cookie. This is the path that
+			// carries <img>/<video> media tiles (which cannot send a Basic header), AND the
+			// path a reloaded SPA rides: a browser refresh throws away whatever the page
+			// held in memory, so the cookie is the ONLY thing left that says who this is.
 			if cookie, err := r.Cookie(cfg.cookieName()); err == nil {
-				username, sessionHash, ok := parseLocalAuthCookie(cookie.Value)
+				username, sessionHash, issuedAt, ok := parseLocalAuthCookie(cookie.Value)
 				if ok {
 					user, err := userService.AuthenticateSession(r.Context(), username, sessionHash)
 					if err != nil {
 						deny("access denied")
 						return
+					}
+					// Keep an in-use session alive. A cookie-only client never presents a
+					// Basic credential, so without this its cookie is never re-issued and
+					// the session dies on a fixed clock no matter how active the user is.
+					if shouldRenewLocalAuthCookie(issuedAt) {
+						setLocalAuthCookie(w, r, cfg, user)
 					}
 					serve(user)
 					return
@@ -287,24 +308,54 @@ func setLocalAuthCookie(w http.ResponseWriter, r *http.Request, cfg LocalAuthCon
 		HttpOnly: true,
 		Secure:   middlewares.IsSecureRequest(r),
 		SameSite: http.SameSiteLaxMode,
-		Expires:  time.Now().Add(12 * time.Hour),
-		MaxAge:   int((12 * time.Hour).Seconds()),
+		Expires:  time.Now().Add(localAuthCookieTTL),
+		MaxAge:   int(localAuthCookieTTL.Seconds()),
 	})
 }
 
+// localAuthCookieValue is `username:sessionHash:issuedAtUnix`.
+//
+// The third field is what makes the sliding window possible: the server needs to know how old
+// a cookie is to decide whether to re-issue it, and it holds no per-session state to look that
+// up in (the session hash is derived from the user row, deliberately, so it survives a
+// restart). A client could of course lie about it — but the only thing it buys them is a
+// re-issued cookie for a session whose hash ALREADY authenticated them, so there is nothing to
+// gain. The hash, not this field, is the credential.
 func localAuthCookieValue(user *services.AuthenticatedUser) string {
 	if user == nil {
 		return ""
 	}
-	return user.Username + ":" + user.SessionHash
+	return user.Username + ":" + user.SessionHash + ":" + strconv.FormatInt(time.Now().Unix(), 10)
 }
 
-func parseLocalAuthCookie(value string) (string, string, bool) {
+// parseLocalAuthCookie reads both cookie shapes: the two-field form written before the sliding
+// window existed, and the three-field form written now. A cookie already in a browser when the
+// appliance is upgraded therefore keeps working — it simply reports an unknown age, which
+// renewLocalAuthCookie treats as "due", so it is upgraded in place on the next request.
+func parseLocalAuthCookie(value string) (string, string, time.Time, bool) {
 	parts := strings.Split(value, ":")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", false
+	var issuedAt time.Time
+	if len(parts) == 3 {
+		if secs, err := strconv.ParseInt(parts[2], 10, 64); err == nil && secs > 0 {
+			issuedAt = time.Unix(secs, 0)
+		}
+		parts = parts[:2]
 	}
-	return parts[0], parts[1], true
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", time.Time{}, false
+	}
+	return parts[0], parts[1], issuedAt, true
+}
+
+// shouldRenewLocalAuthCookie reports whether a still-valid cookie is old enough to be
+// re-issued. An unknown or future-dated issue time counts as due: the first is a pre-upgrade
+// cookie, the second is a clock that moved, and re-issuing is the safe answer to both.
+func shouldRenewLocalAuthCookie(issuedAt time.Time) bool {
+	if issuedAt.IsZero() {
+		return true
+	}
+	age := time.Since(issuedAt)
+	return age < 0 || age >= localAuthCookieRenewAfter
 }
 
 // WithLocalUser injects an already-authenticated principal into a request context.
