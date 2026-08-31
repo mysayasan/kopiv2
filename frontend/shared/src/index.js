@@ -14,3 +14,4 @@ export { AppFooter } from './AppFooter';
 export { FactoryResetSection, FactoryResetDialog, FactoryResetOverlay } from './FactoryReset';
 export { DeploymentPanel } from './Deployment';
 export { ManualProvider, ManualLibrary, ManualDrawer, HelpButton, useManual, renderManualMarkdown } from './Manual';
+export { useStickyTab, readStickyTab, writeStickyTab, clearStickyTab } from './stickyTab';

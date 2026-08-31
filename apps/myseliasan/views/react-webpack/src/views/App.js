@@ -14,7 +14,7 @@ import './styles/failover.css';
 import './styles/push.css';
 import './styles/fleet-wall.css';
 import { SideNav, WorkspaceHeader } from './components/layout';
-import { ToastStack, LangProvider, normalizeLang, useT, AppFooter } from '@shared';
+import { ToastStack, LangProvider, normalizeLang, useT, AppFooter, useStickyTab, clearStickyTab } from '@shared';
 import { ManualProvider, ManualLibrary } from '@shared/Manual';
 import { FormBusyOverlay } from './components/ui';
 import { DashboardTab } from './components/dashboard';
@@ -39,6 +39,10 @@ import { LoginScreen, ChangePasswordScreen, PendingClearanceScreen } from './com
 import { SetupWizard } from './components/setup';
 import { api, sessionCanGet, apiBase } from './lib/helpers';
 import { enBundle, loadLocaleDict } from './i18n';
+
+// Names this app's remembered section (see @shared/stickyTab). The prefix keeps the five
+// apps from reading each other's value when they are served from the same host.
+const TAB_KEY = 'myseliasan_active_tab';
 
 const THEME_KEY = 'myseliasan_theme';
 const NAV_PIN_KEY = 'myseliasan_nav_pinned';
@@ -74,7 +78,11 @@ function AppInner({ lang, onLangChange }) {
   // authState: 'loading' | 'anon' | 'mustchange' | 'ready'
   const [authState, setAuthState] = useState('loading');
   const [session, setSession] = useState(null);
-  const [activeTab, setActiveTab] = useState('dashboard');
+  // The section survives a refresh (see @shared/stickyTab). No `allowed` list is passed: the
+  // permission demotions further down are per-API-grant rather than a flat set, and they are
+  // reached only once the session has loaded — so they, not a list up here, decide whether a
+  // restored section is one this operator may have.
+  const [activeTab, setActiveTab] = useStickyTab(TAB_KEY, 'dashboard');
   const [toasts, setToasts] = useState([]);
   // Fleet state is lifted here so the side-nav tree and the Nodes page stay in sync:
   // the tree lists adopted nodes and `managingNodeId` selects which one the page opens.
@@ -194,6 +202,12 @@ function AppInner({ lang, onLangChange }) {
 
   async function logout() {
     await api('/api/auth/logout', { method: 'POST', noRedirect: true }).catch(() => {});
+    // Forget the section too, so the next person to sign in on this tab starts at the
+    // dashboard rather than inside the last operator's work.
+    // Order matters: setActiveTab WRITES through to storage, so clearing first would leave
+    // "dashboard" sitting in the very key the clear was meant to empty.
+    setActiveTab('dashboard');
+    clearStickyTab(TAB_KEY);
     setSession(null);
     setAuthState('anon');
   }

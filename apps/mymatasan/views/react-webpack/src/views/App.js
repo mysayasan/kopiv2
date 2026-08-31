@@ -3,10 +3,11 @@ import './styles/app.css';
 import './styles/rbac-standard.css';
 import { ToastStack } from './components/ui';
 import { LangProvider, normalizeLang, useT } from '@shared/i18n';
+import { useStickyTab, clearStickyTab } from '@shared';
 import { AppFooter } from '@shared/AppFooter';
 import { ManualProvider, ManualLibrary } from '@shared/Manual';
 import { enBundle, loadLocaleDict } from './i18n';
-import { THEMES, emptyLogin, defaultStreamConfig, defaultRuntimeSettings, defaultNotificationSettings, defaultHealthSettings, defaultMachineHealthSettings, defaultVisionThreshold, defaultVisionMinFrames } from './lib/constants';
+import { THEMES, emptyLogin, defaultStreamConfig, defaultRuntimeSettings, defaultNotificationSettings, defaultHealthSettings, defaultMachineHealthSettings, defaultVisionThreshold, defaultVisionMinFrames, TAB_KEY, ALWAYS_TABS, ADMIN_TABS } from './lib/constants';
 import {readLiveViewsCookie,saveLiveViewsCookie,bestLiveViewLayout,unwrap,errorMessage,apiBase,parseMetadata,cameraTitle,normalizeScanDevice,orderedSavedCameras,isActionableVisionAlert,latestAlertsByCamera,sameCamera,liveSource,normalizeRuntimeSettings,normalizeMachineHealthSettings,defaultZonePolygon,isFaceDetectionType,isLineDetectionType,defaultLineRuleConfig,lineRuleConfigText,defaultVisionRuleDraft,playAlertSound,hasH264VideoTrack,isVisionAlertNotification,apiJson } from './lib/helpers';
 import { LoginPage, ChangePasswordPage, RecoveryGatePage, MagicWordEasterEgg, SideNav, WorkspaceHeader } from './components/layout';
 import { DashboardTab } from './components/dashboard';
@@ -78,7 +79,23 @@ function AppInner({ lang, onLangChange }) {
   const failedLoginsRef = useRef(0);
   // First-run setup wizard: shown to an admin until setup is completed/dismissed.
   const [setupNeeded, setSetupNeeded] = useState(false);
-  const [activeTab, setActiveTab] = useState('dashboard');
+  // Everyone reaches these; the rest are the isAdmin entries in SideNav. This list and that
+  // rail are the same decision, so they are wrong together or right together — a section added
+  // to one and not the other either cannot be restored or restores for somebody who cannot see
+  // it. ALWAYS_TABS/ADMIN_TABS live in lib/constants.js next to the other nav constants.
+  // NULL WHILE THE SESSION PROBE IS STILL OUT. `isAdmin` is false until the server answers, so
+  // handing the hook the non-admin list during boot demotes an ADMIN off every admin section on
+  // every reload — and rewrites storage, so the demotion sticks. Measured: refreshing on People
+  // landed back on the Dashboard with `mymatasan_active_tab` reset to "dashboard". `restoring`
+  // is cleared only after /api/auth/session has answered, by which point isAdmin is real.
+  const allowedTabs = useMemo(
+    () => (restoring ? null : (isAdmin ? ALWAYS_TABS.concat(ADMIN_TABS) : ALWAYS_TABS)),
+    [restoring, isAdmin],
+  );
+  // The section survives a refresh (see @shared/stickyTab). `allowedTabs` is what keeps a
+  // restored section honest: the admin-only screens must not draw for a viewer who signed in
+  // on the same tab after an admin signed out.
+  const [activeTab, setActiveTab] = useStickyTab(TAB_KEY, 'dashboard', allowedTabs);
   const [settingsNav, setSettingsNav] = useState('runtime');
   const [cameraNav, setCameraNav] = useState('probe');
   // The saved camera whose properties the Cameras page is showing, driven by the
@@ -504,7 +521,7 @@ function AppInner({ lang, onLangChange }) {
         setPasswordChangeRequired(true);
         return;
       }
-      await enterAppOrWizard(adminUser);
+      await enterAppOrWizard(adminUser, { keepSection: true });
     } catch (_) {
       // No session: the sign-in screen is the right answer.
     } finally {
@@ -519,8 +536,13 @@ function AppInner({ lang, onLangChange }) {
 
   // enterAppOrWizard loads the app, then shows the first-run wizard if setup is
   // pending and the user is an admin (only admins can perform setup).
-  async function enterAppOrWizard(adminUser) {
-    await enterApp();
+  // keepSection is set by the RESTORE path only. Entering the app forces the dashboard, which
+  // is right when somebody has just signed in and wrong when the page was merely refreshed —
+  // and this, not the permission guard, was what threw an operator back to the landing page on
+  // every F5. Measured: the restored section was applied correctly and then overwritten here a
+  // moment later, so even a section every role can reach (Timeline) did not survive.
+  async function enterAppOrWizard(adminUser, { keepSection = false } = {}) {
+    await enterApp({ keepSection });
     if (!adminUser) return;
     try {
       const setup = await request('/api/setup/state');
@@ -534,7 +556,7 @@ function AppInner({ lang, onLangChange }) {
 
   // enterApp loads the landing data and reveals the app shell. Shared by the
   // normal login path and the forced password-change completion.
-  async function enterApp() {
+  async function enterApp({ keepSection = false } = {}) {
     setBusy(true);
     setMessage('');
     try {
@@ -555,7 +577,8 @@ function AppInner({ lang, onLangChange }) {
       saveLiveViewsCookie(preference.layout, initialTiles);
       setAuthenticated(true);
       setPasswordChangeRequired(false);
-      setActiveTab('dashboard');
+      // A refresh keeps whatever section the operator was on; a sign-in starts at the dashboard.
+      if (!keepSection) setActiveTab('dashboard');
       setMessage('');
       // Kick off an immediate health probe (non-blocking) so offline cameras are
       // flagged right away rather than after the background sweep interval.
@@ -605,6 +628,12 @@ function AppInner({ lang, onLangChange }) {
       // Best-effort: an unreachable server cannot keep this browser signed in either, since
       // every subsequent request would fail anyway.
     });
+    // Forget the section as well as the session: the next person to sign in on this tab
+    // starts at the dashboard rather than inside the last operator's work.
+    // Order matters: setActiveTab WRITES through to storage, so clearing first would leave
+    // "dashboard" sitting in the very key the clear was meant to empty.
+    setActiveTab('dashboard');
+    clearStickyTab(TAB_KEY);
     setAuthenticated(false);
     setIsAdmin(false);
     setPasswordChangeRequired(false);
@@ -1474,6 +1503,10 @@ function AppInner({ lang, onLangChange }) {
     if (!authenticated) {
       return undefined;
     }
+    // Run the restored section's own on-entry load once. loadVision/loadNotifications below
+    // cover most tabs; this is what fetches the rest (recording configs for Cameras), which
+    // nothing else would do for a tab arrived at by reload rather than by click.
+    loadTabData(activeTab);
     loadVision({ quiet: true }).catch(() => {});
     loadNotifications({ quiet: true }).catch(() => {});
     checkStorageCodec();
@@ -2523,6 +2556,15 @@ function AppInner({ lang, onLangChange }) {
   function selectTab(tab) {
     if (tab !== 'cameras') setManagingCameraId(null);
     setActiveTab(tab);
+    loadTabData(tab);
+  }
+
+  // loadTabData is a tab's on-entry refresh, split out of selectTab because ARRIVING on a tab
+  // and CLICKING to it are now two different things. The section is restored from storage on
+  // reload, which does not go through selectTab — so without this, refreshing while on Cameras
+  // or Notifications rebuilt the page with the recording configs never fetched, and the screen
+  // came back looking like the data had been lost.
+  function loadTabData(tab) {
     // Cameras hosts the per-camera Settings (Recording/Stream config), AI rules, and
     // Recordings browser tabs, so refresh recording configs + vision state on entry.
     if (tab === 'cameras') {

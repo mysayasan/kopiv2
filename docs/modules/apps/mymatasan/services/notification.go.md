@@ -38,6 +38,13 @@ plane find the clip instead of guessing from timestamps.
 - `plate`, `watchlisted`, and (when present) `vehicleType` / `color` are added to the structured `data` map for webhook/MQTT consumers.
 - Template context gains `{{plate}}`, `{{vehicleType}}`, `{{color}}`, and `{{watchlisted}}` tokens; on non-LPR alerts these resolve to the empty string.
 
+## Face fields in rendered alerts
+
+`renderVisionAlert` calls `faceInfoFromMetadata` to extract `person` (`personName`), `personId`, `faceConfidence`, and `recognized` from the alert's top-level metadata (promoted there by `infra/vision/object.go` on a `faceMatch`). The `recognized` key is what distinguishes "this is a face alert" from "this is not" — its absence means every other field is meaningless; its presence with `person == ""` means a real stranger sighting, not a non-face alert:
+- If the label is not shown in the body (`!fields.IncludeLabel`), a `"• Alice"` line is appended for a recognized face, or `"• unknown face"` for an unrecognized one, so text-only destinations (Telegram) still say who — or that nobody — was seen. When the label is shown it already carries the identity (`"Alice (94%)"`), so no duplicate line is added.
+- `recognized` and `faceConfidence` are always added to the structured `data` map on a face alert; `person` and `personId` are added only when `recognized` is true and a name is present. This is new: previously no channel (webhook, MQTT, Telegram, email) received the identity as structured data at all.
+- Template context gains `{{person}}`, `{{recognized}}`, and `{{faceConfidence}}` tokens; on non-face alerts these resolve to the empty string. `{{person}}` resolves to `"unknown"` for an unrecognized face (an empty token would leave a dangling `"Seen: "` in a custom field). `{{person}}` was documented in `infra/vision/object.go` ("so notifications can template `{{person}}`") but never implemented before this — every custom field that used it silently expanded to nothing.
+
 ## Notes
 
 - `VisionAlertOptions` carries `RuleName`, `Snapshot []byte`, and `Fields *AlertNotificationSettings`. A nil `Fields` means "include everything" (matches the runtime default).

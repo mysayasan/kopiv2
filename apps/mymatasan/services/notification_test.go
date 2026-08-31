@@ -345,3 +345,91 @@ func TestAnUnflaggedRuleAsksForNoArchive(t *testing.T) {
 		t.Fatalf("an unflagged rule set the archive flag: %v", pub.published[0].Data)
 	}
 }
+
+
+// A face alert has to say WHO. The identity lived only inside alert.Label, so a destination
+// with the label field switched off delivered "Lobby • 96% confidence" and named nobody, and
+// no destination of any kind ever received the name as structured data.
+func TestRenderVisionAlertNamesRecognizedPerson(t *testing.T) {
+	alert := &entities.AlertEvent{
+		Id: 11, RuleId: 3, CameraId: 4, DetectionType: "face",
+		Label: "Alice (94%)", Confidence: 0.94,
+		Metadata: `{"personId":7,"personName":"Alice","faceConfidence":0.94,"recognized":true}`,
+	}
+
+	// Label on: the label already carries the name, so no duplicate person line...
+	on := defaultAlertNotificationSettings()
+	on.IncludeLabel = true
+	n := renderVisionAlert(alert, "Lobby", "", on, nil, nil, SnapshotModeInline)
+	if strings.Count(n.Body, "Alice") != 1 {
+		t.Errorf("label on: want the name exactly once, got %q", n.Body)
+	}
+
+	// ...label off: the person line is what keeps the name in the message.
+	off := defaultAlertNotificationSettings()
+	off.IncludeLabel = false
+	n = renderVisionAlert(alert, "Lobby", "", off, nil, nil, SnapshotModeInline)
+	if !strings.Contains(n.Body, "Alice") {
+		t.Errorf("label off: the person is missing from the body: %q", n.Body)
+	}
+
+	// Either way the identity is structured data a webhook/MQTT consumer can route on.
+	for _, f := range []*AlertNotificationSettings{on, off} {
+		n = renderVisionAlert(alert, "Lobby", "", f, nil, nil, SnapshotModeInline)
+		if n.Data["person"] != "Alice" {
+			t.Errorf("data.person = %v", n.Data["person"])
+		}
+		if n.Data["personId"] != int64(7) {
+			t.Errorf("data.personId = %v", n.Data["personId"])
+		}
+		if n.Data["recognized"] != true {
+			t.Errorf("data.recognized = %v", n.Data["recognized"])
+		}
+	}
+}
+
+// An unrecognized face is a real event with no name. It must not be silently dropped into
+// looking like a non-face alert, and it must never be given somebody's name.
+func TestRenderVisionAlertUnknownFaceSaysUnknown(t *testing.T) {
+	alert := &entities.AlertEvent{
+		Id: 12, CameraId: 4, DetectionType: "face", Label: "Unknown face", Confidence: 0.6,
+		Metadata: `{"personId":0,"personName":"","faceConfidence":0.21,"recognized":false}`,
+	}
+	fields := defaultAlertNotificationSettings()
+	fields.IncludeLabel = false
+	n := renderVisionAlert(alert, "Lobby", "", fields, nil, nil, SnapshotModeInline)
+	if !strings.Contains(n.Body, "unknown face") {
+		t.Errorf("stranger sighting says nothing: %q", n.Body)
+	}
+	if n.Data["recognized"] != false {
+		t.Errorf("data.recognized = %v, want false", n.Data["recognized"])
+	}
+	if _, named := n.Data["person"]; named {
+		t.Errorf("an unknown face must not be given a name: %v", n.Data["person"])
+	}
+}
+
+// {{person}} was documented in the detector and never implemented, so every custom field
+// using it expanded to nothing. Non-face alerts must still collapse the token.
+func TestAlertTemplateContextFaceTokens(t *testing.T) {
+	known := alertTemplateContext(&entities.AlertEvent{
+		DetectionType: "face",
+		Metadata:      `{"personName":"Alice","personId":7,"faceConfidence":0.94,"recognized":true}`,
+	}, "", "")
+	if known["person"] != "Alice" || known["recognized"] != "true" || known["faceConfidence"] != "94%" {
+		t.Errorf("known face tokens = %v", known)
+	}
+
+	stranger := alertTemplateContext(&entities.AlertEvent{
+		DetectionType: "face",
+		Metadata:      `{"personName":"","recognized":false}`,
+	}, "", "")
+	if stranger["person"] != "unknown" || stranger["recognized"] != "false" {
+		t.Errorf("stranger tokens = %v", stranger)
+	}
+
+	other := alertTemplateContext(&entities.AlertEvent{DetectionType: "intrusion", Label: "person"}, "", "")
+	if other["person"] != "" || other["recognized"] != "" || other["faceConfidence"] != "" {
+		t.Errorf("non-face alert must collapse the face tokens: %v", other)
+	}
+}

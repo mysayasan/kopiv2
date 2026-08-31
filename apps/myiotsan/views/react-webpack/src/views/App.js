@@ -3,7 +3,7 @@ import './styles/app.css';
 import './styles/rbac-standard.css';
 import './styles/iot.css';
 import { SideNav } from './components/layout';
-import { ToastStack, LangProvider, normalizeLang, LanguageDropdown, AppFooter } from '@shared';
+import { ToastStack, LangProvider, normalizeLang, LanguageDropdown, AppFooter, useStickyTab, clearStickyTab } from '@shared';
 import { FormBusyOverlay, ThemeDropdown } from './components/ui';
 import { DashboardPage, DevicesHome, RulesPage, AlertsPage, NotificationsPage, ProfilesPage, ScenesPage, SchedulesPage, FlowsPage, KbPage, SettingsPage } from './components/pages';
 import { FirstRunWizard } from './components/onboarding';
@@ -13,6 +13,16 @@ import { enBundle, loadLocaleDict } from './i18n';
 
 const THEME_KEY = 'myiotsan_theme';
 const NAV_PIN_KEY = 'myiotsan_nav_pinned';
+
+// Names this app's remembered section (see @shared/stickyTab). The prefix keeps the five apps
+// from reading each other's value when they are served from the same host.
+const TAB_KEY = 'myiotsan_active_tab';
+// Sections anyone signed in may reach, and the two gated on isAdmin. These MUST match the rail
+// in components/layout.js and the `session?.isAdmin` guards on the screens below: a section in
+// the rail but not here cannot be restored, and one here but not in the rail restores for
+// somebody the rail says cannot go there.
+const BASE_TABS = ['dashboard', 'devices', 'rules', 'alerts', 'notifications', 'profiles', 'help', 'scenes', 'schedules'];
+const ADMIN_TABS = ['flows', 'settings'];
 
 function AppInner({ lang, onLangChange }) {
   const [theme, setTheme] = useState(() => {
@@ -44,7 +54,14 @@ function AppInner({ lang, onLangChange }) {
   // authState: 'loading' | 'anon' | 'mustchange' | 'ready'
   const [authState, setAuthState] = useState('loading');
   const [session, setSession] = useState(null);
-  const [activeTab, setActiveTab] = useState('dashboard');
+  // The section survives a refresh (see @shared/stickyTab). While the session is still loading
+  // the allowed set is null, which tells the hook to leave the restored section alone — passing
+  // the non-admin list there would bounce an ADMIN off Flows or Settings on every reload, since
+  // at first paint nobody looks like an admin yet.
+  const allowedTabs = authState === 'ready'
+    ? (session?.isAdmin ? BASE_TABS.concat(ADMIN_TABS) : BASE_TABS)
+    : null;
+  const [activeTab, setActiveTab] = useStickyTab(TAB_KEY, 'dashboard', allowedTabs);
   // Which sub-tab the Devices page shows: 'inventory' (list + manual add) or 'discover' (scan +
   // enrollment + adopt). Lifted here so the first-run wizard can send the user straight to Discover.
   const [devicesSub, setDevicesSub] = useState('inventory');
@@ -75,6 +92,12 @@ function AppInner({ lang, onLangChange }) {
 
   async function logout() {
     await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
+    // Forget the section too, so the next person to sign in on this tab starts at the
+    // dashboard rather than inside the last operator's work.
+    // Order matters: setActiveTab WRITES through to storage, so clearing first would leave
+    // "dashboard" sitting in the very key the clear was meant to empty.
+    setActiveTab('dashboard');
+    clearStickyTab(TAB_KEY);
     setSession(null);
     setAuthState('anon');
   }

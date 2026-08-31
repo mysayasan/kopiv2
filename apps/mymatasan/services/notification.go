@@ -134,6 +134,38 @@ func plateInfoFromMetadata(metadata string) (plate, vehicleType, color string, w
 	return str("plate"), str("vehicleType"), str("color"), wl
 }
 
+// faceInfoFromMetadata extracts the recognized identity a face-recognition alert
+// carries in its top-level metadata. isFace distinguishes "this is not a face alert"
+// (every other field is meaningless) from "this IS a face alert and nobody was
+// recognized" — a stranger sighting, which is a real event with an empty name. The
+// two must not collapse: folding them together is how an unknown-face alert ends up
+// looking like a non-face one and says nothing at all.
+func faceInfoFromMetadata(metadata string) (person string, personId int64, confidence float64, recognized, isFace bool) {
+	if strings.TrimSpace(metadata) == "" {
+		return "", 0, 0, false, false
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(metadata), &parsed); err != nil {
+		return "", 0, 0, false, false
+	}
+	// The face detector always writes "recognized"; nothing else does. Its presence is
+	// what makes this a face alert, not the name, which is empty for a stranger.
+	rec, ok := parsed["recognized"].(bool)
+	if !ok {
+		return "", 0, 0, false, false
+	}
+	if v, ok := parsed["personName"].(string); ok {
+		person = strings.TrimSpace(v)
+	}
+	if v, ok := parsed["personId"].(float64); ok {
+		personId = int64(v)
+	}
+	if v, ok := parsed["faceConfidence"].(float64); ok {
+		confidence = v
+	}
+	return person, personId, confidence, rec, true
+}
+
 // INotificationPublisher is the slice of the notification service the app uses
 // to emit events. The domain *notification.Service satisfies it. Publish stores +
 // streams + fans to destinations (generic path); DeliverTo sends a tailored
@@ -273,6 +305,24 @@ func renderVisionAlert(alert *entities.AlertEvent, cameraName, ruleName string, 
 		}
 	}
 
+	// Face alerts carry WHO was seen. Same shape as the plate line above and for the same
+	// reason: the face rule's label already IS the identity ("Alice (94%)"), so an explicit
+	// person line would duplicate it when the label is shown. But when IncludeLabel is off —
+	// and it is a per-destination toggle somebody can switch off without realising what it
+	// takes with it — the notification used to read "Lobby Entrance • 96% confidence" and
+	// name nobody, which is the whole point of the feature missing from the message. Either
+	// way the identity goes into the structured Data map below, where it was never present
+	// at all: a webhook or MQTT consumer had no way to know who was recognized.
+	person, personId, faceConfidence, recognized, isFace := faceInfoFromMetadata(alert.Metadata)
+	if isFace && !fields.IncludeLabel {
+		if recognized && person != "" {
+			body = fmt.Sprintf("%s • %s", body, person)
+		} else {
+			// Naming nobody is the honest answer for a stranger, and it is still news.
+			body = fmt.Sprintf("%s • unknown face", body)
+		}
+	}
+
 	// Identifiers are always included so consumers can correlate and fetch detail. The
 	// two the FLEET reads are named constants (notification.DataAlertId / DataRuleId):
 	// they are a wire contract with the control plane, not a local convenience.
@@ -290,6 +340,18 @@ func renderVisionAlert(alert *entities.AlertEvent, cameraName, ruleName string, 
 		}
 		if color != "" {
 			data["color"] = color
+		}
+	}
+	if isFace {
+		// "person" is the token name the custom-field templates use, so the payload key and
+		// the template key are the same word. recognized is always sent on a face alert:
+		// false is the stranger signal a consumer routes on, and omitting it would make an
+		// unknown face indistinguishable from a delivery that simply dropped the field.
+		data["recognized"] = recognized
+		data["faceConfidence"] = faceConfidence
+		if recognized && person != "" {
+			data["person"] = person
+			data["personId"] = personId
 		}
 	}
 	if fields.IncludeRuleName && ruleName != "" {
@@ -396,6 +458,21 @@ func alertTemplateContext(alert *entities.AlertEvent, ruleName, cameraName strin
 	if plate != "" {
 		watch = fmt.Sprintf("%t", watchlisted)
 	}
+	// Face tokens. {{person}} was DOCUMENTED in the detector ("so notifications can template
+	// {{person}}") and never existed here, so it silently expanded to nothing in every custom
+	// field that used it. On a non-face alert all three stay empty so the token collapses,
+	// matching how the plate tokens behave.
+	person, _, faceConfidence, recognized, isFace := faceInfoFromMetadata(alert.Metadata)
+	recognizedTok, faceConfTok := "", ""
+	if isFace {
+		recognizedTok = fmt.Sprintf("%t", recognized)
+		faceConfTok = fmt.Sprintf("%.0f%%", faceConfidence*100)
+		if !recognized {
+			// A stranger has no name. "unknown" is what a person reading the message needs
+			// to see there — an empty token would leave a dangling "Seen: " in the field.
+			person = "unknown"
+		}
+	}
 	return map[string]string{
 		"ruleName":      ruleName,
 		"cameraName":    cameraName,
@@ -410,6 +487,10 @@ func alertTemplateContext(alert *entities.AlertEvent, ruleName, cameraName strin
 		"vehicleType": vehicleType,
 		"color":       color,
 		"watchlisted": watch,
+		// Face tokens — empty for non-face alerts.
+		"person":         person,
+		"recognized":     recognizedTok,
+		"faceConfidence": faceConfTok,
 	}
 }
 

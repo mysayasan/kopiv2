@@ -3119,7 +3119,7 @@ function DestinationCard({ dest, busy, onChange }) {
               <input value={mqtt.brokerUrl || ''} onChange={(event) => setMqtt({ brokerUrl: event.target.value })} placeholder="ssl://broker.example.com:8883" autoComplete="off" disabled={disabled} />
             </label>
             <label>
-              <FieldTitle info="Publish topic. Supports {{token}} placeholders from the payload data (cameraName, alertId, ruleId, detectionType, and label/confidence/ruleName when those fields are enabled; plate/vehicleType/color on license-plate alerts) plus cameraId, category, severity. A token that resolves to nothing collapses its level (e.g. .../{{cameraId}} on a Test → no trailing slash).">
+              <FieldTitle info="Publish topic. Supports {{token}} placeholders from the payload data (cameraName, alertId, ruleId, detectionType, and label/confidence/ruleName when those fields are enabled; plate/vehicleType/color on license-plate alerts; person/recognized/faceConfidence on face-recognition alerts) plus cameraId, category, severity. A token that resolves to nothing collapses its level (e.g. .../{{cameraId}} on a Test → no trailing slash).">
                 {t('st.topic')}
               </FieldTitle>
               <input value={mqtt.topic || ''} onChange={(event) => setMqtt({ topic: event.target.value })} placeholder="matasan/alerts/{'{{cameraName}}'}" autoComplete="off" disabled={disabled} />
@@ -3285,7 +3285,7 @@ function DestinationCard({ dest, busy, onChange }) {
 
       <fieldset className="dest-group">
         <legend>
-          <FieldTitle info="Key/value pairs added to the payload. A custom field overrides a built-in field of the same key. Values may use templates: {{ruleName}}, {{cameraName}}, {{label}}, {{confidence}}, {{detectionType}}, {{alertId}}, {{ruleId}}, {{cameraId}}, and for license-plate alerts {{plate}}, {{vehicleType}}, {{color}}, {{watchlisted}}.">
+          <FieldTitle info="Key/value pairs added to the payload. A custom field overrides a built-in field of the same key. Values may use templates: {{ruleName}}, {{cameraName}}, {{label}}, {{confidence}}, {{detectionType}}, {{alertId}}, {{ruleId}}, {{cameraId}}, for license-plate alerts {{plate}}, {{vehicleType}}, {{color}}, {{watchlisted}}, and for face-recognition alerts {{person}}, {{recognized}}, {{faceConfidence}}.">
             {t('st.customFields')}
           </FieldTitle>
         </legend>

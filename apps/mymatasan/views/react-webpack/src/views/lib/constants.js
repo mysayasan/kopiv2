@@ -1,3 +1,13 @@
+// TAB_KEY names this app's remembered section (see @shared/stickyTab). The prefix keeps the
+// five apps from reading each other's value when they are served from the same host.
+export const TAB_KEY = 'mymatasan_active_tab';
+// The sections every signed-in role can reach, and the ones gated on isAdmin. These MUST match
+// the SideNav groups in components/layout.js — the rail decides what is offered, this decides
+// what a restored section is allowed to be, and if they disagree an operator either loses their
+// place on every refresh or lands somewhere the rail says they cannot go.
+export const ALWAYS_TABS = ['dashboard', 'views', 'timeline', 'cases', 'notifications', 'manual'];
+export const ADMIN_TABS = ['cameras', 'teach', 'faces', 'objects', 'settings'];
+
 export const THEMES = ['light', 'dark', 'slate'];
 export const THEME_LABELS = { light: 'Light', dark: 'Dark', slate: 'Slate' };
 export const THEME_ICONS  = { light: 'sun',   dark: 'moon', slate: 'palette' };
@@ -102,6 +112,9 @@ export const notificationTemplateTokens = [
   { token: 'vehicleType', group: 'License plate', desc: 'car / truck / bus / motorcycle' },
   { token: 'color', group: 'License plate', desc: 'Vehicle color, when detected' },
   { token: 'watchlisted', group: 'License plate', desc: 'true if the plate is on the rule’s list' },
+  { token: 'person', group: 'Face recognition', desc: 'Recognized person’s name (“unknown” for a stranger)' },
+  { token: 'recognized', group: 'Face recognition', desc: 'true when the face matched an enrolled person' },
+  { token: 'faceConfidence', group: 'Face recognition', desc: 'Face match confidence %' },
 ];
 // Notification categories a destination can subscribe to (value, label, help).
 // Values match the Go category constants.
