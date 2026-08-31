@@ -117,6 +117,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-08-31 — mymatasan 1.147.0, core 1.111.0 (17d196d)
+
+### Changed
+
+- **domain,mymatasan**: mymatasan's sign-in moved from replaying HTTP Basic on every request to a one-time credential exchange: apps/mymatasan/app/wire_routes.go now mounts the shared PUBLIC POST /api/auth/login and POST /api/auth/logout (apps/mymatasan/apis/local_auth.go's new NewLocalLoginApi binding, the same endpoints myiotsan and mypintusan already used), and the SPA (App.js) no longer holds the password in memory or replays a Basic header per request - it signs in once, probes GET /api/auth/session on boot to restore the session across a page reload (previously a refresh looked exactly like a sign-out), and calls logout on sign-out. This also drops a bcrypt verification from every request, which is what previously capped mymatasan's HTTP throughput. HTTP Basic remains fully supported server-side for scripts/API clients and media tiles. Separately, the shared appliance session cookie (domain/shared/apis/local_auth.go, used by mymatasan, myiotsan, and mypintusan) now SLIDES: a cookie-authenticated request past half its 12h TTL re-issues the cookie, so an active cookie-only session is continuously extended instead of hitting a fixed 12h wall from sign-in regardless of activity. Finally, mymatasan's People screen (faces.js, frontend-only) got two independent fixes bundled into this same session: the enrolment dialog now shows upload progress and disables every way to exit (X/Close/Esc/backdrop/drop-zone/mode-toggle/per-photo-delete) plus a beforeunload guard while photos are uploading, and no longer aborts a whole batch on one unreadable file; and the 'Enrolled people' roster gained search, state filter chips with counts, a sort, a list-vs-cards view toggle (persisted, defaults by roster size), sticky A-Z dividers, and a Show more/Show all pager so it scales to hundreds of enrolled people, plus a max-height/scroll on the per-camera watchlist picker. 26 new faces.* i18n keys plus app.invalidCredentials were added across en/ms/zh/ar.
 ## 2026-08-30 — myidsan 1.50.2, myiotsan 0.31.0, mymatasan 1.146.2, myseliasan 1.80.0, core 1.110.0 (e9a3071)
 
 ### Added
