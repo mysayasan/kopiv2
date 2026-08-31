@@ -5,7 +5,7 @@ const en = {
   meta: {
     title: 'r450k — Private on-prem security & automation suite',
     description:
-      'On-prem AI cameras, sensors and door access control with one fleet control plane and single sign-on: ONVIF discovery, YOLO detection, NVR recording, WebRTC live view, OSDP badge readers, MQTT telemetry, and encryption at rest — running on hardware as small as a Raspberry Pi.',
+      'On-prem AI cameras, sensors and door access control with one fleet control plane and single sign-on: ONVIF discovery, YOLO detection, NVR recording, timeline playback, WebRTC video walls, case files with verifiable evidence export, OSDP badge readers, MQTT telemetry, and encryption at rest — running on hardware as small as a Raspberry Pi.',
   },
   brand: {
     name: 'r450k',
@@ -45,7 +45,7 @@ const en = {
       {
         icon: 'eye',
         title: 'Camera-first AI detection',
-        body: 'Two-axis rules pair a mode — presence, crowd, intrusion, line crossing, multi-line crossing, or LPR — with target classes from a data-driven registry, scoped to multiple detection zones per rule. Fire and smoke ship as first-class event classes, and an "Anything" wildcard fires on any detected object.',
+        body: 'Two-axis rules pair a mode — presence, crowd, intrusion, line crossing, multi-line crossing, or LPR — with target classes from a data-driven registry, scoped to multiple detection zones per rule. Rules about a stretch of time rather than a single frame come as standard: loitering, left behind (and, by default, only when nobody is standing beside it), and direction of travel, all reading the same detections and tracking, so a camera already running detection pays nothing extra for them. Fire and smoke ship as first-class event classes, and an "Anything" wildcard fires on any detected object.',
       },
       {
         icon: 'car',
@@ -58,14 +58,29 @@ const en = {
         body: 'Enroll the people you know, and a detection becomes a named alert. On the edge node, faces are aligned, embedded, and matched against your private gallery — so “person detected” turns into “a known face at the front door.” Enrollment and matching run entirely on-prem: no cloud service, no faces ever leaving your network.',
       },
       {
+        icon: 'privacy',
+        title: 'Hide what must not be seen',
+        body: 'Draw the neighbour’s window, the pavement outside the gate, or the keypad somebody types a PIN into, and the recorder asks the camera to black that area out itself — so those pixels are never recorded at all. It then reads the masks back off the camera and says, per camera and in plain words, whether that is confirmed rather than assumed. An export can black those areas out of the copy you hand over, and can be asked to paint over the faces in it too. The product is careful about which is which: a drawn zone is a guarantee, automatic face redaction is a best effort, and it says so beside the checkbox, on the finished file, and in the bundle’s manifest.',
+      },
+      {
         icon: 'record',
-        title: 'NVR recording + compression',
-        body: 'Rolling segment buffer with event-triggered MP4 clip extraction, plus a low-resource JPEG ring-buffer mode. Optional one-pass GPU H.265/H.264 re-encode shrinks footage with on-the-fly playback transcode for any browser.',
+        title: 'NVR recording that checks itself',
+        body: 'Rolling segment buffer with event-triggered MP4 clip extraction, plus a low-resource JPEG ring-buffer mode. Optional one-pass GPU H.265/H.264 re-encode shrinks footage with on-the-fly playback transcode for any browser. It also verifies that it actually recorded: a continuity monitor scores every closed hour against the footage really on disk and raises a gap alert when a camera stops writing, and a tamper monitor notices a lens covered, sprayed, knocked out of focus, or turned to face a wall.',
+      },
+      {
+        icon: 'clock',
+        title: 'Play it back by the clock',
+        body: 'A timeline screen plays footage by wall-clock time instead of by file: scrub a bar shaded with the coverage you actually have, seek straight across segment boundaries, and hold up to eight cameras synchronised on one moment at 0.25×–8× speed, with detections plotted as clickable jump marks. Ask for a moment nothing covers and it tells you so, instead of quietly playing the next thing it found.',
       },
       {
         icon: 'play',
         title: 'Live view you can talk back through',
-        body: 'Direct H.264 RTP-to-WebRTC live view with MJPEG fallback and live sound on any camera codec (G.711 pass-through, AAC→Opus transcoding). Two-way audio talk-back and press-and-hold PTZ let operators respond, not just watch — across paged grids from 1×1 to 4×4.',
+        body: 'Direct H.264 RTP-to-WebRTC live view with MJPEG fallback and live sound on any camera codec (G.711 pass-through, AAC→Opus transcoding). Two-way audio talk-back, press-and-hold PTZ, saved positions and guard tours let operators respond, not just watch. An arrangement worth keeping becomes a named video wall — stored on the appliance rather than in one browser, so it can be handed to the next shift — that cycles through its pages on its own and pulls a camera onto the visible page when it raises an alert. The control plane runs walls that span several recorders.',
+      },
+      {
+        icon: 'bolt',
+        title: 'Respond, not just record',
+        body: 'Most cameras have a terminal block nobody uses. Wire a door contact, a beam, a PIR or a panic button into a camera input and it lands in the feed the moment it trips — named, filterable, filed as a sensor reading rather than an AI detection. Drive the relay output the other way to trigger a siren, a strobe, a gate or a light, by hand or when a rule fires, and a rule can swing a PTZ dome onto a saved position and hold it there while somebody looks. A rule can only ever pulse an output, never latch it, and the camera is asked to switch it back off wherever it will accept the job — so a restart cannot leave a siren sounding.',
       },
       {
         icon: 'sensor',
@@ -95,7 +110,7 @@ const en = {
       {
         icon: 'bell',
         title: 'Unified notification feed',
-        body: 'One feed across AI detection, camera and machine health, and login security — with per-event acknowledge, annotated screenshots, and in-page clip playback. Filter the feed down to a single source camera to isolate one view’s events. Route to webhook, Telegram, or MQTT.',
+        body: 'One feed across AI detection, camera and machine health, and login security — with per-event acknowledge, annotated screenshots, and in-page clip playback. Filter the feed down to a single source camera to isolate one view’s events, or put any row straight into a case file from the screen where you noticed it. Route to email, webhook, Telegram or MQTT — or to a phone: add the fleet page to a home screen and it installs like an app, and registering a device sends a real notification there and then and reports what actually happened, rather than claiming a switch is on.',
       },
       {
         icon: 'link',
@@ -106,6 +121,16 @@ const en = {
         icon: 'map',
         title: 'Fleet maps & floor plans',
         body: 'The control plane puts your whole estate on a map — sites and buildings pinned by location, with every edge node and its cameras layered on top. Drop into a building to design its floor plan in-app, place each camera on the plan with a field-of-view coverage cone, and see one building’s cameras aggregated across several nodes. Click any camera to locate it or open its live view straight from the map.',
+      },
+      {
+        icon: 'server',
+        title: 'Run the fleet, not the appliances',
+        body: 'Declare what a node’s settings ought to be — recording continuity, camera reachability, tamper detection, health thresholds, retention — and the control plane reports every quarter of an hour which appliances have drifted. It only reports, until you opt a policy into writing the value back. Upgrade in rings with a canary first, where a ring passes only when every node returned, reported the target version itself, and held it for a settle window. And answer what the fleet’s uptime WAS, not only what it is, per node, per site and per month — with the spans where the control plane itself was not watching counted rather than quietly skipped.',
+      },
+      {
+        icon: 'failover',
+        title: 'Survives losing an appliance',
+        body: 'A recorder is the only thing recording its own cameras. Name a spare and it is kept supplied with that recorder’s camera list — then press Test on a quiet afternoon and the spare actually opens every one of those cameras and reports, per camera, whether it could and whether it has the headroom to keep them. Until you do, the plan says NEVER TESTED and nothing pretends otherwise. Flag the rules whose evidence must outlive the box and the fleet pulls those clips off the appliance and keeps its own hash-verified copy, for the case where the recording is destroyed by whoever set off the alarm. The control plane and the identity server themselves run as several instances behind a load balancer.',
       },
       {
         icon: 'sparkle',
@@ -120,7 +145,12 @@ const en = {
       {
         icon: 'search',
         title: 'Object Search',
-        body: 'Search your footage by what the cameras actually saw. Every detection is coalesced onto a searchable timeline — filter by camera, date range, one or more object types at once, and confidence, then jump straight to the exact moment in the recording, with the object boxed on a preview thumbnail. Export the results to CSV or PDF. It taps the live detector\'s own output, so there is no second video pass.',
+        body: 'Search your footage by what the cameras actually saw. Every detection is coalesced onto a searchable timeline — filter by camera, date range, one or more object types at once, and confidence, then jump straight to the exact moment in the recording, with the object boxed on a preview thumbnail. Export the results to CSV or PDF. It taps the live detector\'s own output, so there is no second video pass. Pick a recorded person or vehicle and "Find similar" ranks every other sighting on the appliance by appearance — and the control plane asks the same question of every node at once, merging what each recorder saw and recognized into one list.',
+      },
+      {
+        icon: 'folder',
+        title: 'Case files and verifiable evidence',
+        body: 'An investigation gets somewhere to live. A case collects the footage, the sightings and the operator’s notes for one incident — bookmarked straight off the timeline or the notification feed, annotated with why each piece matters, handed to a colleague, and closed with a stated outcome. The part that makes it worth opening: while a case is open, retention, a manual purge and the clean-up that runs when the disk fills all refuse to delete the footage it points at. It exports as one bundle — the clips joined without re-encoding, a manifest naming each source segment and its SHA-256, the chain of custody as a CSV, and a plain-text note explaining how to check all of it with standard tools.',
       },
       {
         icon: 'shield',
@@ -140,8 +170,8 @@ const en = {
     steps: [
       { n: '01', title: 'Discover', body: 'Authenticated ONVIF discovery and manual probe find cameras on your LAN, an enrollment window or read-only network scan finds sensors, and OSDP readers announce themselves on the bus. Saved devices persist in a local SQLite database.' },
       { n: '02', title: 'Detect', body: 'On-device YOLO inference runs your detection rules — presence, crowd, intrusion, line crossing, or plate recognition — against the live frames, while sensor thresholds and badge decisions are evaluated on the appliance itself.' },
-      { n: '03', title: 'Record', body: 'Continuous NVR recording rolls in the background and extracts an MP4 clip the moment a rule fires, encrypted on disk; telemetry and every access decision land in their own append-only history.' },
-      { n: '04', title: 'Notify', body: 'Alerts land in the unified feed with an annotated snapshot and clip, correlate across cameras, sensors and doors at the control plane, and fan out to webhook, Telegram, or MQTT destinations you choose.' },
+      { n: '03', title: 'Record', body: 'Continuous NVR recording rolls in the background and extracts an MP4 clip the moment a rule fires, encrypted on disk; telemetry and every access decision land in their own append-only history. Play it back by the clock on the timeline, and pin what matters into a case file so retention cannot take it.' },
+      { n: '04', title: 'Notify', body: 'Alerts land in the unified feed with an annotated snapshot and clip, correlate across cameras, sensors and doors at the control plane, and fan out to the email, webhook, Telegram, MQTT or phone destinations you choose.' },
     ],
   },
   tiers: {
@@ -184,7 +214,7 @@ const en = {
       { title: 'Agriculture & remote sites', body: 'Spot animals or intruders across land with poor or no connectivity; detection and recording run entirely locally.' },
       { title: 'Care homes & clinics', body: 'After-hours movement and fall-style alerts with footage that never leaves the building — privacy by default.' },
       { title: 'Industrial & utilities', body: 'Zone and line-crossing rules for restricted areas and equipment, on rugged hardware where uplinks are unreliable.' },
-      { title: 'Multi-site fleets', body: 'A control plane adopts many edge nodes over the LAN — cameras, sensors and door controllers alike — maps every site and building, and relays live view back to operators, with per-building floor plans that place each camera and its coverage.' },
+      { title: 'Multi-site fleets', body: 'A control plane adopts many edge nodes over the LAN — cameras, sensors and door controllers alike — maps every site and building, and relays live view back to operators, with per-building floor plans that place each camera and its coverage. It holds every site to one settings policy, upgrades the estate a ring at a time, reports what each site’s uptime actually was, and can fail a lost recorder over to a spare.' },
     ],
   },
   apps: {
@@ -194,11 +224,11 @@ const en = {
     available: 'Available',
     platform: 'Platform',
     items: [
-      { name: 'mymatasan', status: 'Flagship · in active development', available: true, body: 'The standalone edge camera & video-intelligence node: ONVIF, AI detection, NVR, WebRTC live view, encryption, and LAN pairing.' },
+      { name: 'mymatasan', status: 'Flagship · in active development', available: true, body: 'The standalone edge camera & video-intelligence node: ONVIF, AI detection, NVR, WebRTC live view and saved video walls, timeline playback, case files with verifiable evidence export, encryption, and LAN pairing.' },
       { name: 'myiotsan', status: 'Sensor hub · available now', available: true, body: 'The NVR, but for sensors: door contacts, motion, temperature, smoke, leaks, power meters and Modbus/SunSpec inverters over an embedded MQTT broker — with rules, alerts, scenes and schedules, a visual flow canvas, safe actuation, and telemetry history.' },
       { name: 'mypintusan', status: 'Access control · in development', available: false, body: 'The door controller: OSDP badge readers over RS-485 or IP, with people, groups, schedules, holidays, site lockdown and a duress PIN all decided on the appliance itself, so a cut uplink never means a door that will not open. Adoptable into the fleet like any other node — not yet available to download.' },
-      { name: 'myseliasan', status: 'Control plane · available now', available: true, body: 'The fleet control plane that discovers, adopts, and manages camera, sensor and door nodes alike — mapping every site, building, and node with per-building floor plans and camera coverage — and correlates events across them: motion on a camera AND a door opening AND no badge accepted. It also writes the daily fleet digest, answers questions about the fleet, and renders printable PDF reports.' },
-      { name: 'myidsan', status: 'Identity · available now', available: true, body: 'The single sign-on front door: one federated identity across every app, with local accounts, enterprise LDAP / Active Directory, Kerberos SPNEGO desktop SSO, and generic OIDC providers — plus TOTP and WebAuthn multi-factor, group-to-role mapping, per-app access control, and an immutable audit trail. A single pure-Go binary that runs fully on your intranet, no egress.' },
+      { name: 'myseliasan', status: 'Control plane · available now', available: true, body: 'The fleet control plane that discovers, adopts, and manages camera, sensor and door nodes alike — mapping every site, building, and node with per-building floor plans and camera coverage — and correlates events across them: motion on a camera AND a door opening AND no badge accepted. It holds the estate to a settings policy, upgrades it in rings, fails a recorder over to a spare that has been proved, runs a video wall spanning several recorders, writes the daily fleet digest, answers questions about the fleet, and renders printable PDF reports. It can run as several instances behind a load balancer.' },
+      { name: 'myidsan', status: 'Identity · available now', available: true, body: 'The single sign-on front door: one federated identity across every app, with local accounts, enterprise LDAP / Active Directory, Kerberos SPNEGO desktop SSO, and generic OIDC providers — plus TOTP and WebAuthn multi-factor, group-to-role mapping, per-app access control, live session revocation that reaches the relying app, and an immutable audit trail recording which application each account was actually let into. A single pure-Go binary that runs fully on your intranet, no egress — one instance or several behind a load balancer.' },
     ],
   },
   downloads: {
@@ -216,12 +246,12 @@ const en = {
     products: {
       mymatasan: {
         name: 'MyMataSan',
-        tagline: 'The edge node — one install per site. ONVIF cameras, on-device AI detection, NVR recording and WebRTC live view. Ships with the web UI, AI worker scripts and a default config.',
+        tagline: 'The edge node — one install per site. ONVIF cameras, on-device AI detection, NVR recording with continuity and tamper checks, WebRTC live view and video walls, timeline playback, and case files that export as verifiable evidence. Ships with the web UI, AI worker scripts and a default config.',
         dockerHint: 'Run the multi-arch image (ffmpeg included):',
       },
       myseliasan: {
         name: 'MySeliaSan',
-        tagline: 'The fleet control plane — discover, adopt and manage many MyMataSan and MyIotSan nodes from one place, watch their cameras and sensors without ever exposing a node, and correlate events across both. A single pure-Go binary: no ffmpeg, no Python.',
+        tagline: 'The fleet control plane — discover, adopt and manage many MyMataSan, MyIotSan and MyPintuSan nodes from one place, watch their cameras and sensors without ever exposing a node, and correlate events across all three. Holds the estate to a settings policy, upgrades it in rings, and fails a recorder over to a proved spare. A single pure-Go binary: no ffmpeg, no Python — run one instance, or several behind a load balancer.',
         dockerHint: 'Run the multi-arch image:',
       },
       myiotsan: {

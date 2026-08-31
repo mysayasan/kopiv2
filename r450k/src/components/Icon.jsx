@@ -113,6 +113,40 @@ const paths = {
       <path d="M10.6 6.8 6.4 16M13.4 6.8 17.6 16M7.2 18h9.6" />
     </>
   ),
+  clock: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5.2l3.3 2" />
+    </>
+  ),
+  folder: (
+    <>
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
+      <path d="M3 11h18" />
+    </>
+  ),
+  privacy: (
+    <>
+      <path d="M3.5 12s3.5-6.5 8.5-6.5c1.4 0 2.7.4 3.8 1" />
+      <path d="M20.5 12s-3.5 6.5-8.5 6.5c-1.5 0-2.8-.5-4-1.2" />
+      <path d="M9.6 9.7a3 3 0 0 0 4.2 4.2" />
+      <path d="M4 20 20 4" />
+    </>
+  ),
+  server: (
+    <>
+      <rect x="3" y="4" width="18" height="6" rx="1.5" />
+      <rect x="3" y="14" width="18" height="6" rx="1.5" />
+      <path d="M7 7h.01M7 17h.01" />
+    </>
+  ),
+  failover: (
+    <>
+      <path d="M4 8h12l-3-3M4 8l3 3" />
+      <path d="M20 16H8l3 3M20 16l-3-3" />
+    </>
+  ),
+  bolt: <path d="M13 3 5 14h6l-1 7 8-11h-6l1-7Z" />,
   check: <path d="M5 12l5 5 9-11" />,
   coffee: (
     <>
