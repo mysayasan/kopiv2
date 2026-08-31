@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -229,5 +230,109 @@ func TestLocalBasicAuthForcesPasswordChange(t *testing.T) {
 		if rr.Code != http.StatusNoContent {
 			t.Fatalf("allow-listed path %s status = %d, want 204", path, rr.Code)
 		}
+	}
+}
+
+// A page refresh is a request with a cookie and NO Basic header. That is the whole mechanism
+// behind "reloading does not sign me out", so it is asserted directly: the reloaded client is
+// authenticated, and a cookie that is still young is NOT rewritten on every request.
+func TestLocalAuthCookieOnlyRequestIsAuthenticatedAndNotChurned(t *testing.T) {
+	userService := &fakeLocalUserService{}
+	middleware := NewLocalBasicAuth(testAuthConfig, userService, NewLoginGuard(LoginGuardConfig{}))
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := LocalUserFromContext(r.Context()); !ok {
+			t.Fatalf("expected an authenticated user")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/api/auth/session", nil)
+	req.SetBasicAuth("admin", "secret")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	cookies := rr.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatalf("sign-in issued no cookie")
+	}
+	if parts := strings.Split(cookies[0].Value, ":"); len(parts) != 3 {
+		t.Fatalf("cookie value = %q, want username:hash:issuedAt", cookies[0].Value)
+	}
+
+	// The reload: cookie only.
+	req = httptest.NewRequest(http.MethodGet, "http://example.com/api/auth/session", nil)
+	req.AddCookie(cookies[0])
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("cookie-only status = %d, want 204", rr.Code)
+	}
+	if got := rr.Result().Cookies(); len(got) != 0 {
+		t.Fatalf("a fresh cookie was rewritten on a young session: %#v", got)
+	}
+}
+
+// The sliding window: a session past its half-life is re-issued, so a client that never sends
+// a Basic credential (every SPA on this middleware, after a reload) does not hit a fixed wall.
+func TestLocalAuthCookieRenewsWhenHalfSpent(t *testing.T) {
+	userService := &fakeLocalUserService{sessionUsername: "admin", sessionHash: "session-hash"}
+	middleware := NewLocalBasicAuth(testAuthConfig, userService, NewLoginGuard(LoginGuardConfig{}))
+	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	aged := time.Now().Add(-localAuthCookieRenewAfter - time.Minute).Unix()
+	for name, value := range map[string]string{
+		"half-spent": "admin:session-hash:" + strconv.FormatInt(aged, 10),
+		// The two-field shape written before this existed: an unknown age is due.
+		"pre-upgrade": "admin:session-hash",
+	} {
+		req := httptest.NewRequest(http.MethodGet, "http://example.com/api/doors", nil)
+		req.AddCookie(&http.Cookie{Name: testAuthConfig.cookieName(), Value: value})
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusNoContent {
+			t.Fatalf("%s: status = %d, want 204", name, rr.Code)
+		}
+		got := rr.Result().Cookies()
+		if len(got) != 1 || got[0].Name != testAuthConfig.cookieName() {
+			t.Fatalf("%s: expected the cookie to be renewed, got %#v", name, got)
+		}
+		if got[0].Value == value {
+			t.Fatalf("%s: renewed cookie carries the old issue time", name)
+		}
+	}
+}
+
+func TestShouldRenewLocalAuthCookie(t *testing.T) {
+	cases := map[string]struct {
+		issuedAt time.Time
+		want     bool
+	}{
+		"unknown age":  {time.Time{}, true},
+		"just issued":  {time.Now(), false},
+		"young":        {time.Now().Add(-time.Minute), false},
+		"half spent":   {time.Now().Add(-localAuthCookieRenewAfter - time.Second), true},
+		"clock jumped": {time.Now().Add(time.Hour), true},
+	}
+	for name, tc := range cases {
+		if got := shouldRenewLocalAuthCookie(tc.issuedAt); got != tc.want {
+			t.Fatalf("%s: shouldRenewLocalAuthCookie = %v, want %v", name, got, tc.want)
+		}
+	}
+}
+
+func TestParseLocalAuthCookieAcceptsBothShapes(t *testing.T) {
+	if _, _, issuedAt, ok := parseLocalAuthCookie("admin:hash"); !ok || !issuedAt.IsZero() {
+		t.Fatalf("two-field cookie: ok=%v issuedAt=%v", ok, issuedAt)
+	}
+	user, hash, issuedAt, ok := parseLocalAuthCookie("admin:hash:1700000000")
+	if !ok || user != "admin" || hash != "hash" || issuedAt.Unix() != 1700000000 {
+		t.Fatalf("three-field cookie: %q %q %v %v", user, hash, issuedAt, ok)
+	}
+	if _, _, _, ok := parseLocalAuthCookie("admin"); ok {
+		t.Fatalf("a one-field cookie must be rejected")
+	}
+	if _, _, _, ok := parseLocalAuthCookie(""); ok {
+		t.Fatalf("an empty cookie must be rejected")
 	}
 }

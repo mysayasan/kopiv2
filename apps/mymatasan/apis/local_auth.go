@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/gorilla/mux"
 	"github.com/mysayasan/kopiv2/apps/mymatasan/services"
 	sharedapis "github.com/mysayasan/kopiv2/domain/shared/apis"
 	sharedservices "github.com/mysayasan/kopiv2/domain/shared/services"
@@ -32,19 +33,36 @@ func LocalUserFromContext(ctx context.Context) (*services.AuthenticatedUser, boo
 // NewLocalBasicAuth protects mymatasan's routes with DB-backed users (Basic + session
 // cookie), the forced-password-change gate, and the failed-login lockout.
 func NewLocalBasicAuth(userService services.ILocalUserService, guard *LoginGuard, notifier services.INotificationPublisher) func(http.Handler) http.Handler {
-	return sharedapis.NewLocalBasicAuth(sharedapis.LocalAuthConfig{
-		AppName: "mymatasan",
-		OnLockout: func(ctx context.Context, info sharedapis.LockoutInfo) {
-			if notifier == nil {
-				return
-			}
-			services.NotifyAuthLockout(ctx, notifier, services.AuthLockoutInfo{
-				Username:    info.Username,
-				IP:          info.IP,
-				LockSeconds: info.LockSeconds,
-			})
-		},
-	}, userService, guard)
+	return sharedapis.NewLocalBasicAuth(lockoutAuthConfig(notifier), userService, guard)
+}
+
+// NewLocalLoginApi registers mymatasan's PUBLIC sign-in and sign-out endpoints.
+//
+// This is what makes a page reload survivable. Before it existed, the SPA verified the
+// credential by replaying HTTP Basic on every request and holding the password in the page's
+// memory — so a refresh, which throws that memory away, was indistinguishable from signing
+// out. Exchanging the credential once for the session cookie means the browser holds the
+// session, not the page, and it also stops charging a bcrypt verification to every request.
+func NewLocalLoginApi(router *mux.Router, userService services.ILocalUserService, guard *LoginGuard, notifier services.INotificationPublisher) {
+	sharedapis.NewLocalLoginApi(router, lockoutAuthConfig(notifier), userService, guard)
+}
+
+// lockoutAuthConfig is mymatasan's binding plus the hook that surfaces a tripped lockout as a
+// security notification. Shared by the middleware and the login endpoint so a lockout is
+// reported the same way whichever of them trips it.
+func lockoutAuthConfig(notifier services.INotificationPublisher) sharedapis.LocalAuthConfig {
+	cfg := localAuthConfig()
+	cfg.OnLockout = func(ctx context.Context, info sharedapis.LockoutInfo) {
+		if notifier == nil {
+			return
+		}
+		services.NotifyAuthLockout(ctx, notifier, services.AuthLockoutInfo{
+			Username:    info.Username,
+			IP:          info.IP,
+			LockSeconds: info.LockSeconds,
+		})
+	}
+	return cfg
 }
 
 // localAuthConfig is mymatasan's binding of the shared middleware: the app name that names

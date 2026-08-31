@@ -32,6 +32,13 @@ func registerRoutes(api *mux.Router, w *wiring) *mux.Router {
 	// the sign-in screen and the first-run wizard, which are precisely where a reader has no
 	// session. It serves only shipped, read-only documentation. See apis.NewManualApi.
 	apis.NewManualApi(api)
+	// Sign-in and sign-out are public for the same structural reason: /auth/login is the
+	// endpoint that AUTHENTICATES, so it cannot sit behind the middleware that demands
+	// authentication, and it has to be registered before the protected catch-all or that
+	// swallows it. It exchanges the credential for the session cookie once — which is what
+	// lets a reloaded page stay signed in, since the browser kept the cookie and the page
+	// never kept the password.
+	apis.NewLocalLoginApi(api, w.localUser, w.loginGuard, w.loginLockoutNotifier)
 
 	protected := api.PathPrefix("").Subrouter()
 	// w.systemReset is nil at this point — it is built last, because it needs the monitors

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiBase, parseFaceRuleConfig, faceRuleConfigText, formatTimestamp } from '../lib/helpers';
 import { useT } from '@shared/i18n';
 import { HelpButton } from '@shared/Manual';
@@ -27,6 +27,50 @@ const CONSENT_KEY = 'mymatasan_face_consent';
 // "10-30 is good" guidance in faces.photoHint on purpose — a card that turns green at 3 while the
 // hint asks for 10 is the screen contradicting itself.
 const GOOD_PHOTO_COUNT = 10;
+
+// A roster of six people and a roster of a hundred are different screens. Past this many, the panel
+// grows the controls that make a directory findable — search, state filters, a sort, and a compact
+// row view. Below it they would be four controls sitting above six cards: furniture, not help.
+const CONTROLS_FROM = 12;
+
+// How many people are drawn before "Show more". A card carries a 46px avatar and two lines of its
+// own chrome; a row is a quarter of that, so rows page in bigger batches. The cap exists because a
+// hundred cards is a hundred base64 avatars decoded into one layout — the screen an operator sees
+// should be the part they can read.
+const PAGE = { cards: 24, list: 60 };
+
+const VIEW_KEY = 'mymatasan_faces_view';
+const SORT_KEY = 'mymatasan_faces_sort';
+
+// The states an operator hunts for in a long roster — and every one of them is a state the person's
+// own card already reports out loud. Nothing here filters by something invisible.
+const FILTERS = [
+  { key: 'all', label: 'faces.filterAll', match: () => true },
+  { key: 'nophotos', label: 'faces.filterNeedsPhotos', match: (p) => (p.photos || 0) === 0 },
+  { key: 'thin', label: 'faces.filterThin', match: (p) => (p.photos || 0) > 0 && (p.photos || 0) < GOOD_PHOTO_COUNT },
+  { key: 'off', label: 'faces.filterOff', match: (p) => !p.enabled },
+];
+
+const SORTS = ['name', 'seen', 'photos'];
+
+// Names are typed from memory, not copied: "zaid" has to find "Zaïd", and a trailing space from a
+// paste has to find anybody at all. Case and combining marks are dropped on both sides.
+function foldName(value) {
+  return String(value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+// The letter a name files under in the A-Z dividers. Deliberately NOT restricted to Latin: an
+// Arabic or Chinese roster gets its own initials rather than one giant "#" bucket.
+function letterOf(name) {
+  const c = String(name || '').trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').charAt(0).toUpperCase();
+  return c || '#';
+}
+
+// The photo count is the whole truth about a person: at zero they are not in the gallery the
+// matcher reads, so they are not recognized by anything.
+function photoClass(photos) {
+  return photos === 0 ? ' is-warn' : photos < GOOD_PHOTO_COUNT ? ' is-thin' : ' is-ok';
+}
 
 async function fileToBase64(file) {
   const buf = await file.arrayBuffer();
@@ -69,6 +113,85 @@ function Avatar({ person, size = 'md' }) {
   return <span className={`${cls} is-placeholder`} aria-hidden="true">{initial(person?.name)}</span>;
 }
 
+// One person as a CARD: avatar-first, for a roster short enough to recognize by face.
+function PersonCard({ p, seen, seenText, onOpen, onToggle, onRemove }) {
+  const t = useT();
+  const photos = p.photos || 0;
+  return (
+    <li data-person-id={p.id} className={`faces-card${p.enabled ? '' : ' is-off'}`}>
+      <button type="button" className="faces-card-main" onClick={onOpen} aria-label={t('faces.openEnroll', { name: p.name })}>
+        <Avatar person={p} />
+        <span className="faces-card-text">
+          {/* A person's name is data, not translated copy: in an RTL page a Latin name (or one
+              with punctuation) reorders unless it is isolated. */}
+          <span className="faces-card-name"><bdi>{p.name}</bdi></span>
+          <span className={`faces-pill${photoClass(photos)}`} data-photos={photos}>
+            {photos === 0 ? t('faces.noPhotosYet') : t('faces.photoCount', { n: photos })}
+          </span>
+          {/* The proof the feature is doing anything, on the card of the person it happened to. A
+              recognition is already an alert, a snapshot, a clip and a notification — all of them
+              on other screens. */}
+          <span className="faces-seen" data-seen={seen ? seen.at : 0}>{seenText}</span>
+        </span>
+        <span className="faces-card-go" aria-hidden="true"><Ico n="chev-right" sz={16} /></span>
+      </button>
+      <div className="faces-card-foot">
+        <Toggle
+          checked={!!p.enabled}
+          onChange={onToggle}
+          label={t('faces.recognizeThem')}
+          ariaLabel={t('faces.recognizeThemAria', { name: p.name })}
+        />
+        <button
+          type="button"
+          className="faces-icon-btn danger-text"
+          onClick={onRemove}
+          title={t('faces.delete')}
+          aria-label={t('faces.deleteAria', { name: p.name })}
+        >
+          <Ico n="trash" sz={14} />
+        </button>
+      </div>
+    </li>
+  );
+}
+
+// The same person as a ROW: identical facts, one line, ~44px instead of ~150px. This is the view a
+// hundred-person roster opens in, because a directory that long is read by NAME — you already know
+// who you are looking for — and a wall of face cards is the slowest possible way to answer that.
+function PersonRow({ p, seen, seenText, onOpen, onToggle, onRemove }) {
+  const t = useT();
+  const photos = p.photos || 0;
+  return (
+    <li data-person-id={p.id} className={`faces-row${p.enabled ? '' : ' is-off'}`}>
+      <button type="button" className="faces-row-main" onClick={onOpen} aria-label={t('faces.openEnroll', { name: p.name })}>
+        <Avatar person={p} size="sm" />
+        <span className="faces-row-name"><bdi>{p.name}</bdi></span>
+        <span className={`faces-pill${photoClass(photos)}`} data-photos={photos}>
+          {photos === 0 ? t('faces.noPhotosYet') : t('faces.photoCount', { n: photos })}
+        </span>
+        <span className="faces-seen" data-seen={seen ? seen.at : 0}>{seenText}</span>
+      </button>
+      <div className="faces-row-actions">
+        <Toggle
+          checked={!!p.enabled}
+          onChange={onToggle}
+          ariaLabel={t('faces.recognizeThemAria', { name: p.name })}
+        />
+        <button
+          type="button"
+          className="faces-icon-btn danger-text"
+          onClick={onRemove}
+          title={t('faces.delete')}
+          aria-label={t('faces.deleteAria', { name: p.name })}
+        >
+          <Ico n="trash" sz={14} />
+        </button>
+      </div>
+    </li>
+  );
+}
+
 export function FacesTab({ authHeader, cameras = [], onMessage }) {
   const t = useT();
   const [people, setPeople] = useState([]);
@@ -94,6 +217,21 @@ export function FacesTab({ authHeader, cameras = [], onMessage }) {
   // The person whose enrolment dialog is open. Set the moment a person is created, so "add" flows
   // straight into "give them a face" instead of ending on a row nobody notices.
   const [enrolling, setEnrolling] = useState(null);
+  // How the roster is being narrowed. None of it is persisted except the two SHAPE choices (view
+  // and sort): a search or a filter left over from last week would hide people from somebody who
+  // does not remember typing it.
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState('all');
+  const [sort, setSort] = useState(() => {
+    const saved = localStorage.getItem(SORT_KEY);
+    return SORTS.includes(saved) ? saved : 'name';
+  });
+  // '' means "let the size of the roster decide" — an explicit choice sticks.
+  const [view, setView] = useState(() => {
+    const saved = localStorage.getItem(VIEW_KEY);
+    return saved === 'cards' || saved === 'list' ? saved : '';
+  });
+  const [shown, setShown] = useState(PAGE.cards);
   const nameRef = useRef(null);
 
   // NOTE THE /api PREFIX. Without it every request on this page went to `${origin}/faces`, which
@@ -173,6 +311,68 @@ export function FacesTab({ authHeader, cameras = [], onMessage }) {
   // what infra/vision/face.go compares), so a renamed person silently drops out of their own
   // watchlist — said out loud in the hint rather than left to be discovered.
   const enrolledNames = people.filter((p) => (p.photos || 0) > 0).map((p) => p.name);
+
+  // "Last seen" as one sentence, resolved here because it needs the camera names and the sightings
+  // index; both list shapes then render the same string.
+  const seenTextFor = useCallback((p) => {
+    const seen = sightingByPerson.get(Number(p.id));
+    if (seen) {
+      return t('faces.seenAt', {
+        when: relativeWhen(t, seen.at),
+        camera: cameraNameById.get(Number(seen.cameraId)) || t('notif.cameraN', { id: seen.cameraId }),
+      });
+    }
+    return (p.photos || 0) > 0 ? t('faces.notSeenYet') : '';
+  }, [cameraNameById, sightingByPerson, t]);
+
+  // Every chip carries its own count, so the roster answers "how many of my people still have no
+  // photos?" without anybody clicking anything — which is the question this screen exists for.
+  const filterCounts = useMemo(() => {
+    const counts = {};
+    FILTERS.forEach((f) => { counts[f.key] = people.filter(f.match).length; });
+    return counts;
+  }, [people]);
+
+  // Cards below the threshold, rows above it, unless somebody has said otherwise. The default is
+  // the one that stays usable as the roster grows past the point where faces can be scanned.
+  const effView = view || (people.length > PAGE.cards ? 'list' : 'cards');
+  const pageSize = PAGE[effView];
+  const showControls = people.length >= CONTROLS_FROM;
+
+  const visible = useMemo(() => {
+    const q = foldName(query.trim());
+    const f = FILTERS.find((x) => x.key === filter) || FILTERS[0];
+    const seenAt = (p) => Number(sightingByPerson.get(Number(p.id))?.at || 0);
+    const byName = (a, b) => String(a.name || '').localeCompare(String(b.name || ''));
+    const rows = people.filter((p) => f.match(p) && (!q || foldName(p.name).includes(q)));
+    if (sort === 'seen') return rows.sort((a, b) => seenAt(b) - seenAt(a) || byName(a, b));
+    if (sort === 'photos') return rows.sort((a, b) => (a.photos || 0) - (b.photos || 0) || byName(a, b));
+    return rows.sort(byName);
+  }, [people, query, filter, sort, sightingByPerson]);
+
+  // Narrowing the list resets the page. Without this, searching inside an expanded roster shows a
+  // "Show more" that is already exhausted, and clearing the search leaves 300 rows mounted.
+  useEffect(() => { setShown(pageSize); }, [query, filter, sort, pageSize]);
+
+  const slice = visible.slice(0, shown);
+  // A-Z dividers only when the order actually IS A-Z; over any other sort they would be lying
+  // about where the next name begins.
+  const showLetters = effView === 'list' && sort === 'name' && showControls;
+
+  function chooseView(next) {
+    setView(next);
+    try { localStorage.setItem(VIEW_KEY, next); } catch (_) { /* private mode: the choice is just not remembered */ }
+  }
+
+  function chooseSort(next) {
+    setSort(next);
+    try { localStorage.setItem(SORT_KEY, next); } catch (_) { /* as above */ }
+  }
+
+  function clearFilters() {
+    setQuery('');
+    setFilter('all');
+  }
 
   // saveRuleConfig writes a face rule's policy back.
   //
@@ -337,11 +537,98 @@ export function FacesTab({ authHeader, cameras = [], onMessage }) {
       </p>
       )}
 
-      <div className="settings-panel">
+      <div className="settings-panel faces-roster">
         <header>
           <h2>{t('faces.rosterTitle')}</h2>
-          <span className="settings-hint">{t('faces.rosterCount', { n: people.length })}</span>
+          {/* The count is also the feedback that a filter did something, so it says "12 of 128"
+              the moment the two numbers differ, and announces the change to a screen reader. */}
+          <span className="settings-hint" aria-live="polite">
+            {visible.length === people.length
+              ? t('faces.rosterCount', { n: people.length })
+              : t('faces.showingOf', { n: visible.length, total: people.length })}
+          </span>
         </header>
+
+        {/* Search / filter / sort / view. Hidden under CONTROLS_FROM people, where the whole
+            roster already fits on one screen and every one of these controls would be a thing to
+            read past. */}
+        {showControls ? (
+          <div className="faces-controls">
+            <div className="faces-search">
+              <Ico n="search" sz={14} />
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={t('faces.searchPlaceholder', { n: people.length })}
+                aria-label={t('faces.searchLabel')}
+              />
+              {query ? (
+                <button
+                  type="button"
+                  className="faces-search-clear"
+                  onClick={() => setQuery('')}
+                  aria-label={t('faces.searchClear')}
+                  title={t('faces.searchClear')}
+                >
+                  <Ico n="x" sz={12} />
+                </button>
+              ) : null}
+            </div>
+
+            <div className="faces-chips" role="group" aria-label={t('faces.filterAria')}>
+              {FILTERS.map((f) => (
+                <button
+                  key={f.key}
+                  type="button"
+                  className={`faces-chip${filter === f.key ? ' active' : ''}`}
+                  aria-pressed={filter === f.key}
+                  onClick={() => setFilter(f.key)}
+                  data-filter={f.key}
+                >
+                  {t(f.label)}
+                  <span className="faces-chip-n">{filterCounts[f.key] || 0}</span>
+                </button>
+              ))}
+            </div>
+
+            <div className="faces-controls-right">
+              <select
+                className="faces-sort"
+                value={sort}
+                onChange={(e) => chooseSort(e.target.value)}
+                aria-label={t('faces.sortLabel')}
+              >
+                <option value="name">{t('faces.sortName')}</option>
+                <option value="seen">{t('faces.sortSeen')}</option>
+                <option value="photos">{t('faces.sortPhotos')}</option>
+              </select>
+
+              <div className="seg-toggle faces-view" role="group" aria-label={t('faces.viewAria')}>
+                <button
+                  type="button"
+                  className={effView === 'list' ? 'active' : ''}
+                  aria-pressed={effView === 'list'}
+                  onClick={() => chooseView('list')}
+                  title={t('faces.viewList')}
+                  aria-label={t('faces.viewList')}
+                >
+                  <Ico n="list" sz={14} />
+                </button>
+                <button
+                  type="button"
+                  className={effView === 'cards' ? 'active' : ''}
+                  aria-pressed={effView === 'cards'}
+                  onClick={() => chooseView('cards')}
+                  title={t('faces.viewCards')}
+                  aria-label={t('faces.viewCards')}
+                >
+                  <Ico n="grid4" sz={14} />
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {busy && people.length === 0 ? <p className="settings-hint">{t('faces.loading')}</p> : null}
 
@@ -356,67 +643,67 @@ export function FacesTab({ authHeader, cameras = [], onMessage }) {
           </div>
         ) : null}
 
-        {people.length > 0 ? (
+        {/* A roster with people in it that shows none of them has to say why, and offer the way
+            back — otherwise a stale filter reads as "everybody is gone". */}
+        {people.length > 0 && visible.length === 0 ? (
+          <div className="faces-empty">
+            <span className="faces-empty-mark" aria-hidden="true"><Ico n="search" sz={26} /></span>
+            <p className="faces-empty-title">{query ? t('faces.noMatch') : t('faces.noMatchFilter')}</p>
+            <button type="button" className="quiet" onClick={clearFilters}>{t('faces.clearFilters')}</button>
+          </div>
+        ) : null}
+
+        {slice.length > 0 && effView === 'cards' ? (
           <ul className="faces-grid">
-            {people.map((p) => {
-              const photos = p.photos || 0;
-              const seen = sightingByPerson.get(Number(p.id));
+            {slice.map((p) => (
+              <PersonCard
+                key={p.id}
+                p={p}
+                seen={sightingByPerson.get(Number(p.id))}
+                seenText={seenTextFor(p)}
+                onOpen={() => setEnrolling(p)}
+                onToggle={() => togglePerson(p)}
+                onRemove={() => removePerson(p.id, p.name)}
+              />
+            ))}
+          </ul>
+        ) : null}
+
+        {slice.length > 0 && effView === 'list' ? (
+          <ul className="faces-rows">
+            {slice.map((p, i) => {
+              const letter = letterOf(p.name);
+              const heads = showLetters && (i === 0 || letterOf(slice[i - 1].name) !== letter);
               return (
-                <li key={p.id} data-person-id={p.id} className={`faces-card${p.enabled ? '' : ' is-off'}`}>
-                  <button
-                    type="button"
-                    className="faces-card-main"
-                    onClick={() => setEnrolling(p)}
-                    aria-label={t('faces.openEnroll', { name: p.name })}
-                  >
-                    <Avatar person={p} />
-                    <span className="faces-card-text">
-                      {/* A person's name is data, not translated copy: in an RTL page a Latin
-                          name (or one with punctuation) reorders unless it is isolated. */}
-                      <span className="faces-card-name"><bdi>{p.name}</bdi></span>
-                      <span
-                        className={`faces-pill${photos === 0 ? ' is-warn' : photos < GOOD_PHOTO_COUNT ? ' is-thin' : ' is-ok'}`}
-                        data-photos={photos}
-                      >
-                        {photos === 0
-                          ? t('faces.noPhotosYet')
-                          : t('faces.photoCount', { n: photos })}
-                      </span>
-                      {/* The proof the feature is doing anything, on the card of the person it
-                          happened to. A recognition is already an alert, a snapshot, a clip and a
-                          notification — all of them on other screens. */}
-                      <span className="faces-seen" data-seen={seen ? seen.at : 0}>
-                        {seen
-                          ? t('faces.seenAt', {
-                            when: relativeWhen(t, seen.at),
-                            camera: cameraNameById.get(Number(seen.cameraId)) || t('notif.cameraN', { id: seen.cameraId }),
-                          })
-                          : photos > 0 ? t('faces.notSeenYet') : ''}
-                      </span>
-                    </span>
-                    <span className="faces-card-go" aria-hidden="true"><Ico n="chev-right" sz={16} /></span>
-                  </button>
-                  <div className="faces-card-foot">
-                    <Toggle
-                      checked={!!p.enabled}
-                      onChange={() => togglePerson(p)}
-                      label={t('faces.recognizeThem')}
-                      ariaLabel={t('faces.recognizeThemAria', { name: p.name })}
-                    />
-                    <button
-                      type="button"
-                      className="faces-icon-btn danger-text"
-                      onClick={() => removePerson(p.id, p.name)}
-                      title={t('faces.delete')}
-                      aria-label={t('faces.deleteAria', { name: p.name })}
-                    >
-                      <Ico n="trash" sz={14} />
-                    </button>
-                  </div>
-                </li>
+                <Fragment key={p.id}>
+                  {heads ? <li className="faces-row-letter" aria-hidden="true">{letter}</li> : null}
+                  <PersonRow
+                    p={p}
+                    seen={sightingByPerson.get(Number(p.id))}
+                    seenText={seenTextFor(p)}
+                    onOpen={() => setEnrolling(p)}
+                    onToggle={() => togglePerson(p)}
+                    onRemove={() => removePerson(p.id, p.name)}
+                  />
+                </Fragment>
               );
             })}
           </ul>
+        ) : null}
+
+        {/* Paging, not virtualization: the roster is a few hundred people at the outside, and a
+            button that says how many are still hidden is honest in a way an infinite scroll that
+            silently stops fetching is not. */}
+        {visible.length > slice.length ? (
+          <div className="faces-more">
+            <span className="settings-hint">{t('faces.showingOf', { n: slice.length, total: visible.length })}</span>
+            <button type="button" className="quiet" onClick={() => setShown(shown + pageSize)}>
+              {t('faces.showMore', { n: Math.min(pageSize, visible.length - slice.length) })}
+            </button>
+            <button type="button" className="faces-more-all" onClick={() => setShown(visible.length)}>
+              {t('faces.showAll', { n: visible.length })}
+            </button>
+          </div>
         ) : null}
       </div>
 
@@ -546,9 +833,20 @@ function EnrollDialog({ api, authHeader, person, setup, onSetupRefresh, onClose,
   const [shots, setShots] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  // What the dialog is busy WITH, so the notice can name it: enrolling a photo and removing a
+  // faceprint freeze the same controls, and they must not both say "uploading".
+  const [busyKind, setBusyKind] = useState('');
+  // A batch of photos is several round trips, not one. `progress` is what turns "busy" into "photo
+  // 2 of 5", and it stays set across the GAPS between those posts — otherwise the notice blinks out
+  // between files and the dialog looks briefly idle, and briefly closable, mid-upload.
+  const [progress, setProgress] = useState(null);
   const [error, setError] = useState('');
   const [dragging, setDragging] = useState(false);
   const fileRef = useRef(null);
+
+  // Every way out of this dialog is gated on `working`, never on `busy`: closing between two files
+  // of a batch abandons the rest, with nothing on screen saying which ones made it.
+  const working = busy || progress !== null;
 
   const loadShots = useCallback(async () => {
     setLoading(true);
@@ -561,18 +859,27 @@ function EnrollDialog({ api, authHeader, person, setup, onSetupRefresh, onClose,
 
   useEffect(() => { loadShots(); }, [loadShots]);
 
-  // Esc closes, like every other dialog in the app.
+  // Esc closes, like every other dialog in the app — except while photos are going up.
   useEffect(() => {
-    function onKey(e) { if (e.key === 'Escape') onClose(); }
+    function onKey(e) { if (e.key === 'Escape' && !working) onClose(); }
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, working]);
+
+  // The dialog is not the only way to walk out on an upload; so is closing the tab. Ask first.
+  useEffect(() => {
+    if (!working) return undefined;
+    function onLeave(e) { e.preventDefault(); e.returnValue = ''; return ''; }
+    window.addEventListener('beforeunload', onLeave);
+    return () => window.removeEventListener('beforeunload', onLeave);
+  }, [working]);
 
   // enroll posts one base64 JPEG and reports the outcome IN THE DIALOG. The server's rejections
   // ("no face found", "more than one face", "too small") are the operator's next instruction, so
   // they belong beside the picker they came from, not only in a toast that scrolls away.
   const enroll = useCallback(async (image, source, label) => {
     setBusy(true);
+    setBusyKind('enroll');
     setError('');
     try {
       await api(`/faces/${person.id}/enroll`, { method: 'POST', body: JSON.stringify({ image, source }) });
@@ -587,37 +894,56 @@ function EnrollDialog({ api, authHeader, person, setup, onSetupRefresh, onClose,
       // below turns the message into that button.
       onSetupRefresh?.();
       return false;
-    } finally { setBusy(false); }
+    } finally { setBusy(false); setBusyKind(''); }
   }, [api, loadShots, onChanged, onMessage, onSetupRefresh, person.id, t]);
 
   async function enrollFiles(files) {
+    // A second drop landing on top of a running batch would interleave two counters and two sets of
+    // errors in one dialog. One batch at a time.
+    if (working) return;
     const list = Array.from(files).filter((f) => f.type.startsWith('image/'));
     if (list.length === 0) {
       setError(t('faces.notAnImage'));
       return;
     }
     let ok = 0;
-    for (const file of list) {
-      /* eslint-disable no-await-in-loop */
-      const image = await fileToBase64(file);
-      if (await enroll(image, 'upload', file.name)) ok += 1;
-      /* eslint-enable no-await-in-loop */
+    setProgress({ done: 0, total: list.length });
+    try {
+      for (let i = 0; i < list.length; i += 1) {
+        const file = list[i];
+        setProgress({ done: i, total: list.length });
+        /* eslint-disable no-await-in-loop */
+        try {
+          const image = await fileToBase64(file);
+          if (await enroll(image, 'upload', file.name)) ok += 1;
+        } catch (err) {
+          // An unreadable file is that file's problem, not the batch's: name it and keep going.
+          // Stopping here would silently skip photos the operator watched themselves pick.
+          setError(t('faces.enrollFileError', { file: file.name, error: err.message }));
+        }
+        /* eslint-enable no-await-in-loop */
+      }
+    } finally {
+      // Whatever happened, the dialog has to become closable again — a notice that never clears
+      // locks the operator in with no way out but the tab.
+      setProgress(null);
     }
     if (ok > 1) onMessage?.(t('faces.enrolled', { n: ok }), 'success');
   }
 
   async function removeShot(shot) {
     setBusy(true);
+    setBusyKind('delete');
     try {
       await api(`/faces/embeddings/${shot.id}`, { method: 'DELETE' });
       await loadShots();
       onChanged?.();
     } catch (err) { setError(err.message); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setBusyKind(''); }
   }
 
   return (
-    <div className="modal-backdrop" onClick={busy ? undefined : onClose}>
+    <div className="modal-backdrop" onClick={working ? undefined : onClose}>
       <div className="modal-card faces-enroll" role="dialog" aria-modal="true" data-person-id={person.id} onClick={(e) => e.stopPropagation()}>
         <div className="faces-enroll-head">
           <Avatar person={person} size="sm" />
@@ -627,12 +953,38 @@ function EnrollDialog({ api, authHeader, person, setup, onSetupRefresh, onClose,
               {shots.length === 0 ? t('faces.enrollNone') : t('faces.enrollHave', { n: shots.length })}
             </p>
           </div>
-          <button type="button" className="faces-icon-btn" onClick={onClose} aria-label={t('common.close')}>
+          <button
+            type="button"
+            className="faces-icon-btn"
+            onClick={onClose}
+            disabled={working}
+            aria-label={t('common.close')}
+            title={working ? t('faces.uploadingKeepOpen') : t('common.close')}
+          >
             <Ico n="x" sz={16} />
           </button>
         </div>
 
         <p className="settings-hint">{t('faces.photoHint')}</p>
+
+        {/* The dialog has to stay open while a batch uploads — it is the thing doing the counting —
+            so every exit is disabled underneath this notice. A control that refuses to work without
+            saying why reads as broken, so this says why, and says how far along it is. */}
+        {working ? (
+          <div className="faces-uploading" role="status" aria-live="polite">
+            <span className="form-busy-spinner faces-uploading-spin" aria-hidden="true" />
+            <span className="faces-uploading-text">
+              <strong>
+                {busyKind === 'delete'
+                  ? t('faces.removingShot')
+                  : progress && progress.total > 1
+                    ? t('faces.uploadingN', { n: progress.done + 1, total: progress.total })
+                    : t('faces.uploadingOne')}
+              </strong>
+              <span className="settings-hint">{t('faces.uploadingKeepOpen')}</span>
+            </span>
+          </div>
+        ) : null}
 
         {error ? <FormAlert message={error} /> : null}
 
@@ -644,30 +996,31 @@ function EnrollDialog({ api, authHeader, person, setup, onSetupRefresh, onClose,
         />
 
         <div className="seg-toggle faces-enroll-modes" role="group" aria-label={t('faces.modeAria')}>
-          <button type="button" className={mode === 'upload' ? 'active' : ''} onClick={() => setMode('upload')}>
+          <button type="button" className={mode === 'upload' ? 'active' : ''} disabled={working} onClick={() => setMode('upload')}>
             <span className="btn-icon"><Ico n="upload" sz={14} /> {t('faces.modeUpload')}</span>
           </button>
-          <button type="button" className={mode === 'camera' ? 'active' : ''} onClick={() => setMode('camera')}>
+          <button type="button" className={mode === 'camera' ? 'active' : ''} disabled={working} onClick={() => setMode('camera')}>
             <span className="btn-icon"><Ico n="camera" sz={14} /> {t('faces.modeCamera')}</span>
           </button>
         </div>
 
         {mode === 'upload' ? (
           <div
-            className={`faces-drop${dragging ? ' is-dragging' : ''}`}
-            onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+            className={`faces-drop${dragging ? ' is-dragging' : ''}${working ? ' is-busy' : ''}`}
+            onDragOver={(e) => { if (working) return; e.preventDefault(); setDragging(true); }}
             onDragLeave={() => setDragging(false)}
             onDrop={(e) => {
               e.preventDefault();
               setDragging(false);
+              if (working) return;
               if (e.dataTransfer?.files?.length) enrollFiles(e.dataTransfer.files);
             }}
           >
             <span className="faces-drop-mark" aria-hidden="true"><Ico n="upload" sz={22} /></span>
             <p className="faces-drop-title">{t('faces.dropTitle')}</p>
             <p className="settings-hint">{t('faces.dropHint')}</p>
-            <button type="button" className="quiet" disabled={busy} onClick={() => fileRef.current?.click()}>
-              {t('faces.choosePhotos')}
+            <button type="button" className="quiet" disabled={working} onClick={() => fileRef.current?.click()}>
+              {working ? t('faces.uploadingBtn') : t('faces.choosePhotos')}
             </button>
             {/* The native file input is the thing that actually opens the picker, but it is not the
                 thing anybody should have to look at. */}
@@ -677,11 +1030,12 @@ function EnrollDialog({ api, authHeader, person, setup, onSetupRefresh, onClose,
               type="file"
               accept="image/*"
               multiple
+              disabled={working}
               onChange={(e) => { if (e.target.files?.length) enrollFiles(e.target.files); e.target.value = ''; }}
             />
           </div>
         ) : (
-          <WebcamCapture busy={busy} onCapture={(image) => enroll(image, 'camera')} />
+          <WebcamCapture busy={working} onCapture={(image) => enroll(image, 'camera')} />
         )}
 
         <div className="faces-shots">
@@ -701,7 +1055,7 @@ function EnrollDialog({ api, authHeader, person, setup, onSetupRefresh, onClose,
                 <button
                   type="button"
                   className="faces-shot-del"
-                  disabled={busy}
+                  disabled={working}
                   onClick={() => removeShot(s)}
                   aria-label={t('faces.deleteShot')}
                   title={t('faces.deleteShot')}
@@ -714,7 +1068,15 @@ function EnrollDialog({ api, authHeader, person, setup, onSetupRefresh, onClose,
         </div>
 
         <div className="modal-actions">
-          <button type="button" className="quiet" onClick={onClose}>{t('common.close')}</button>
+          <button
+            type="button"
+            className="quiet"
+            onClick={onClose}
+            disabled={working}
+            title={working ? t('faces.uploadingKeepOpen') : undefined}
+          >
+            {working ? t('faces.uploadingBtn') : t('common.close')}
+          </button>
         </div>
       </div>
     </div>

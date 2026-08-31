@@ -50,11 +50,11 @@ function AppInner({ lang, onLangChange }) {
       return next;
     });
   }
+  // credentials backs the SIGN-IN FORM, and only that. The password is dropped the moment it
+  // has been exchanged for a session cookie: this page does not keep it, does not replay it,
+  // and cannot leak it to anything that reads the heap. The username survives because the
+  // first-run wizard shows it.
   const [credentials, setCredentials] = useState(emptyLogin);
-  // credentialsRef always holds the latest credentials so request() builds its
-  // Basic-auth header from current values even right after a password change,
-  // before React re-renders (a stale header would fail auth and trip the lockout).
-  const credentialsRef = useRef(credentials);
   // Refs used by request() to handle a background 401 (expired session) cleanly:
   // authenticatedRef avoids firing during a login attempt; sessionExpiredRef makes it
   // fire once; resetActiveRef suppresses it during a factory reset / restart (where
@@ -63,6 +63,9 @@ function AppInner({ lang, onLangChange }) {
   const sessionExpiredRef = useRef(false);
   const resetActiveRef = useRef(false);
   const [authenticated, setAuthenticated] = useState(false);
+  // True until the boot probe has answered. Without it the sign-in card renders for a beat on
+  // every reload of an already-signed-in browser — which is the bug, just faster.
+  const [restoring, setRestoring] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
   const [passwordChangeRequired, setPasswordChangeRequired] = useState(false);
   // Epoch ms until which login is locked (0 = not locked); drives the countdown.
@@ -223,30 +226,23 @@ function AppInner({ lang, onLangChange }) {
   }, [recordingSegments]);
 
   useEffect(() => {
-    credentialsRef.current = credentials;
-  }, [credentials]);
-
-  useEffect(() => {
     authenticatedRef.current = authenticated;
     if (authenticated) sessionExpiredRef.current = false;
   }, [authenticated]);
 
-  const authHeader = useMemo(() => {
-    if (!credentials.username && !credentials.password) {
-      return '';
-    }
-    return `Basic ${btoa(`${credentials.username}:${credentials.password}`)}`;
-  }, [credentials]);
+  // The session is an HttpOnly cookie the browser holds, so there is nothing for this page to
+  // attach — and nothing for it to lose on a refresh. Kept as an empty string because the
+  // child components still take the prop and already skip the header when it is empty; HTTP
+  // Basic remains available server-side for scripts and API clients.
+  const authHeader = '';
 
   async function request(path, options = {}) {
     const headers = {
       'Content-Type': 'application/json',
       ...(options.headers || {}),
     };
-    const creds = credentialsRef.current;
-    if (creds && (creds.username || creds.password)) {
-      headers.Authorization = `Basic ${btoa(`${creds.username}:${creds.password}`)}`;
-    }
+    // credentials: 'include' is load-bearing, not decoration — it is the ONLY thing that
+    // carries the session now.
     const response = await fetch(`${apiBase()}${path}`, {
       ...options,
       credentials: 'include',
@@ -452,16 +448,25 @@ function AppInner({ lang, onLangChange }) {
     setMessage('');
     let session;
     try {
-      // A single authenticated probe verifies the credentials and reveals the
-      // user's role and whether a forced password change is pending.
-      session = await request('/api/auth/session');
+      // ONE credential exchange. The server verifies the password (the only bcrypt this
+      // session will pay) and hands back a session cookie; from here on nothing in this page
+      // knows the password, and every later request is authorized by that cookie.
+      session = await request('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ username: credentials.username, password: credentials.password }),
+      });
     } catch (err) {
       if (err.status === 429 && err.retryAfter > 0) {
         setLockoutUntil(Date.now() + err.retryAfter * 1000);
         setMessage('');
       } else {
-        setMessage(err.status === 401 ? 'Invalid username or password.' : err.message, 'error');
-        if (err.status === 401 && (failedLoginsRef.current += 1) >= 3) {
+        // The login endpoint answers a bad credential with 403 (it refuses to say which half
+        // was wrong); the Basic middleware answers 401. Both mean the same thing here, and
+        // treating only one of them as "wrong password" would show a raw server string to
+        // somebody who simply mistyped.
+        const badCredential = err.status === 401 || err.status === 403;
+        setMessage(badCredential ? t('app.invalidCredentials') : err.message, 'error');
+        if (badCredential && (failedLoginsRef.current += 1) >= 3) {
           setMagicWordNonce((n) => n + 1);
           setMagicWord(true);
         }
@@ -470,6 +475,8 @@ function AppInner({ lang, onLangChange }) {
       return;
     }
     failedLoginsRef.current = 0;  // credentials accepted — reset the easter-egg counter
+    // The password has done its job. Drop it.
+    setCredentials({ ...emptyLogin, username: session?.username || credentials.username });
     const adminUser = Boolean(session && session.isAdmin);
     setIsAdmin(adminUser);
     if (session && session.mustChangePassword) {
@@ -479,6 +486,36 @@ function AppInner({ lang, onLangChange }) {
     }
     await enterAppOrWizard(adminUser);
   }
+
+  // restoreSession is what a page refresh runs. The cookie is the session, so the only honest
+  // question on boot is "does the server still recognize this browser?" — asked once, of the
+  // server, rather than assumed from whatever this page happens to remember (which after a
+  // reload is nothing, which is why refreshing used to look exactly like signing out).
+  //
+  // A 401/403 here is the ordinary first-visit answer, not an error worth showing.
+  const restoreSession = useCallback(async () => {
+    try {
+      const session = await request('/api/auth/session');
+      if (!session) return;
+      setCredentials({ ...emptyLogin, username: session.username || '' });
+      const adminUser = Boolean(session.isAdmin);
+      setIsAdmin(adminUser);
+      if (session.mustChangePassword) {
+        setPasswordChangeRequired(true);
+        return;
+      }
+      await enterAppOrWizard(adminUser);
+    } catch (_) {
+      // No session: the sign-in screen is the right answer.
+    } finally {
+      setRestoring(false);
+    }
+    /* eslint-disable-next-line */
+  }, []);
+
+  useEffect(() => {
+    restoreSession();
+  }, [restoreSession]);
 
   // enterAppOrWizard loads the app, then shows the first-run wizard if setup is
   // pending and the user is an admin (only admins can perform setup).
@@ -538,9 +575,11 @@ function AppInner({ lang, onLangChange }) {
     }
   }
 
-  // completePasswordChange sets a new password for the must-change user, then
-  // enters the app. The stored credential is updated synchronously (via the ref)
-  // so the very next request replays the new password rather than the stale one.
+  // completePasswordChange sets a new password for the must-change user, then enters the app.
+  //
+  // Nothing is stored afterwards: the session hash is derived from the password hash, so
+  // changing the password invalidates the old cookie — and the server rotates it in the same
+  // response (localAuthApi.changePassword). The new cookie IS the updated credential.
   async function completePasswordChange({ currentPassword, newPassword }) {
     setBusy(true);
     setMessage('');
@@ -549,9 +588,6 @@ function AppInner({ lang, onLangChange }) {
         method: 'POST',
         body: JSON.stringify({ currentPassword, newPassword }),
       });
-      const nextCredentials = { ...credentialsRef.current, password: newPassword };
-      credentialsRef.current = nextCredentials;
-      setCredentials(nextCredentials);
     } catch (err) {
       setMessage(err.message, 'error');
       setBusy(false);
@@ -561,7 +597,14 @@ function AppInner({ lang, onLangChange }) {
     await enterAppOrWizard(isAdmin);
   }
 
+  // logout clears the session cookie SERVER-side first. Without that call the local state
+  // would be wiped, the cookie would survive, and the next refresh would sign the user
+  // straight back in — a sign-out that does not sign anybody out.
   function logout() {
+    request('/api/auth/logout', { method: 'POST' }).catch(() => {
+      // Best-effort: an unreachable server cannot keep this browser signed in either, since
+      // every subsequent request would fail anyway.
+    });
     setAuthenticated(false);
     setIsAdmin(false);
     setPasswordChangeRequired(false);
@@ -969,8 +1012,9 @@ function AppInner({ lang, onLangChange }) {
 
   // --- First-run setup wizard handlers ---
 
-  // wizardChangePassword changes the password from inside the wizard without
-  // re-entering the app (keeps the stored credential in sync for later requests).
+  // wizardChangePassword changes the password from inside the wizard without re-entering the
+  // app. Nothing is stored afterwards: the server rotates the session cookie in the same
+  // response, and that cookie is the whole credential this page holds.
   async function wizardChangePassword({ currentPassword, newPassword }) {
     setBusy(true);
     setMessage('');
@@ -979,9 +1023,6 @@ function AppInner({ lang, onLangChange }) {
         method: 'POST',
         body: JSON.stringify({ currentPassword, newPassword }),
       });
-      const nextCredentials = { ...credentialsRef.current, password: newPassword };
-      credentialsRef.current = nextCredentials;
-      setCredentials(nextCredentials);
       setMessage(t('app.passwordUpdated'));
     } catch (err) {
       setMessage(err.message, 'error');
@@ -2545,6 +2586,11 @@ function AppInner({ lang, onLangChange }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  // Nothing is decided until the boot probe has answered.
+  if (restoring && !authenticated) {
+    return <main className="boot-screen" />;
   }
 
   // Recovery gate takes priority over login: while the backend is in recovery mode nothing
