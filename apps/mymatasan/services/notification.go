@@ -33,11 +33,21 @@ func BuildAlertSnapshot(image []byte, boundingBox, metadata, detectionType strin
 		return image
 	}
 	label := alertBoxLabel(metadata, detectionType)
+	_, isFace := faceBoxLabel(metadata)
 	// Crowd alerts carry every qualifying box in metadata; draw them all so the
 	// snapshot outlines each member, each tagged with its own confidence.
 	if boxes := boxesFromMetadata(metadata); len(boxes) > 0 {
 		annotated := make([]vision.AnnotatedBox, 0, len(boxes))
 		for _, b := range boxes {
+			// A face alert carries ONE identity and a MetaBox carries no identity of its
+			// own — only a class label and a confidence. So the identity is written onto
+			// the box only when there is a single box to write it onto. Stamping one name
+			// across several faces would name the wrong people, which is worse than the
+			// raw class label it replaced.
+			if isFace && len(boxes) == 1 {
+				annotated = append(annotated, vision.AnnotatedBox{Box: b.Box, Label: label})
+				continue
+			}
 			annotated = append(annotated, vision.AnnotatedBox{Box: b.Box, Label: boxLabel(b, label)})
 		}
 		return vision.AnnotateJPEG(image, annotated, 85)
@@ -82,10 +92,41 @@ func boxLabel(b vision.MetaBox, fallback string) string {
 	return name
 }
 
-// alertBoxLabel derives the box tag text: the detected object label from the
-// alert metadata when present, otherwise the detection type, title-cased to match
-// the UI overlay (e.g. "Person").
+// unknownFaceLabel is what a stranger's box says. Same words as the alert title
+// infra/vision.faceLabel writes, so the picture and the line under it agree.
+const unknownFaceLabel = "Unknown face"
+
+// faceBoxLabel is the box tag for a face alert: the person AS ENROLLED, or
+// "Unknown face" for a stranger. ok is false when this is not a face alert at all.
+//
+// WHO was seen is the entire content of a face alert, and the model's class name is
+// not it. The snapshot used to burn "Face" over a recognized person while the row
+// beside it named them — the picture is the part that gets forwarded to Telegram,
+// exported and shown to somebody who never sees the row.
+//
+// The name is NOT title-cased the way alertBoxLabel title-cases a class name. A class
+// name is a token and reads wrong lower-cased in a picture; a person's name is data,
+// and the same treatment renders an enrolled "van der Berg" as "Van Der Berg".
+func faceBoxLabel(metadata string) (string, bool) {
+	person, _, _, recognized, isFace := faceInfoFromMetadata(metadata)
+	if !isFace {
+		return "", false
+	}
+	// A stranger is labelled, not left as "Face". "A face appeared and we do not know
+	// whose" is the more alarming of the two statements, not the vaguer one.
+	if recognized && person != "" {
+		return person, true
+	}
+	return unknownFaceLabel, true
+}
+
+// alertBoxLabel derives the box tag text: the recognized identity on a face alert,
+// otherwise the detected object label from the alert metadata when present, otherwise
+// the detection type, title-cased to match the UI overlay (e.g. "Person").
 func alertBoxLabel(metadata, detectionType string) string {
+	if face, ok := faceBoxLabel(metadata); ok {
+		return face
+	}
 	label := objectLabelFromMetadata(metadata)
 	if label == "" {
 		label = strings.ReplaceAll(detectionType, "_", " ")

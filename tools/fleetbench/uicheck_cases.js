@@ -168,8 +168,8 @@ const TITLE = 'Screen case ' + Date.now();
     await sleep(2500);
 
     const empty = JSON.parse(await evalJs(`(() => JSON.stringify({
-      panel: !!document.querySelector('.cases-panel'),
-      newBtn: !!document.querySelector('.cases-list-head button'),
+      panel: !!document.querySelector('.cases-page'),
+      newBtn: !!document.querySelector('[data-case-act=new]'),
       detail: (document.querySelector('.cases-detail')||{}).textContent || '',
       error: (document.querySelector('.form-alert-msg')||{}).textContent || null,
     }))()`));
@@ -181,7 +181,7 @@ const TITLE = 'Screen case ' + Date.now();
 
     // --- open a case through the UI -------------------------------------------------
     const created = await evalJs(`(async () => {
-      const btn = document.querySelector('.cases-list-head button');
+      const btn = document.querySelector('[data-case-act=new]');
       if (!btn) return 'NO NEW BUTTON';
       btn.click();
       await new Promise(r => setTimeout(r, 400));
@@ -190,7 +190,9 @@ const TITLE = 'Screen case ' + Date.now();
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(TITLE)});
       input.dispatchEvent(new Event('input', { bubbles: true }));
       await new Promise(r => setTimeout(r, 200));
-      const save = [...document.querySelectorAll('.cases-new button')][0];
+      // The primary action is LAST in the form, after the quiet Cancel — same order as
+      // every dialog on this screen. Taking [0] would press Cancel and report it as a save.
+      const save = [...document.querySelectorAll('.cases-new button')].pop();
       if (!save || save.disabled) return 'SAVE DISABLED';
       save.click();
       return 'saved';
