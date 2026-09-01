@@ -147,12 +147,18 @@ To make `www` and the apex agree, add a redirect (Cloudflare **Bulk Redirects** 
 
 ## Screenshots
 
-The **Showcase** section displays 7 real mymatasan UI captures from
+The **Showcase** section displays 9 real mymatasan UI captures from
 [`public/screenshots/`](public/screenshots/) (`live_views.png`, `ai_detection.png`,
-`teach.png`, `recordings.png`, `dashboard.png`, `backup_recovery.png`,
-`version_health_language_selection.png`). Any image that fails to load falls back to its SVG
-mockup, so the section never breaks. To replace or add captures, see the instructions and
-`sharp` resize command in [`public/screenshots/README.md`](public/screenshots/README.md).
+`teach.png`, `recordings.png`, `object_search.png`, `dashboard.png`, `activity_heatmap.png`,
+`backup_recovery.png`, `version_health_language_selection.png`). Any image that fails to load
+falls back to its SVG mockup, so the section never breaks. To replace or add captures, see the
+instructions and `sharp` resize command in
+[`public/screenshots/README.md`](public/screenshots/README.md).
+
+> **Known gap.** The Showcase has no capture of the screens shipped since these images were
+> taken — Timeline playback, Case files, the saved video wall, People (face enrolment), or the
+> fleet Compliance screen — even though the **Features** section now sells all of them. Adding
+> them needs a running appliance with real footage, so it is deliberately a separate pass.
 
 ### Social share image
 
