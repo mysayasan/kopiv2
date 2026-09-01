@@ -120,6 +120,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-09-01 — core 1.111.2 (c187a41)
+
+### Changed
+
+- **core**: Resynced the r450k marketing site with what the suite actually ships. The site's copy had not changed since the five-app repositioning in PR #169 (2026-08-12) while roughly sixty PRs of user-facing work landed behind it, so the page was selling a product two Phase-3 waves out of date. Six new feature cards were added and five existing ones rewritten, in the canonical en.js with ms.js/zh.js/ar.js kept at exact index parity: timeline playback by wall-clock time; case files that hold their evidence against retention and export as one hash-manifested bundle with a chain-of-custody CSV; privacy zones read back off the camera plus best-effort face redaction on export, with the guarantee and the best effort named as different things; camera inputs and relay outputs (the product now responds rather than only recording), PTZ presets and guard tours; fleet operations (settings policy with drift reporting, ringed staged upgrades, historical per-node/per-site uptime, federated search across every node); and surviving the loss of an appliance (a named spare that is TESTED rather than assumed, capacity-checked, the off-appliance fleet clip archive, and myseliasan/myidsan running behind a load balancer). Rewrote the recording card around the continuity and tamper monitors, the live-view card around saved video walls, the Object Search card around appearance search, the detection card around the three time-based rules (loitering, left behind, direction of travel), and corrected the two places that still enumerated notification routes as 'webhook, Telegram, or MQTT' — email and mobile push shipped in #184 and #188. Also refreshed the mymatasan/myseliasan/myidsan app and download blurbs, the multi-site use case, and the meta description in index.html and all four locales; added six icons (clock, folder, privacy, server, failover, bolt) to the inline set. Verified by building all four prerendered locales and driving the real page in headless Chrome — every new icon renders, and the Arabic page was checked in RTL.
 ## 2026-08-31 — mymatasan 1.148.1 (6310d1c)
 
 ### Changed
