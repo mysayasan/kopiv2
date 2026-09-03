@@ -121,6 +121,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-09-03 — myseliasan 1.81.0, core 1.112.0 (3056a4d)
+
+### Added
+
+- **infra,myseliasan**: Add a pre-boot setup wizard to the shared apphost (infra/apphost/firstboot): every infra block an app needs to boot at all (db, cache, listen ports, bootstrap administrator) is read exactly once, before the app is ever handed a database handle, so an install shipped with a wrong db/cache setting previously had no way to fix itself from inside the app. The wizard now runs before that read, in the same process, on its own loopback-only port (default 127.0.0.1:39530, KOPIV2_SETUP_ADDR/setup.address override, falls back to an ephemeral port and logs why if that one is taken), needing no DB/cache/session of its own. It is an embedded 4-language page (en/ms/zh/ar, RTL, theme picker) served under a strict CSP with no external assets; database and cache answers are live-probed (reusing the host's own DB adapter / Redis client) before the operator can finish. On submit it writes config.json via a new shared surgical writer (infra/config/configfile, lifted out of apps/myseliasan/services/settings_materialize.go which is now deleted) and returns; boot then continues in the same process and reads the file the wizard just wrote, with no restart and no supervisor involved. The trigger is deliberately narrow: only config.json's setup.completed=false, or KOPIV2_SETUP=1 as a recovery path for an install that can no longer boot at all - dependency reachability is never a trigger, so a transient database or cache outage can never flip a running app into a configuration wizard. Exposing the page beyond loopback (setup.allowRemote / KOPIV2_SETUP_ALLOW_REMOTE=1) requires a one-time token in the URL. Also added in the same change: a 'here is where to browse' ready banner printed on every boot (infra/apphost/announce.go), naming every URL the app answers on grouped by 'On this machine' / 'From the network', warning when the HTTPS certificate is self-signed, and opening the primary URL in a browser (infra/apphost/browser.go) - replacing a per-listener log line that named only a bare port with no scheme or host. The browser launch is suppressed (with the reason printed) under a Windows service, KOPIV2_SUPERVISED, a container, no DISPLAY, a self-restart, or KOPIV2_OPEN_BROWSER=0/KOPIV2_NO_BROWSER, and can be forced with KOPIV2_OPEN_BROWSER=1.
 ## 2026-09-01 — core 1.111.2 (c187a41)
 
 ### Changed
