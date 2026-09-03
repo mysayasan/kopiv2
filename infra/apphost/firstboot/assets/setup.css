@@ -1,0 +1,139 @@
+/* The setup wizard's styling. Self-contained on purpose: this page runs before the app
+   exists, several installs are air-gapped, and the shared frontend bundle is not built
+   or served at this point in startup. No font, image or script is fetched off-box. */
+
+/* Theming mirrors the app's mechanism exactly: a theme-<name> class on <html>, applied
+   by setup.js. "System" is not a third palette — setup.js resolves it against the OS
+   preference and applies theme-light or theme-dark, and keeps following the OS while
+   System stays selected. That keeps this file to two palettes and one contract. */
+
+:root {
+  /* color-scheme drives the parts the page does not paint itself: the select popup,
+     the scrollbar, and the focus ring. Without it a dark card sprouts a white dropdown. */
+  color-scheme: light;
+  --bg: #eef1f6;
+  --card: #ffffff;
+  --ink: #16202e;
+  --muted: #5c6b80;
+  --line: #d6dce6;
+  --field-bg: #ffffff;
+  --alert-bg: #fdf1f0;
+  --alert-line: #f2c7c2;
+  --brand: #1f6feb;
+  --brand-ink: #ffffff;
+  --ok: #157347;
+  --bad: #b42318;
+  --radius: 10px;
+}
+
+:root.theme-dark {
+  color-scheme: dark;
+  --bg: #11151c;
+  --card: #171c25;
+  --ink: #e6ebf2;
+  --muted: #98a5b8;
+  --line: #2b3444;
+  --field-bg: #0f141b;
+  --alert-bg: #2a1614;
+  --alert-line: #5b2b26;
+  --brand: #4d90f0;
+  --brand-ink: #0b1017;
+  --ok: #4ade80;
+  --bad: #f2b8b1;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 32px 16px;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.5 "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+}
+
+.card {
+  max-width: 720px;
+  margin: 0 auto;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 28px 32px 20px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 8px 24px rgba(16, 24, 40, .06);
+}
+
+.head { display: flex; align-items: flex-start; gap: 16px; }
+.titles { flex: 1; }
+h1 { margin: 0; font-size: 22px; }
+h2 { margin: 0 0 14px; font-size: 17px; }
+.sub { margin: 6px 0 0; color: var(--muted); }
+.muted { color: var(--muted); font-size: 13px; }
+code { background: var(--bg); padding: 2px 6px; border-radius: 4px; font-size: 12px; word-break: break-all; }
+
+.pickers { display: flex; gap: 8px; flex-wrap: wrap; }
+.picker select {
+  padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--field-bg); color: var(--ink); font: inherit;
+}
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+.steps { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 22px 0; padding: 0; }
+.steps li {
+  flex: 1 1 auto; min-width: 0; padding: 6px 4px 8px;
+  border-bottom: 3px solid var(--line);
+  color: var(--muted); font-size: 12px; text-align: center;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.steps li.done { border-bottom-color: var(--ok); }
+.steps li.active { border-bottom-color: var(--brand); color: var(--ink); font-weight: 600; }
+
+.pane { min-height: 200px; }
+.pane p { margin: 0 0 12px; }
+
+.field { display: block; margin: 0 0 14px; }
+.field > span { display: block; margin-bottom: 5px; font-size: 13px; color: var(--muted); }
+.field input[type=text], .field input[type=password], .field input[type=number], .field input:not([type]), .field select {
+  width: 100%; padding: 9px 10px;
+  border: 1px solid var(--line); border-radius: 6px;
+  background: var(--field-bg); color: var(--ink); font: inherit;
+}
+.field input:focus, .field select:focus { outline: 2px solid var(--brand); outline-offset: -1px; border-color: var(--brand); }
+.field.check { display: flex; align-items: center; gap: 8px; }
+.field.check > span { margin: 0; color: var(--ink); font-size: 14px; }
+.field.check input { width: auto; }
+
+.row { display: flex; gap: 14px; flex-wrap: wrap; }
+.row .grow { flex: 1 1 200px; }
+.row .narrow { flex: 0 1 130px; }
+
+.testrow { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
+.result { font-size: 13px; }
+.result.ok { color: var(--ok); }
+.result.bad { color: var(--bad); }
+
+.alert {
+  margin: 0 0 16px; padding: 10px 12px;
+  border: 1px solid var(--alert-line); border-radius: 6px;
+  background: var(--alert-bg); color: var(--bad); font-size: 14px;
+}
+
+.review { margin: 0; }
+.review div { display: flex; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--line); }
+.review dt { flex: 0 0 180px; color: var(--muted); font-size: 13px; margin: 0; }
+.review dd { flex: 1; margin: 0; word-break: break-word; }
+
+.startlink { font-size: 18px; }
+.startlink a { color: var(--brand); }
+
+.nav { display: flex; align-items: center; gap: 12px; margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line); }
+.spacer { flex: 1; }
+button { font: inherit; padding: 9px 18px; border-radius: 6px; cursor: pointer; }
+button:disabled { opacity: .5; cursor: default; }
+.primary { background: var(--brand); border: 1px solid var(--brand); color: var(--brand-ink); }
+.ghost { background: var(--field-bg); border: 1px solid var(--line); color: var(--ink); }
+
+/* Arabic renders right-to-left; only the writing direction changes, the layout is
+   otherwise identical because it is all flexbox with logical gaps. */
+[dir=rtl] .review dt { text-align: right; }
+
+

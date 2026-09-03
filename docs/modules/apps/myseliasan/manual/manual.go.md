@@ -15,11 +15,11 @@ shared (`domain/shared/manual`, `domain/shared/manual/manual.go.md`); this packa
 - `//go:embed en ms zh ar assets` into `var files embed.FS`, then `var Library =
   sharedmanual.New(files, ".")`. Loading is lazy (`sharedmanual.New` reads nothing until
   first query), so this costs nothing at package init.
-- Ships **6 articles × four languages** (24 files) across two categories: **getting
-  started** (`welcome`, `first-sign-in`, `setup-wizard`, `workspace-tour`,
-  `using-this-manual`) and **fleet** (`adopting-nodes`). A deliberately smaller,
-  fleet-scoped book than mymatasan's 36-article manual — myseliasan's operator surface is
-  narrower (sign-in, the setup wizard, the workspace, and adopting nodes), not a gap.
+- Ships **24 articles × four languages** (96 files) across seven categories:
+  **getting-started**, **fleet**, **map**, **agent**, **reports**, **admin** and
+  **reference**. The count is not asserted anywhere in code — `manual.go` globs the
+  language folders — so treat this figure as indicative; `manualcheck.Library` is what
+  guarantees the four languages stay in step, not this number.
   `assets/README.md` documents the (currently empty) figures folder.
 - Registered as `GET /api/manual`, `/api/manual/bundle`, `/api/manual/{slug}`,
   `/api/manual/assets/{name}` by `apps/myseliasan/apis/manual.go`

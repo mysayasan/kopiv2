@@ -25,10 +25,23 @@ next to the binary on first run, unless you point `MYSELIASAN_DATA` elsewhere.
 myseliasan.exe          # Windows
 ```
 
-Then open <https://localhost:3002>. It serves HTTPS immediately using a **self-signed**
-certificate generated on first boot, so the browser shows a one-time trust warning. For
-a trusted chain, drop your own cert/key at `tls.certPath` / `tls.keyPath`, or front the
-app with a TLS-terminating reverse proxy and switch to `server.nonTlsPorts`. See
+**First start only:** the shipped `config.json` marks setup as not yet completed, so the
+process opens a small pre-boot **configuration wizard** at
+<http://127.0.0.1:39530> instead — loopback-only, and a browser tab is opened there for
+you (unless `KOPIV2_OPEN_BROWSER=0`). It confirms the database, cache, listen address and
+administrator before the app itself ever starts, and needs no login of its own since
+nothing has booted yet to log in to. Finishing it writes `config.json` and the real app
+comes straight up in the same process — no restart. Every start after that skips the
+wizard entirely (it is gated on `config.json`'s `setup.completed` flag, never on whether
+the database happens to be reachable), and it never appears at all if you hand-edit
+`config.json` before first start and remove the `setup` block. Recovery path for an
+install that can no longer boot at all: set `KOPIV2_SETUP=1` for one run. See
+`docs/modules/infra/apphost/firstboot/`.
+
+Once through it, open <https://localhost:3002>. It serves HTTPS immediately using a
+**self-signed** certificate generated on first boot, so the browser shows a one-time trust
+warning. For a trusted chain, drop your own cert/key at `tls.certPath` / `tls.keyPath`, or
+front the app with a TLS-terminating reverse proxy and switch to `server.nonTlsPorts`. See
 [`reverse-proxy/`](reverse-proxy/) (written for MyIDSan) for working nginx/Caddy configs
 and the `X-Forwarded-*`/`rateLimit.trustedProxies` trust model, which applies here
 unchanged.
@@ -59,6 +72,7 @@ Edit `config.json`:
 | 39534 | TCP/mTLS | inbound | node-dialed media relay |
 | 49531 | UDP multicast | out/in | LAN node discovery |
 | 39532 | TCP/mTLS | **outbound** | parent → node management (enroll, heartbeat, release) |
+| 39530 | TCP | loopback only | pre-boot configuration wizard, first start only — never reachable from the network, no firewall rule needed |
 
 These must match the node side. They are the MyMataSan shipped defaults — do not change
 them on only one end.

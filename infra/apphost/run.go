@@ -155,6 +155,9 @@ func runApp(app App) error {
 	// we try to bind it. Unset so it doesn't propagate to any future restart.
 	if ms := strings.TrimSpace(os.Getenv("KOPIV2_RESTART_DELAY_MS")); ms != "" {
 		os.Unsetenv("KOPIV2_RESTART_DELAY_MS")
+		// Recorded before the variable is unset: the ready banner uses it to avoid
+		// popping a fresh browser tab on every settings-change restart.
+		relaunchedByRestart = true
 		if d, perr := strconv.Atoi(ms); perr == nil && d > 0 && d <= 30000 {
 			time.Sleep(time.Duration(d) * time.Millisecond)
 		}
@@ -163,6 +166,16 @@ func runApp(app App) error {
 	homeDir := resolveHomeDir(app)
 	dataDir := resolveDataDir(app, homeDir)
 	log.Printf("paths app=%s home=%s data=%s", app.Name(), homeDir, dataDir)
+
+	// The setup wizard runs BEFORE the config is loaded, because it exists to fix the
+	// very settings this boot is about to read — a database or cache the app cannot
+	// reach leaves no seam for an in-app screen to repair it. It serves on its own
+	// port, writes config.json, and returns; startup then continues in this same
+	// process and reads the file it just wrote, so nothing has to restart. See
+	// infra/apphost/firstboot for when it runs (never on a mere outage).
+	if err := runFirstBootSetup(app, homeDir, dataDir); err != nil {
+		return err
+	}
 
 	appConfig, err := loadConfig(homeDir, dataDir)
 	if err != nil {
@@ -557,6 +570,11 @@ func runApp(app App) error {
 		}()
 	}
 
+	// The per-listener lines above name ports, not addresses: ":3002" is not something
+	// anyone can browse to, and nothing said whether it was http or https. One banner,
+	// on every boot, says exactly where to go — and opens it, on a desktop run.
+	announceReady(app.Name(), listeners, anyTLS(listeners) && isSelfSignedCert(appConfig.Tls.CertPath))
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -739,18 +757,10 @@ func configFilePath(baseDir string) string {
 // persist secrets/runtime settings back to. In a dev checkout homeDir==dataDir,
 // so the seed is a no-op and behaviour is unchanged.
 func loadConfig(homeDir, dataDir string) (*config.AppConfigModel, error) {
-	target := configFilePath(dataDir)
-	source := configFilePath(homeDir)
-	if target != source {
-		if _, err := os.Stat(target); errors.Is(err, os.ErrNotExist) {
-			if _, serr := os.Stat(source); serr == nil {
-				if cerr := copyFile(source, target); cerr != nil {
-					return nil, fmt.Errorf("seed config into data dir: %w", cerr)
-				}
-				log.Printf("seeded default config %s -> %s", source, target)
-			}
-		}
+	if err := seedConfigIfMissing(homeDir, dataDir); err != nil {
+		return nil, err
 	}
+	target := configFilePath(dataDir)
 
 	appConfig, err := config.LoadAppConfiguration(target)
 	if err != nil {
@@ -761,6 +771,30 @@ func loadConfig(homeDir, dataDir string) (*config.AppConfigModel, error) {
 	}
 
 	return appConfig, nil
+}
+
+// seedConfigIfMissing copies the read-only default config shipped in homeDir into the
+// writable dataDir on first run of a packaged install, so the app has a config it can
+// persist secrets and runtime changes back to. In a dev checkout homeDir==dataDir and
+// this is a no-op. It is idempotent, and runs before the setup wizard as well as before
+// the config load — the wizard edits the data dir's copy, so that copy has to exist.
+func seedConfigIfMissing(homeDir, dataDir string) error {
+	target := configFilePath(dataDir)
+	source := configFilePath(homeDir)
+	if target == source {
+		return nil
+	}
+	if _, err := os.Stat(target); !errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if _, err := os.Stat(source); err != nil {
+		return nil
+	}
+	if err := copyFile(source, target); err != nil {
+		return fmt.Errorf("seed config into data dir: %w", err)
+	}
+	log.Printf("seeded default config %s -> %s", source, target)
+	return nil
 }
 
 func normalizePathConfig(dataDir string, appConfig *config.AppConfigModel) {
