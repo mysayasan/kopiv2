@@ -128,3 +128,30 @@ func fileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
 }
+
+// isSelfSignedCert reports whether the certificate at certPath was issued to itself,
+// which is what ensureSelfSignedCert generates. The ready banner uses it to warn that a
+// browser will object — following a URL we just printed and landing on "your connection
+// is not private" reads as a broken install unless it is explained up front.
+//
+// A cert the operator installed themselves (or a CA-issued one) is not self-signed, so
+// the warning correctly disappears once they replace it. Any read or parse failure
+// answers false: the banner then stays quiet rather than crying wolf.
+func isSelfSignedCert(certPath string) bool {
+	if certPath == "" {
+		return false
+	}
+	raw, err := os.ReadFile(certPath)
+	if err != nil {
+		return false
+	}
+	block, _ := pem.Decode(raw)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return false
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return false
+	}
+	return cert.Issuer.String() == cert.Subject.String()
+}

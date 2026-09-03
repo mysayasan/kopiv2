@@ -1,4 +1,19 @@
-package services
+// Package configfile writes edited values back into an app's on-disk config.json.
+//
+// The suite's infrastructure blocks (db, cache, server, tls, logging, rate limit, ...)
+// are read by infra/apphost exactly ONCE at boot, before any app is handed a database
+// handle. There is no seam for a stored value to override them at startup, so the only
+// way an edit can take effect is to write it into the file the host re-reads on the next
+// launch. Two callers need that: the Settings screen (edit, then restart) and the
+// first-boot setup wizard (edit, then continue booting in the same process).
+//
+// The write is surgical. Only the top-level blocks named by the patches are
+// re-serialized; every other block keeps its original bytes verbatim, so an untouched
+// block never reformats and diffs stay small. The original top-level key ORDER is
+// preserved for the same reason. Writes are atomic (temp file + rename), so a crash
+// mid-write can never leave a truncated config.json — the file that, if lost, means the
+// app cannot boot at all.
+package configfile
 
 import (
 	"bytes"
@@ -9,32 +24,38 @@ import (
 	"sort"
 )
 
-// This file materializes edited settings back into the on-disk config.json.
-//
-// Why write the file at all (rather than only a DB row, the way mymatasan's runtime
-// settings work): myseliasan's editable settings are INFRASTRUCTURE blocks (TLS, CSP,
-// rate limit, cache, logging, telemetry, SSO, pairing) that the shared apphost reads
-// exactly ONCE at boot — before the app is ever handed a database handle. There is no
-// seam for a DB value to override them at startup, so the only way an edit can take
-// effect is to write it into the file the host re-reads on the next launch, then
-// restart. This mirrors the host's own persistJWTSecret write-back. The DB copy
-// (settings.go) remains the authoritative store for reset-to-defaults and audit.
-//
-// The write is surgical: only the edited top-level blocks are re-serialized; every
-// other block — including ones this feature never exposes (db, server, bootstrap) —
-// keeps its original bytes verbatim, so an untouched block never reformats. The original
-// top-level key ORDER is preserved, keeping the file readable and diffs small.
-
-// configPatch sets one leaf value at a nested path, e.g. {["rateLimit","devOnly","requests"], 300}.
+// Patch sets one leaf value at a nested path, e.g. {["rateLimit","devOnly","requests"], 300}.
 // A single-element path sets a top-level scalar (e.g. {["allowOrigins"], "*"}).
-type configPatch struct {
-	path  []string
-	value any
+type Patch struct {
+	Path  []string
+	Value any
 }
 
-// materializeConfig applies patches to the config document at configPath and writes it
-// back atomically. An empty patch list is a no-op (no file write).
-func materializeConfig(configPath string, patches []configPatch) error {
+// Flatten turns a nested map into leaf Patches. Scalars and non-map values become one
+// patch each; nested maps recurse. prefix is the root path (nil at the top). Keys are
+// walked in sorted order so a given input always produces the same patch list.
+func Flatten(prefix []string, data map[string]any) []Patch {
+	var patches []Patch
+	keys := make([]string, 0, len(data))
+	for k := range data {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		path := append(append([]string{}, prefix...), k)
+		if child, ok := data[k].(map[string]any); ok {
+			patches = append(patches, Flatten(path, child)...)
+			continue
+		}
+		patches = append(patches, Patch{Path: path, Value: data[k]})
+	}
+	return patches
+}
+
+// Materialize applies patches to the config document at configPath and writes it back
+// atomically. An empty patch list is a no-op (no file read, no file write), so a caller
+// that computed no changes never touches the file.
+func Materialize(configPath string, patches []Patch) error {
 	if len(patches) == 0 {
 		return nil
 	}
@@ -42,34 +63,34 @@ func materializeConfig(configPath string, patches []configPatch) error {
 	if err != nil {
 		return fmt.Errorf("read config: %w", err)
 	}
-	out, err := patchConfigBytes(raw, patches)
+	out, err := PatchBytes(raw, patches)
 	if err != nil {
 		return err
 	}
-	return atomicWrite(configPath, out)
+	return AtomicWrite(configPath, out)
 }
 
-// patchConfigBytes returns raw with patches applied. Only the top-level blocks named by
-// the patches are re-serialized; all other top-level entries keep their original bytes.
-func patchConfigBytes(raw []byte, patches []configPatch) ([]byte, error) {
+// PatchBytes returns raw with patches applied. Only the top-level blocks named by the
+// patches are re-serialized; all other top-level entries keep their original bytes.
+func PatchBytes(raw []byte, patches []Patch) ([]byte, error) {
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &top); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 
 	// Group patches by their top-level key.
-	byTop := map[string][]configPatch{}
+	byTop := map[string][]Patch{}
 	for _, p := range patches {
-		if len(p.path) == 0 {
+		if len(p.Path) == 0 {
 			continue
 		}
-		byTop[p.path[0]] = append(byTop[p.path[0]], p)
+		byTop[p.Path[0]] = append(byTop[p.Path[0]], p)
 	}
 
 	for key, ps := range byTop {
 		// A single-element path replaces a top-level scalar wholesale.
-		if len(ps) == 1 && len(ps[0].path) == 1 {
-			vb, err := json.MarshalIndent(ps[0].value, "  ", "  ")
+		if len(ps) == 1 && len(ps[0].Path) == 1 {
+			vb, err := json.MarshalIndent(ps[0].Value, "  ", "  ")
 			if err != nil {
 				return nil, err
 			}
@@ -88,7 +109,7 @@ func patchConfigBytes(raw []byte, patches []configPatch) ([]byte, error) {
 			block = map[string]any{}
 		}
 		for _, p := range ps {
-			setPath(block, p.path[1:], p.value)
+			SetPath(block, p.Path[1:], p.Value)
 		}
 		vb, err := json.MarshalIndent(block, "  ", "  ")
 		if err != nil {
@@ -100,8 +121,11 @@ func patchConfigBytes(raw []byte, patches []configPatch) ([]byte, error) {
 	return encodeOrdered(raw, top)
 }
 
-// setPath walks (creating intermediate objects as needed) and sets the leaf value.
-func setPath(root map[string]any, path []string, value any) {
+// SetPath walks (creating intermediate objects as needed) and sets the leaf value.
+func SetPath(root map[string]any, path []string, value any) {
+	if len(path) == 0 {
+		return
+	}
 	cur := root
 	for i := 0; i < len(path)-1; i++ {
 		next, ok := cur[path[i]].(map[string]any)
@@ -119,7 +143,7 @@ func setPath(root map[string]any, path []string, value any) {
 // block's bytes are used verbatim, so blocks that were not re-serialized keep their exact
 // original formatting.
 func encodeOrdered(raw []byte, top map[string]json.RawMessage) ([]byte, error) {
-	order := topLevelKeyOrder(raw)
+	order := TopLevelKeyOrder(raw)
 	seen := make(map[string]bool, len(order))
 	keys := make([]string, 0, len(top))
 	for _, k := range order {
@@ -157,10 +181,10 @@ func encodeOrdered(raw []byte, top map[string]json.RawMessage) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// topLevelKeyOrder returns the object keys of the top-level JSON object in document order.
+// TopLevelKeyOrder returns the object keys of the top-level JSON object in document order.
 // It interleaves Token() (to read each key) with Decode() (to skip that key's whole value),
 // which the standard decoder supports.
-func topLevelKeyOrder(raw []byte) []string {
+func TopLevelKeyOrder(raw []byte) []string {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	if _, err := dec.Token(); err != nil { // consume the opening '{'
 		return nil
@@ -184,12 +208,12 @@ func topLevelKeyOrder(raw []byte) []string {
 	return order
 }
 
-// atomicWrite writes data to a temp file in the same directory and renames it over path,
+// AtomicWrite writes data to a temp file in the same directory and renames it over path,
 // so a crash mid-write never leaves a truncated config.json. os.Rename replaces the
 // destination on both POSIX and Windows.
-func atomicWrite(path string, data []byte) error {
+func AtomicWrite(path string, data []byte) error {
 	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".myseliasan-config-*.tmp")
+	tmp, err := os.CreateTemp(dir, ".kopiv2-config-*.tmp")
 	if err != nil {
 		return err
 	}

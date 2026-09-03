@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/mysayasan/kopiv2/infra/config"
+	"github.com/mysayasan/kopiv2/infra/config/configfile"
 )
 
 // rawConfig is a minimal but representative config.json: it carries the editable blocks
@@ -53,18 +54,18 @@ const rawConfig = `{
 }`
 
 func TestPatchConfigBytesPreservesUntouchedBlocksAndOrder(t *testing.T) {
-	patches := []configPatch{
-		{path: []string{"localAuth", "password"}, value: "newsecret"},
-		{path: []string{"rateLimit", "devOnly", "requests"}, value: float64(500)},
-		{path: []string{"allowOrigins"}, value: "https://example.test"},
+	patches := []configfile.Patch{
+		{Path: []string{"localAuth", "password"}, Value: "newsecret"},
+		{Path: []string{"rateLimit", "devOnly", "requests"}, Value: float64(500)},
+		{Path: []string{"allowOrigins"}, Value: "https://example.test"},
 	}
-	out, err := patchConfigBytes([]byte(rawConfig), patches)
+	out, err := configfile.PatchBytes([]byte(rawConfig), patches)
 	if err != nil {
-		t.Fatalf("patchConfigBytes: %v", err)
+		t.Fatalf("configfile.PatchBytes: %v", err)
 	}
 
 	// Top-level key order must be unchanged.
-	if got, want := topLevelKeyOrder(out), topLevelKeyOrder([]byte(rawConfig)); strings.Join(got, ",") != strings.Join(want, ",") {
+	if got, want := configfile.TopLevelKeyOrder(out), configfile.TopLevelKeyOrder([]byte(rawConfig)); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("top-level order changed:\n got %v\nwant %v", got, want)
 	}
 
@@ -109,7 +110,7 @@ func TestPatchConfigBytesPreservesUntouchedBlocksAndOrder(t *testing.T) {
 }
 
 func TestPatchConfigBytesNoPatchesIsNoop(t *testing.T) {
-	if err := materializeConfig(filepath.Join(t.TempDir(), "does-not-exist.json"), nil); err != nil {
+	if err := configfile.Materialize(filepath.Join(t.TempDir(), "does-not-exist.json"), nil); err != nil {
 		t.Fatalf("empty patch set should be a no-op, got: %v", err)
 	}
 }

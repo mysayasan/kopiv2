@@ -143,6 +143,11 @@
     "setupPath": "/setup",
     "seedStatements": []
   },
+  "setup": {
+    "completed": false,
+    "address": "127.0.0.1:39530",
+    "allowRemote": false
+  },
   "db": {
     "engine": "sqlite",
     "host": "",

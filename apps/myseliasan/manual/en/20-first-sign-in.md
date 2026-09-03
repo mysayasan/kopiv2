@@ -18,7 +18,8 @@ The password is put in two places, so you can find it whichever way you are runn
 plane:
 
 - **On the console.** A banner is printed at startup with the address to open, the username and
-  the password. In Docker that is `docker logs`; on Linux, the service journal.
+  the password. In Docker that is `docker logs`; on Linux, the service journal. On a desktop
+  install the address also opens in your browser by itself.
 - **In a file.** A credential file is written into the data directory — use this when the console
   has scrolled away or the service runs with no visible window.
 
@@ -85,5 +86,6 @@ this browser:
 
 ## Where to go next {#next}
 
+- [What happens on the first start](first-start) — the setup page that runs before this one.
 - [The first-run setup wizard](setup-wizard) — what the six steps do.
 - [A tour of the workspace](workspace-tour) — what you are looking at once you are in.

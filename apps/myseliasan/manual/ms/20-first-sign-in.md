@@ -87,5 +87,6 @@ diingati pada pelayar ini:
 
 ## Ke mana selepas ini {#next}
 
+- [Apa yang berlaku pada permulaan pertama](first-start) — halaman persediaan yang berjalan sebelum yang ini.
 - [Bestari persediaan kali pertama](setup-wizard) — apa yang dilakukan enam langkah itu.
 - [Lawatan ruang kerja](workspace-tour) — apa yang anda lihat setelah berada di dalam.

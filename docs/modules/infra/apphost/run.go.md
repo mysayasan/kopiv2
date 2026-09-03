@@ -15,7 +15,8 @@ Implements the reusable runtime host for all app modules.
 ## Responsibilities
 
 - Resolve a home directory (`resolveHomeDir`: read-only app root — static assets, bundled scripts, default config) and a data directory (`resolveDataDir`: writable state root — mutable config, database, recordings, logs, keys), independently overridable via `<APP>_HOME`/`<APP>_DATA` or generic `KOPIV2_HOME`/`KOPIV2_DATA` env vars; a dev checkout has both equal to the app's `BaseDir()`, unchanged from before the split.
-- Load selected app config from the data directory (`loadConfig`), seeding it from the home directory's shipped default `config.json` on first run when the data dir has none yet (a packaged install's writable copy).
+- Run the pre-boot setup wizard (`runFirstBootSetup`, `firstboot_hook.go.md`) right after path resolution and BEFORE `loadConfig` — it needs no config loaded yet, and exists precisely to fix the `db`/`cache`/`server`/`localAuth` settings `loadConfig` is about to read. A no-op on every boot after the first (see `infra/apphost/firstboot/firstboot.go.md`).
+- Load selected app config from the data directory (`loadConfig`), seeding it from the home directory's shipped default `config.json` on first run when the data dir has none yet (a packaged install's writable copy) — the seeding logic is `seedConfigIfMissing`, extracted out of `loadConfig` so `runFirstBootSetup` can call it too (the wizard rewrites the data dir's copy, so that copy has to exist first).
 - After the shared config is loaded and normalized (`normalizePathConfig`), hand the app its
   own config blocks: if `app` implements `AppConfigDecoder` (`types.go.md`), call
   `decoder.DecodeAppConfig(appConfig.Raw(), dataDir)`. `mymatasan` decodes and normalizes its
@@ -78,12 +79,25 @@ Implements the reusable runtime host for all app modules.
 - Serve static SPA files from selected app directory.
 - Build listener matrix from server hostnames and TLS/non-TLS port lists.
 - Start one or more HTTP servers for the configured listener ports.
+- Print the "here is where to browse" ready banner and open a browser (`announceReady`, `announce.go.md`), once, right after listeners are up — replaces the previous per-listener log line (`starting https server on :3002`), which named a port with no scheme or host. Passed `anyTLS(listeners) && isSelfSignedCert(appConfig.Tls.CertPath)` so the banner can add a warning paragraph when the browser is about to see a self-signed cert (`selfcert.go.md`).
 - Manage multi-listener lifecycle and graceful shutdown.
 - Provide a `Restarter` (via `Dependencies.Restarter`) that app modules call to request a graceful restart; the run loop selects on its cancel, runs the normal shutdown, then relaunches a fresh process from the on-disk executable (`relaunchSelf`).
 - Select DB adapter from `db.engine` with environment override support.
 
 ## Notes
 
+- **Pre-boot setup wizard** (`runFirstBootSetup`, `firstboot_hook.go.md`; the served page
+  and API live in `infra/apphost/firstboot`, `infra/apphost/firstboot/firstboot.go.md`):
+  runs before `loadConfig`, in the same process, on its own loopback-only port (default
+  `127.0.0.1:39530`), and needs no DB/cache/session — it exists to fix the very settings
+  `loadConfig` is about to read, which nothing running INSIDE the app could ever do. It
+  triggers only when `config.json`'s `"setup": {"completed": false}` block says so, or
+  `KOPIV2_SETUP=1` — never on dependency reachability, so a transient DB outage can never
+  flip a running app into a config wizard, and a config with no `setup` block (every
+  install that predates this feature) never sees it. This is a DIFFERENT mechanism from
+  each app's existing in-app "first-run setup wizard" (`domain/shared/services/
+  setup_state.go`, `docs/TECHNICAL_SPEC.md`'s "Suite-wide first-run setup seam") — that
+  one runs after the app is up and a superadmin has signed in.
 - **`/api/*` 404 fix (found live-booting myiotsan):** before this, an unmatched path under
   `/api` fell through to the root router's SPA catch-all (`spaHandler`) and got a `200
   text/html` response — because the auth middleware is mounted on the *app's own* `/api`
@@ -108,6 +122,7 @@ Implements the reusable runtime host for all app modules.
 - App worker shutdown is invoked before HTTP server shutdown when provided.
 - `Restarter.Restart(reason)` cancels the run loop, runs the same graceful shutdown, then either exits for a process supervisor or self-relaunches. `supervisedRestart()` is true when `KOPIV2_SUPERVISED` is set OR the process runs as a Windows service (`platformSupervised()`); in that case it exits with `restartExitCode` (70) so the supervisor relaunches it (and a self-relaunch can't race/double-start a fresh service instance for the listen port). Otherwise `relaunchSelf()` restarts in place: Unix `execve`s the same image (same pid, no port hand-off race); Windows spawns a detached child with **`CREATE_NO_WINDOW`** — not `DETACHED_PROCESS`, which would make Windows allocate a *new console window* for this console-subsystem binary on every relaunch (a stray "DOS window" per restart). It is also the intended primitive for self-update.
 - **Self-relaunch storm guard** (`allowSelfRelaunch`, all OS): the self-relaunch path is bounded to `selfRelaunchMax` (5) relaunches within `selfRelaunchWindow` (60s), counted across the relaunch chain via `KOPIV2_RESTART_GEN`/`KOPIV2_RESTART_T0` env (carried to the child, which inherits the environment). Once exceeded it logs and stays **down** instead of relaunching, so a crash-on-boot — or any condition that immediately re-requests a restart — can never become a runaway loop that spawns endless processes/windows. A window that elapses (the app stayed up a while) resets the count, so ordinary deliberate restarts are never throttled.
+- The same block that reads and unsets `KOPIV2_RESTART_DELAY_MS` also sets package-level `relaunchedByRestart = true` (`browser.go.md`) — recorded before the variable is unset, since it is the marker that this process is a self-relaunch rather than an operator's fresh start. `announceReady`'s browser launch consults it so a settings-change restart never pops a fresh browser tab.
 - Hostname wildcard (`*` or empty hostname) maps to bind-all interfaces.
 - `server.tlsPorts` starts HTTPS listeners and `server.nonTlsPorts` starts HTTP listeners.
 - Empty `tlsPorts` or `nonTlsPorts` means that protocol mode is not started.

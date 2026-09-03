@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +12,7 @@ import (
 	"github.com/mysayasan/kopiv2/infra/atrest"
 	"github.com/mysayasan/kopiv2/infra/cache"
 	"github.com/mysayasan/kopiv2/infra/config"
+	"github.com/mysayasan/kopiv2/infra/config/configfile"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 	"github.com/mysayasan/kopiv2/infra/mailer"
 )
@@ -22,7 +22,7 @@ import (
 // mis-set (db, server, bootstrap): those stay file-only.
 //
 // Persistence model (decided against a pure DB store because myseliasan's config is
-// infra-level, read once by the shared host at boot — see settings_materialize.go):
+// infra-level, read once by the shared host at boot — see infra/config/configfile):
 //   - The authoritative CURRENT value lives in config.json, which the host re-reads on
 //     restart; deps.Config mirrors it in memory. Get reads from deps.Config.
 //   - Save validates, updates the in-memory config so the UI reflects the pending value,
@@ -348,7 +348,7 @@ func (s *settingsService) commit(ctx context.Context, section string, data map[s
 	if err := applyToConfig(s.cfg, section, data); err != nil {
 		return SaveResult{}, err
 	}
-	if err := materializeConfig(s.cfgPath, flattenPatches(nil, data)); err != nil {
+	if err := configfile.Materialize(s.cfgPath, configfile.Flatten(nil, data)); err != nil {
 		return SaveResult{}, fmt.Errorf("write config: %w", err)
 	}
 	return SaveResult{NeedsRestart: true}, nil
@@ -648,26 +648,6 @@ func maskCopy(data map[string]any, secrets []string) map[string]any {
 	return out
 }
 
-// flattenPatches turns a nested map into leaf configPatches. Scalars and non-map values
-// become one patch each; nested maps recurse. prefix is the root path (nil at the top).
-func flattenPatches(prefix []string, data map[string]any) []configPatch {
-	var patches []configPatch
-	keys := make([]string, 0, len(data))
-	for k := range data {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		path := append(append([]string{}, prefix...), k)
-		if child, ok := data[k].(map[string]any); ok {
-			patches = append(patches, flattenPatches(path, child)...)
-			continue
-		}
-		patches = append(patches, configPatch{path: path, value: data[k]})
-	}
-	return patches
-}
-
 func leafAny(m map[string]any, path string) (any, bool) {
 	parts := strings.Split(path, ".")
 	cur := m
@@ -695,7 +675,7 @@ func leafString(m map[string]any, path string) (string, bool) {
 }
 
 func setLeaf(m map[string]any, path string, value any) {
-	setPath(m, strings.Split(path, "."), value)
+	configfile.SetPath(m, strings.Split(path, "."), value)
 }
 
 func boolValue(p *bool, def bool) bool {

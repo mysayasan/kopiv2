@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Setup</title>
+<!-- Inline data-URI icon: without it the browser requests /favicon.ico, which this
+     server does not have, and the operator's first impression of the page is a 404 in
+     the console. A file would work too, but an embedded one cannot 404. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%231f6feb'/%3E%3Cpath d='M4 8h8M8 4v8' stroke='%23fff' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/setup.css">
+<!-- Loaded in the HEAD, and deliberately not deferred: it applies the remembered theme
+     to <html> while the head is still parsing, so a dark-theme operator never sees a
+     white page flash before the class lands. An inline script would be the usual trick
+     for this, but the page's policy is script-src 'self' with no inline exception. -->
+<script src="assets/setup.js"></script>
+</head>
+<body>
+<main class="card" id="card">
+  <header class="head">
+    <div class="titles">
+      <h1 id="appTitle">Setup</h1>
+      <p class="sub" data-i18n="head.sub">Finish configuring this install. The app starts as soon as you are done.</p>
+    </div>
+    <div class="pickers">
+      <label class="picker">
+        <span class="sr" data-i18n="head.language">Language</span>
+        <select id="lang">
+          <option value="en">English</option>
+          <option value="ms">Bahasa Melayu</option>
+          <option value="zh">中文</option>
+          <option value="ar">العربية</option>
+        </select>
+      </label>
+      <label class="picker">
+        <span class="sr" data-i18n="head.theme">Theme</span>
+        <select id="theme">
+          <option value="system" data-i18n="theme.system">System</option>
+          <option value="light" data-i18n="theme.light">Light</option>
+          <option value="dark" data-i18n="theme.dark">Dark</option>
+        </select>
+      </label>
+    </div>
+  </header>
+
+  <ol class="steps" id="steps"></ol>
+
+  <div class="alert" id="alert" hidden></div>
+
+  <section class="pane" id="pane-0">
+    <h2 data-i18n="welcome.title">Before you start</h2>
+    <p data-i18n="welcome.body">This page writes the settings the app reads at startup: its database, its cache, the ports it listens on, and the first administrator. Nothing is saved until the last step.</p>
+    <p class="muted"><span data-i18n="welcome.file">Settings are written to</span> <code id="configPath"></code></p>
+  </section>
+
+  <section class="pane" id="pane-1" hidden>
+    <h2 data-i18n="db.title">Database</h2>
+    <label class="field">
+      <span data-i18n="db.engine">Engine</span>
+      <select id="db-engine">
+        <option value="postgres">PostgreSQL</option>
+        <option value="mariadb">MariaDB / MySQL</option>
+        <option value="sqlite" data-i18n="db.sqliteOption">SQLite (single file, no server)</option>
+      </select>
+    </label>
+    <div id="db-server">
+      <div class="row">
+        <label class="field grow"><span data-i18n="db.host">Host</span><input id="db-host" autocomplete="off"></label>
+        <label class="field narrow"><span data-i18n="db.port">Port</span><input id="db-port" type="number" min="1" max="65535"></label>
+      </div>
+      <div class="row">
+        <label class="field grow"><span data-i18n="db.user">User</span><input id="db-user" autocomplete="off"></label>
+        <label class="field grow"><span data-i18n="db.password">Password</span><input id="db-password" type="password" autocomplete="new-password"></label>
+      </div>
+      <div class="row">
+        <label class="field grow"><span data-i18n="db.name">Database name</span><input id="db-name" autocomplete="off"></label>
+        <label class="field narrow"><span data-i18n="db.ssl">SSL mode</span><input id="db-ssl" autocomplete="off" placeholder="disable"></label>
+      </div>
+    </div>
+    <div id="db-file" hidden>
+      <label class="field"><span data-i18n="db.file">Database file</span><input id="db-fileName" autocomplete="off"></label>
+    </div>
+    <div class="testrow">
+      <button type="button" class="ghost" id="db-test" data-i18n="action.test">Test connection</button>
+      <span class="result" id="db-result"></span>
+    </div>
+  </section>
+
+  <section class="pane" id="pane-2" hidden>
+    <h2 data-i18n="cache.title">Cache</h2>
+    <label class="field">
+      <span data-i18n="cache.provider">Provider</span>
+      <select id="cache-provider">
+        <option value="default" data-i18n="cache.inprocess">In-process (single server)</option>
+        <option value="redis">Redis</option>
+      </select>
+    </label>
+    <p class="muted" data-i18n="cache.hint">Redis is required only when you run more than one instance behind a load balancer.</p>
+    <div id="cache-redis" hidden>
+      <div class="row">
+        <label class="field grow"><span data-i18n="cache.address">Address</span><input id="cache-address" placeholder="localhost:6379" autocomplete="off"></label>
+        <label class="field narrow"><span data-i18n="cache.db">DB</span><input id="cache-db" type="number" min="0"></label>
+      </div>
+      <div class="row">
+        <label class="field grow"><span data-i18n="cache.password">Password</span><input id="cache-password" type="password" autocomplete="new-password"></label>
+        <label class="field check"><input id="cache-tls" type="checkbox"><span data-i18n="cache.tls">Use TLS</span></label>
+      </div>
+    </div>
+    <div class="testrow">
+      <button type="button" class="ghost" id="cache-test" data-i18n="action.test">Test connection</button>
+      <span class="result" id="cache-result"></span>
+    </div>
+  </section>
+
+  <section class="pane" id="pane-3" hidden>
+    <h2 data-i18n="web.title">Web address</h2>
+    <label class="field check"><input id="web-tls" type="checkbox"><span data-i18n="web.enableTls">Serve over HTTPS</span></label>
+    <div class="row">
+      <label class="field grow"><span data-i18n="web.tlsPorts">HTTPS ports</span><input id="web-tlsPorts" placeholder="3002" autocomplete="off"></label>
+      <label class="field grow"><span data-i18n="web.nonTlsPorts">HTTP ports</span><input id="web-nonTlsPorts" placeholder="3003" autocomplete="off"></label>
+    </div>
+    <p class="muted" data-i18n="web.hint">Separate several ports with commas. Leave a box empty to serve nothing on it.</p>
+    <label class="field"><span data-i18n="web.hostnames">Hostnames</span><input id="web-hostnames" placeholder="*" autocomplete="off"></label>
+  </section>
+
+  <section class="pane" id="pane-4" hidden>
+    <h2 data-i18n="admin.title">Administrator</h2>
+    <label class="field check"><input id="admin-enabled" type="checkbox"><span data-i18n="admin.enabled">Enable the built-in administrator account</span></label>
+    <div class="row">
+      <label class="field grow"><span data-i18n="admin.username">Username</span><input id="admin-username" autocomplete="off"></label>
+      <label class="field grow"><span data-i18n="admin.password">Password</span><input id="admin-password" type="password" autocomplete="new-password"></label>
+    </div>
+    <p class="muted" id="admin-hint" data-i18n="admin.hint">Leave the password empty to have one generated. Either way you must change it on first sign-in.</p>
+  </section>
+
+  <section class="pane" id="pane-5" hidden>
+    <h2 data-i18n="review.title">Review</h2>
+    <dl class="review" id="review"></dl>
+    <p class="muted" data-i18n="review.hint">Choosing Finish writes the settings and starts the app.</p>
+  </section>
+
+  <section class="pane" id="pane-6" hidden>
+    <h2 data-i18n="done.title">Starting</h2>
+    <p data-i18n="done.body">The settings are saved and the app is starting. This page can be closed.</p>
+    <p class="startlink"><a id="startUrl" href="#" rel="noreferrer"></a></p>
+    <p class="muted" id="done-note" data-i18n="done.note">Waiting for the app to answer…</p>
+  </section>
+
+  <footer class="nav">
+    <button type="button" class="ghost" id="back" data-i18n="action.back">Back</button>
+    <span class="spacer"></span>
+    <button type="button" class="primary" id="next" data-i18n="action.next">Next</button>
+  </footer>
+</main>
+</body>
+</html>

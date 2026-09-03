@@ -17,9 +17,9 @@ localAuth) — there is no seam for a DB value to override them at startup:
 - The authoritative CURRENT value lives in `config.json`, which the host re-reads on restart;
   `deps.Config` mirrors it in memory. `Get`/`GetAll` read from the live in-memory config.
 - `Save` validates, updates the in-memory config so the UI reflects the pending value
-  immediately, writes the changed leaves back into `config.json` (`settings_materialize.go`),
-  and reports `needsRestart: true` — the change only takes effect once the process relaunches
-  (`apis/system.go`'s `POST /api/system/restart`).
+  immediately, writes the changed leaves back into `config.json` (`infra/config/configfile`,
+  `infra/config/configfile/patch.go.md`), and reports `needsRestart: true` — the change only
+  takes effect once the process relaunches (`apis/system.go`'s `POST /api/system/restart`).
 - A one-time DB snapshot of the original config (`ControlSetting` row keyed
   `settings.defaults`, captured once on first run via `ensureDefaults` and never overwritten)
   backs `Reset`, so "restore defaults" still works after `config.json` has been hand-edited or
@@ -90,8 +90,8 @@ says who caused it.
 - `GetAll() map[string]any` — every section keyed by id, secrets masked.
 - `Save(ctx, section, body json.RawMessage) (SaveResult, error)` — projects the request body
   onto the section's known shape (`projectOntoShape`, dropping the UI's `"<field>Set"` helpers
-  and any stray field so `materializeConfig` can never write an unrecognized key), restores a
-  blank secret to its current value, then delegates to `commit`.
+  and any stray field so `configfile.Materialize` can never write an unrecognized key), restores
+  a blank secret to its current value, then delegates to `commit`.
 - `Reset(ctx, section) (SaveResult, error)` — loads the first-run snapshot, projects it onto
   the section's *current* shape (so a snapshot from an older schema still resets cleanly), then
   delegates to `commit`.
@@ -107,9 +107,10 @@ says who caused it.
 
 `commit(ctx, section, data)` — the single write path both `Save` and `Reset` funnel through:
 `validateSection` (`settings_apply.go`) → `applyToConfig` (updates `*config.AppConfigModel` in
-place) → `materializeConfig` (`settings_materialize.go`, writes the changed leaves into
-`config.json`). Always returns `SaveResult{NeedsRestart: true}` on success, since every
-editable block is read by the host only at boot.
+place) → `configfile.Materialize(s.cfgPath, configfile.Flatten(nil, data))` (writes the changed
+leaves into `config.json` — see `infra/config/configfile/patch.go.md`). Always returns
+`SaveResult{NeedsRestart: true}` on success, since every editable block is read by the host only
+at boot.
 
 ## Constructor
 
@@ -125,18 +126,25 @@ snapshot via the shared `encodeSecret`/`decodeSecret` helpers (`secret_store.go.
 
 - `ensureDefaults` never overwrites an existing `settings.defaults` row, so a restart (which
   reloads a possibly-already-edited config) can't clobber the original snapshot.
-- The nested-map helpers (`projectOntoShape`, `maskCopy`, `flattenPatches`, `leafAny`/
-  `leafString`/`setLeaf`) are the data-driven plumbing shared by `Get`/`Save`/`Reset`; they
-  operate on the same root-relative shape `read()` returns, so a section's field list only
-  needs to be declared once.
+- The nested-map helpers (`projectOntoShape`, `maskCopy`, `leafAny`/`leafString`/`setLeaf`) are
+  the data-driven plumbing shared by `Get`/`Save`/`Reset`; they operate on the same
+  root-relative shape `read()` returns, so a section's field list only needs to be declared
+  once. Flattening a section into leaf patches (`configfile.Flatten`) and setting a nested leaf
+  (`setLeaf` now delegates to `configfile.SetPath`) both moved into the shared
+  `infra/config/configfile` package — this file no longer carries its own copies (see below).
 - `sectionSecrets` is the single place that lists which dotted leaf per section is a secret —
   both masking (`Get`/`GetAll`) and keep-if-blank (`Save`) are driven off it.
 - See `services/settings_apply.go.md` for validation/typed-apply and
-  `services/settings_materialize.go.md` for the config.json write-back; `apis/settings.go.md`
-  for the HTTP surface and superadmin gate; `apis/system.go.md` for the restart endpoint that
-  applies a pending change; `services/filesystem_browse.go.md` for the server-side path picker
-  behind the storage/logging/TLS/SSO path fields.
+  `infra/config/configfile/patch.go.md` for the surgical config.json write-back (formerly this
+  app's own `services/settings_materialize.go`, now deleted — it was lifted into shared
+  `infra/config/configfile` so the pre-boot setup wizard (`infra/apphost/firstboot`) could reuse
+  the identical leaf-patch/atomic-write logic instead of growing a second copy;
+  `apps/myidsan/services/settings_materialize.go` still has its own separate copy — not
+  consolidated by this change); `apis/settings.go.md` for the HTTP surface and superadmin gate;
+  `apis/system.go.md` for the restart endpoint that applies a pending change;
+  `services/filesystem_browse.go.md` for the server-side path picker behind the
+  storage/logging/TLS/SSO path fields.
 - `TestCache` deliberately bypasses `commit`/`validateSection`/`applyToConfig`/
-  `materializeConfig` entirely — it never writes `s.cfg` or `config.json`, so it carries none of
-  the "every save needs a restart" behavior the rest of this file has; it is a pure connectivity
-  check.
+  `configfile.Materialize` entirely — it never writes `s.cfg` or `config.json`, so it carries
+  none of the "every save needs a restart" behavior the rest of this file has; it is a pure
+  connectivity check.
