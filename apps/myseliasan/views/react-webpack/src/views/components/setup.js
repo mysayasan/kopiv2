@@ -3,7 +3,7 @@ import { Ico, useT, LanguageDropdown, DeploymentPanel } from '@shared';
 import { useManual } from '@shared/Manual';
 import { BrandLogo } from './layout';
 import { FormBusyOverlay, Message } from './ui';
-import { api } from '../lib/helpers';
+import { api, apiBase } from '../lib/helpers';
 import { KIND_ORDER, KIND_ICO, normKind, defaultIconFor, hasPlans, multiPlan } from './site_kinds';
 
 // First-run setup wizard for the control plane. myseliasan carries the heaviest setup
@@ -213,6 +213,25 @@ function WelcomeStep({ session }) {
   );
 }
 
+// restartInstance relaunches this process and reloads the page once the new one answers.
+// Same shape as the Settings screen's restart, and for the same reason: a saved config
+// that has not been loaded yet is worse than an unsaved one, because the screen says it
+// is set. The reload is unconditional after the deadline so the operator is never left
+// on a page waiting on a server that is not coming back on its own.
+function restartInstance() {
+  api('/api/system/restart', { method: 'POST', noRedirect: true }).catch(() => {});
+  const deadline = Date.now() + 120000;
+  const tick = async () => {
+    if (Date.now() > deadline) { window.location.reload(); return; }
+    try {
+      const res = await fetch(`${apiBase()}/api/health`, { credentials: 'same-origin' });
+      if (res.ok) { window.location.reload(); return; }
+    } catch (_) { /* still down */ }
+    window.setTimeout(tick, 1500);
+  };
+  window.setTimeout(tick, 2500);
+}
+
 // Step 2 — deployment shape. The one question in this wizard whose answer is mostly
 // about the world OUTSIDE the application: a load balancer's configuration, where the
 // encryption key file lives, which addresses the nodes will dial. The panel reports what
@@ -222,6 +241,27 @@ function WelcomeStep({ session }) {
 // every install was before this existed.
 function DeploymentStep({ onToast, mode, setMode }) {
   const t = useT();
+  // The three failing rows an operator meets here (shared cache, shared lock, per-process
+  // sign-in lockout) all have the same fix and all of it is already reachable over APIs
+  // this app ships: the config editor writes the safe subset of config.json, and the
+  // restarter relaunches onto it. Handing the panel these three calls turns a report the
+  // wizard could only read out into something it can act on — no hand-edited config.json,
+  // no leaving the wizard to find Settings.
+  const redisSetup = {
+    test: (values) => api('/api/settings/cache/test', { method: 'POST', noRedirect: true, body: JSON.stringify(values) })
+      .catch(() => ({ ok: false })),
+    // A partial PUT: the settings service keeps every field the request omits, so this
+    // touches the cache provider and the lock provider and nothing else in the section.
+    apply: (values) => api('/api/settings/storage', {
+      method: 'PUT',
+      noRedirect: true,
+      body: JSON.stringify({
+        cache: { provider: 'redis', redis: { address: values.address, password: values.password, db: values.db, useTls: values.useTls } },
+        transaction: { lockProvider: 'redis' },
+      }),
+    }).catch(() => ({ ok: false })),
+    restart: restartInstance,
+  };
   return (
     <div className="setup-pane">
       <h2>{t('setup.deploymentTitle')}</h2>
@@ -234,6 +274,7 @@ function DeploymentStep({ onToast, mode, setMode }) {
         labels={{ llmMode: 'setup.deployCheckLlm' }}
         onToast={onToast}
         onSaved={setMode}
+        redisSetup={redisSetup}
       />
       {mode === 'clustered' ? <p className="field-hint">{t('setup.deploymentNextHint')}</p> : null}
     </div>
@@ -402,6 +443,24 @@ function NodeStep({ busy, setBusy, setMessage, onToast, done, setDone, clustered
       .catch(() => { /* the pane shows a hint when the key is unavailable */ });
   }, []);
 
+  // The fleet key is generated HERE rather than sending the operator to the Nodes page and
+  // back: without it this step cannot do anything at all — the scan and the adopt both fail
+  // with "fleet key is not configured" — and a wizard that dead-ends on a one-click
+  // prerequisite is not a wizard. No confirmation is asked because on this screen the key is
+  // by definition unset (a set key renders the copy row instead), so there is nothing to
+  // rotate and nothing to break: the Nodes page keeps its confirm for the rotation case.
+  const generateKey = async () => {
+    setBusy(true);
+    setMessage('');
+    const r = await api('/api/nodes/fleet-key', { method: 'POST', noRedirect: true }).catch(() => ({ ok: false }));
+    setBusy(false);
+    if (!r.ok) { setMessage(r.message || t('setup.nodeKeyFailed')); return; }
+    setFleetKey(r.body);
+    onToast && onToast(t('setup.nodeKeyGenerated'), 'success');
+  };
+
+  const keySet = !!(fleetKey && fleetKey.set && fleetKey.fleetKey);
+
   const scan = async () => {
     setBusy(true);
     setMessage('');
@@ -443,7 +502,7 @@ function NodeStep({ busy, setBusy, setMessage, onToast, done, setDone, clustered
       <p>{t('setup.nodeBody')}</p>
 
       {/* GET /nodes/fleet-key answers {fleetKey, set} — `set` is false on a fresh install. */}
-      {fleetKey && fleetKey.set && fleetKey.fleetKey ? (
+      {keySet ? (
         <div className="setup-toggle-row">
           <div>
             <strong>{t('setup.nodeFleetKey')}</strong>
@@ -454,7 +513,14 @@ function NodeStep({ busy, setBusy, setMessage, onToast, done, setDone, clustered
           </button>
         </div>
       ) : (
-        <p className="field-hint">{t('setup.nodeNoFleetKey')}</p>
+        <>
+          <p className="field-hint">{t('setup.nodeNoFleetKey')}</p>
+          <div className="setup-actions">
+            <button type="button" onClick={generateKey} disabled={busy}>
+              <span className="btn-icon"><Ico n="key" /> {t('setup.nodeGenerateKey')}</span>
+            </button>
+          </div>
+        </>
       )}
 
       {/* A node dials the parent back and holds that connection open. Pointed at one
@@ -467,10 +533,10 @@ function NodeStep({ busy, setBusy, setMessage, onToast, done, setDone, clustered
       ) : (
         <>
           <div className="setup-actions">
-            <button type="button" onClick={scan} disabled={busy}>
+            <button type="button" onClick={scan} disabled={busy || !keySet}>
               <span className="btn-icon"><Ico n="search" /> {t('setup.nodeScan')}</span>
             </button>
-            <button type="button" className="quiet" onClick={() => setForm({ ip: '', httpsPort: '', claimCode: '', name: '' })} disabled={busy}>
+            <button type="button" className="quiet" onClick={() => setForm({ ip: '', httpsPort: '', claimCode: '', name: '' })} disabled={busy || !keySet}>
               {t('setup.nodeManual')}
             </button>
           </div>

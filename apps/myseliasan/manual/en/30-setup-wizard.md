@@ -8,8 +8,8 @@ order: 30
 
 # The first-run setup wizard
 
-The wizard runs once, the first time an administrator signs in, and walks through six steps:
-Welcome, Sign-in, First site, Add a node, Handover, Done.
+The wizard runs once, the first time an administrator signs in, and walks through seven steps:
+Welcome, Deployment, Sign-in, First site, Add a node, Handover, Done.
 
 **Every step can be skipped**, and everything it does is available later from the ordinary pages.
 Its purpose is to get the control plane out of an empty state, not to extract every decision from
@@ -19,6 +19,28 @@ you up front. Each step is under a minute.
 
 Confirms who you are signed in as and whether the bootstrap password has been changed, then
 summarises what the remaining steps do. Nothing to fill in.
+
+## Deployment {#deployment}
+
+Decides whether this install is a single server or one of several behind a load balancer, and
+tells you whether it is actually set up to be the latter.
+
+Most of that answer is not in the product. Pointing the cache and the transaction lock at Redis
+is the easy half; the half that quietly ruins a deployment is outside it — a load balancer
+terminating TLS on the ports where a node's client certificate *is* the authentication, an
+encryption key that differs between instances so one cannot read what the other sealed, a signing
+secret each replica invented for itself. None of those announce themselves. They present as flaky
+sign-ins, or as a fleet that looks healthy until something reads a row.
+
+So this step reports what it can verify from inside — with the values you need to compare between
+instances — and lists plainly what only a person can check outside.
+
+Where a check fails on something the product *can* fix — the cache and the transaction lock still
+being per-process — the step lets you point them at Redis there and then: enter the address,
+test the connection, and apply. Those settings are read only at startup, so applying them
+offers to restart the instance. The page waits for the new process to answer and then reloads
+itself: a saved configuration that has not been loaded yet is worse than an unsaved one, because
+the screen says it is set.
 
 ## Sign-in {#signin}
 

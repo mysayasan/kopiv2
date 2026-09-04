@@ -13,6 +13,10 @@ import './styles/fleet-policy.css';
 import './styles/failover.css';
 import './styles/push.css';
 import './styles/fleet-wall.css';
+// The site/asset KIND PICKER, shared by the map's AssetWizard and the first-run setup
+// wizard. It is here rather than in fleet-map.css because setup never loads the map
+// chunk — when it lived there the wizard's three tiles rendered with no CSS at all.
+import './styles/asset-kind.css';
 import { SideNav, WorkspaceHeader } from './components/layout';
 import { ToastStack, LangProvider, normalizeLang, useT, AppFooter, useStickyTab, clearStickyTab } from '@shared';
 import { ManualProvider, ManualLibrary } from '@shared/Manual';
@@ -172,6 +176,20 @@ function AppInner({ lang, onLangChange }) {
     setToasts((list) => [{ id, text, kind }, ...list].slice(0, 5));
   }
 
+  const toastStack = (
+    <ToastStack toasts={toasts} onDismiss={(id) => setToasts((list) => list.filter((t) => t.id !== id))} />
+  );
+
+  // withToasts wraps a PRE-APP screen so its toasts are actually rendered.
+  //
+  // The stack lives in the app shell below, which those screens return before ever
+  // reaching — so the first-run wizard and the must-change screen were pushing toasts
+  // into a list nothing displayed. Every success message in the whole wizard was
+  // invisible: the site it created, the fleet key it generated, the Redis it just
+  // reached. A button that works and says nothing is indistinguishable from a broken one,
+  // which is exactly how it was reported.
+  const withToasts = (screen) => (<>{screen}{toastStack}</>);
+
   // First-run wizard gate: 'unknown' | 'needed' | 'done'. The flag is SERVER-side, so a
   // dismissal sticks per install rather than per browser. Only fetched for a superadmin
   // — they are the only role that can complete it, and nobody else should be held at a
@@ -221,7 +239,7 @@ function AppInner({ lang, onLangChange }) {
     return <LoginScreen onLoggedIn={loadSession} lang={lang} onLangChange={onLangChange} />;
   }
   if (authState === 'mustchange') {
-    return <ChangePasswordScreen onDone={loadSession} onToast={pushToast} onLogout={logout} lang={lang} onLangChange={onLangChange} />;
+    return withToasts(<ChangePasswordScreen onDone={loadSession} onToast={pushToast} onLogout={logout} lang={lang} onLangChange={onLangChange} />);
   }
   // Authenticated but no role assigned yet — gate the whole control plane behind a
   // clearance screen until a superadmin grants a role.
@@ -235,14 +253,14 @@ function AppInner({ lang, onLangChange }) {
     return <main className="boot-screen"><FormBusyOverlay busy /></main>;
   }
   if (setupState === 'needed') {
-    return (
+    return withToasts(
       <SetupWizard
         session={session}
         lang={lang}
         onLangChange={onLangChange}
         onToast={pushToast}
         onDone={() => setSetupState('done')}
-      />
+      />,
     );
   }
 
@@ -300,7 +318,7 @@ function AppInner({ lang, onLangChange }) {
             {session?.isSuperadmin ? <button type="button" className="handoff-banner-action" onClick={() => setActiveTab('users')}>{t('handoff.goToUsers')}</button> : null}
           </div>
         ) : null}
-        <ToastStack toasts={toasts} onDismiss={(id) => setToasts((list) => list.filter((t) => t.id !== id))} />
+        {toastStack}
 
         {activeTab === 'dashboard' ? <DashboardTab nodes={nodes} /> : null}
         {activeTab === 'insight' && canAgent ? <AIInsightPage session={session} onToast={pushToast} onSuggestRule={session?.isSuperadmin ? suggestRule : null} /> : null}

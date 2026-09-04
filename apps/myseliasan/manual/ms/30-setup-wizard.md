@@ -8,8 +8,8 @@ order: 30
 
 # Bestari persediaan kali pertama
 
-Bestari berjalan sekali, kali pertama seorang pentadbir log masuk, dan melalui enam langkah:
-Selamat datang, Log masuk, Tapak pertama, Tambah nod, Penyerahan, Selesai.
+Bestari berjalan sekali, kali pertama seorang pentadbir log masuk, dan melalui tujuh langkah:
+Selamat datang, Pengedaran, Log masuk, Tapak pertama, Tambah nod, Penyerahan, Selesai.
 
 **Setiap langkah boleh dilangkau**, dan segala yang dilakukannya tersedia kemudian dari halaman
 biasa. Tujuannya ialah mengeluarkan satah kawalan daripada keadaan kosong, bukan mengutip setiap
@@ -19,6 +19,32 @@ keputusan daripada anda di awal. Setiap langkah mengambil kurang seminit.
 
 Mengesahkan siapa anda log masuk dan sama ada kata laluan permulaan telah ditukar, kemudian
 meringkaskan apa yang dilakukan langkah selebihnya. Tiada apa untuk diisi.
+
+## Pengedaran {#deployment}
+
+Menentukan sama ada pemasangan ini ialah satu pelayan tunggal atau salah satu daripada beberapa
+di belakang pengimbang beban, dan memberitahu anda sama ada ia benar-benar disediakan untuk yang
+kedua itu.
+
+Kebanyakan jawapannya bukan di dalam produk. Menghalakan cache dan kunci transaksi ke Redis ialah
+separuh yang mudah; separuh yang diam-diam merosakkan pengedaran berada di luarnya — pengimbang
+beban yang menamatkan TLS pada port yang sijil pelanggan nod *itulah* pengesahannya, kunci
+penyulitan yang berbeza antara instans sehingga satu tidak dapat membaca apa yang dimeteraikan
+oleh yang lain, rahsia tandatangan yang dicipta sendiri oleh setiap replika. Tiada satu pun
+daripadanya mengumumkan dirinya. Ia muncul sebagai log masuk yang tidak menentu, atau sebagai
+armada yang kelihatan sihat sehingga sesuatu membaca satu baris.
+
+Jadi langkah ini melaporkan apa yang boleh disahkannya dari dalam — dengan nilai yang anda perlu
+bandingkan antara instans — dan menyenaraikan dengan jelas apa yang hanya boleh disemak oleh
+manusia di luar.
+
+Apabila semakan gagal pada sesuatu yang *boleh* diperbetulkan oleh produk — cache dan kunci
+transaksi yang masih setiap proses — langkah ini membolehkan anda menghalakannya ke Redis pada
+ketika itu juga: masukkan alamat, uji sambungan, dan terapkan. Tetapan itu dibaca hanya semasa
+permulaan, jadi menerapkannya akan menawarkan untuk memulakan semula instans. Halaman menunggu
+proses baharu menjawab kemudian memuat semula dirinya: konfigurasi yang telah disimpan tetapi
+belum dimuatkan adalah lebih buruk daripada yang belum disimpan, kerana skrin berkata ia sudah
+ditetapkan.
 
 ## Log masuk {#signin}
 
