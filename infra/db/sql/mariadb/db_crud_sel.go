@@ -154,7 +154,7 @@ func (m *dbCrud) selectWithSQL(ctx context.Context, model interface{}, colCnt in
 		rowCnt++
 		vals := make([]interface{}, len(cols))
 		for i := 0; i < len(cols); i++ {
-			vals[i] = scanDestinationForField(props.Type().Field(i).Type)
+			vals[i] = dbsql.ScanDestinationForField(props.Type().Field(i).Type)
 		}
 
 		err = rows.Scan(
@@ -168,7 +168,7 @@ func (m *dbCrud) selectWithSQL(ctx context.Context, model interface{}, colCnt in
 
 		for i := 0; i < props.NumField(); i++ {
 			field := props.Type().Field(i)
-			data[field.Name] = normalizeScannedValue(vals[i], field.Type)
+			data[field.Name] = dbsql.NormalizeScannedValue(vals[i], field.Type)
 		}
 
 		result = append(result, data)
@@ -282,66 +282,6 @@ func (m *dbCrud) selectWithSQL(ctx context.Context, model interface{}, colCnt in
 	}
 
 	return result, rowCnt, nil
-}
-
-func normalizeScannedValue(raw interface{}, fieldType reflect.Type) interface{} {
-	if value, ok := raw.(*sql.NullString); ok && fieldType.Kind() == reflect.String {
-		normalized := ""
-		if value.Valid {
-			normalized = value.String
-		}
-		return &normalized
-	}
-	if value, ok := raw.(*sql.NullBool); ok && fieldType.Kind() == reflect.Bool {
-		normalized := value.Valid && value.Bool
-		return &normalized
-	}
-
-	return raw
-}
-
-func scanDestinationForField(fieldType reflect.Type) interface{} {
-	if fieldType == reflect.TypeOf(sql.NullString{}) {
-		return new(sql.NullString)
-	}
-	if fieldType.Kind() == reflect.Slice && fieldType.Elem().Kind() == reflect.Uint8 {
-		return new([]uint8)
-	}
-
-	switch fieldType.Kind() {
-	case reflect.Int:
-		return new(int)
-	case reflect.Int8:
-		return new(int8)
-	case reflect.Int16:
-		return new(int16)
-	case reflect.Int32:
-		return new(int32)
-	case reflect.Int64:
-		return new(int64)
-	case reflect.Uint:
-		return new(uint)
-	case reflect.Uint8:
-		return new(uint8)
-	case reflect.Uint16:
-		return new(uint16)
-	case reflect.Uint32:
-		return new(uint32)
-	case reflect.Uint64:
-		return new(uint64)
-	case reflect.Float32:
-		return new(float32)
-	case reflect.Float64:
-		return new(float64)
-	case reflect.String:
-		return new(sql.NullString)
-	case reflect.Bool:
-		// Use NullBool so columns added via ALTER TABLE (NULL on existing rows)
-		// scan without error; normalizeScannedValue maps NULL to false.
-		return new(sql.NullBool)
-	default:
-		return new(interface{})
-	}
 }
 
 func (m *dbCrud) SelectSingle(ctx context.Context, model interface{}, filters []sqldataenums.Filter, datasrc string) (map[string]interface{}, error) {
