@@ -1,0 +1,27 @@
+/* The "what are you adding?" kind picker: building / outdoor area / point asset.
+ *
+ * It lives in its OWN stylesheet because two screens ask that question — the map's
+ * AssetWizard and the first-run setup wizard's site step — and they are in different
+ * webpack chunks. These rules used to sit in fleet-map.css, which only the map
+ * components import, so the setup wizard shipped the markup with none of the CSS: the
+ * three tiles fell back to the base `button` rule and rendered as one fused blue bar
+ * with 0px between them, no icon/label layout, and no way to see which was selected.
+ * A shared component's styles must be imported by every screen that renders it.
+ */
+.bld-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+/* The kind question has three answers (building / outdoor area / point asset), so it gets its own
+   track count; it stacks to one column on a narrow dialog rather than squeezing three tiles. */
+.bld-choice-3 { grid-template-columns: repeat(3, 1fr); }
+@media (max-width: 620px) { .bld-choice-3 { grid-template-columns: 1fr; } }
+.bld-choice-opt {
+  display: grid; grid-template-columns: auto 1fr; grid-template-areas: "ico title" "ico sub";
+  gap: 2px 8px; align-items: center; text-align: left;
+  padding: 10px; border: 1px solid var(--border-soft); border-radius: 9px;
+  background: var(--bg-body); color: var(--text-secondary); cursor: pointer; font: inherit;
+}
+.bld-choice-opt svg { grid-area: ico; opacity: 0.8; }
+.bld-choice-opt:hover { border-color: var(--accent); }
+.bld-choice-opt.active { border-color: var(--accent); background: var(--accent-bg); color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.bld-choice-t { grid-area: title; font-size: 0.85rem; font-weight: 650; color: var(--text-primary); }
+.bld-choice-opt.active .bld-choice-t { color: var(--accent); }
+.bld-choice-s { grid-area: sub; font-size: 0.72rem; color: var(--text-faint); }

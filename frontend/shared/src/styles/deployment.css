@@ -251,3 +251,80 @@
 
 .dep-btn:hover:not(:disabled) { filter: brightness(1.06); }
 .dep-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* --- Redis setup (the fix offered beside the two rows it clears) ------------- */
+
+.dep-redis-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+  align-items: end;
+}
+
+@media (max-width: 620px) { .dep-redis-grid { grid-template-columns: 1fr; } }
+
+.dep-redis-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.dep-redis-field > span {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ui-text-muted, #5b6b7c);
+}
+
+.dep-redis-field input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 9px;
+  border: 1px solid var(--ui-border, #d5dde5);
+  border-radius: 7px;
+  background: var(--ui-surface, #fff);
+  color: var(--ui-text, #1f2933);
+  font: inherit;
+  font-size: 13px;
+}
+
+.dep-redis-narrow { max-width: 160px; }
+
+.dep-redis-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ui-text, #1f2933);
+  /* The row is a grid cell whose siblings are labelled fields, so without this the
+     checkbox is stretched to the height of a field and the caption wraps beside it. */
+  align-self: center;
+  min-height: 34px;
+}
+
+.dep-redis-check input {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.dep-btn-quiet {
+  border-color: var(--ui-border, #d5dde5);
+  background: var(--ui-surface, #fff);
+  color: var(--ui-text, #1f2933);
+}
+
+/* The restart prompt is deliberately loud: the values are saved but NOT in force until
+   the process comes back, and an operator who misses that reads the checklist as a lie. */
+.dep-restart {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid var(--ui-warn-border, #f0c67a);
+  border-radius: 8px;
+  background: var(--ui-warn-bg, #fdf6e7);
+  font-size: 13px;
+}

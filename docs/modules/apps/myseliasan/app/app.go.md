@@ -66,7 +66,20 @@ floor upload) fails with a 500 after the fact. Every migration is idempotent (ch
 auto-migrator already added the column) and, where a plain `ADD COLUMN` would leave existing
 rows `NULL`, immediately backfills them to the entity's zero value — the non-pointer
 `float64`/`bool`/`string` entity fields cannot scan a `NULL`, so an un-backfilled column breaks
-`List`/read-back with `"converting NULL to float64 is unsupported"` on every pre-existing row:
+`List`/read-back with `"converting NULL to float64 is unsupported"` on every pre-existing row.
+
+**Every column-existence check now also guards for the table itself being absent.** Migrations
+run only on non-fresh databases (a fresh one baselines the whole list as already applied — see
+`docs/DB_BOOTSTRAP_SPEC.md`), so a migration meets any database that predates the table it
+alters: an install upgrading from a version where `failover_plan`, `floor_plan`, `site`, or
+`managed_node` did not exist yet used to hit `ALTER TABLE floor_plan ADD COLUMN ...: relation
+"floor_plan" does not exist (42P01)` and fail to boot. Every `tableColumns(...)` call site in
+this file (inline in `Migrations()` and in each `ensure*Columns`/`backfillManagedNodeGeoNulls`
+helper below) now returns `nil` immediately when the probe reports zero columns — there is
+nothing to alter on a table that is not there yet, and the auto-migrator runs next and creates
+it at the entity's current shape, the migration's columns included. Regression-tested by
+`app/failover_capacity_migration_test.go`, which drives every affected migration against a
+database with none of these four tables and asserts boot survives instead of panicking.
 
 - `20260718-01-managed-node-geo` / `20260718-02-managed-node-geo-backfill` — add
   `managed_node.lat`/`lon`/`map_placed` (the geographic fleet map) and separately backfill any
@@ -126,6 +139,17 @@ rows `NULL`, immediately backfills them to the entity's zero value — the non-p
   and drops the old `ux_notification_rollup_slot` unique index so the auto-migrator rebuilds it
   **with** `source` included — without the drop, the rollup maintainer's first source-split insert
   violates the stale index and folding stops advancing.
+- `20260901-01-managed-node-version-backfill` (`ensureManagedNodeVersionColumns`) — adds
+  `managed_node.version`/`version_seen_at` (the staged-rollout reported-version columns) if
+  absent and backfills any `NULL` (`version` to `''`, `version_seen_at` to `0`). These columns
+  arrived with the staged-rollout work (`FleetRollout`, above) and were left to the
+  auto-migrator, which is additive — every node adopted before that upgrade had `NULL` in both.
+  The postgres/mariadb drivers now scan a `NULL` numeric as the field's zero value instead of
+  failing the whole `SELECT` (`infra/db/sql/scan_value.go.md`), but this migration still
+  backfills the data to what a `NULL` here actually means (`""` = no version ever reported, `0`
+  = never seen) rather than leaving it to the scan-time fallback, so an appliance that rolls
+  **back** to a binary predating that scan-value fix does not hit
+  `converting NULL to int64 is unsupported` again.
 
 `geoColumnType(base, engine)` maps a base SQL type (`DOUBLE PRECISION`/`BOOLEAN`) to the exact
 per-engine concrete type the auto-migrator itself generates (mirroring

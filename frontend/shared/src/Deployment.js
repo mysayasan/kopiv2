@@ -55,6 +55,18 @@ export function DeploymentPanel({
   readOnly = false,
   onToast,
   onSaved,
+  // redisSetup, when supplied, turns the two failing rows an operator cannot act on —
+  // the shared cache and the shared lock — into a form that fixes them here. Both come
+  // from ONE Redis, so it is one form, and the third row (the per-process sign-in
+  // lockout) clears with them because it is the same cache.
+  //
+  // It is a prop rather than a fetch this panel makes itself because the panel is shared
+  // by five apps: it knows what to ASK for, the app knows where to send it (and whether
+  // it has an in-app config editor at all). An app that passes nothing keeps today's
+  // read-only checklist. Shape: { test(values), apply(values), restart() }, each async;
+  // test/apply resolve to the app's own {ok, message} result, restart never resolves
+  // because it reloads the page.
+  redisSetup,
 }) {
   const t = useT();
   const [report, setReport] = useState(null);
@@ -62,6 +74,12 @@ export function DeploymentPanel({
   const [mode, setMode] = useState(null);
   const [acked, setAcked] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Sticky, and load-bearing: it keeps the block (and its restart prompt) on screen after
+  // the settings are saved, whatever the checklist says next. Preflight answers from the
+  // CONFIG, so a saved-but-not-restarted instance can report rows that are green while it
+  // is still running on the per-process cache it booted with — the one moment the
+  // operator must not lose the "restart now" button.
+  const [redisApplied, setRedisApplied] = useState(false);
 
   const load = useCallback(async () => {
     const r = await api('/api/deployment/preflight', { noRedirect: true }).catch(() => ({ ok: false }));
@@ -147,6 +165,22 @@ export function DeploymentPanel({
       {clustered ? (
         <>
           <Checklist report={report} labels={{ ...CHECK_LABELS, ...labels }} t={t} />
+          {redisSetup && !readOnly && (needsRedis(report) || redisApplied) ? (
+            <RedisSetup
+              setup={redisSetup}
+              applied={redisApplied}
+              disabled={busy}
+              onToast={onToast}
+              // Deliberately NOT reloading the report here. Preflight answers from the
+              // config file, so a reload would flip both rows green while this process
+              // still runs on the cache it booted with — and it would also reset the mode
+              // radio to the stored value, collapsing the checklist the operator is
+              // reading because they have not pressed "save deployment mode" yet. The
+              // rows stay red until the restart, which is the truth about this instance.
+              onApplied={() => setRedisApplied(true)}
+              t={t}
+            />
+          ) : null}
           {operatorSteps.length > 0 ? <OperatorSteps steps={operatorSteps} t={t} /> : null}
           {caveats.length > 0 ? (
             <Caveats caveats={caveats} acked={acked} onAck={setAcked} disabled={readOnly || busy} t={t} />
@@ -254,6 +288,109 @@ function Caveats({ caveats, acked, onAck, disabled, t }) {
         <input type="checkbox" checked={acked} disabled={disabled} onChange={(e) => onAck(e.target.checked)} />
         <span>{t('deploy.ackLabel')}</span>
       </label>
+    </div>
+  );
+}
+
+// needsRedis is true while either Redis-backed row is still failing. Both are shown as
+// one problem because they are one: the same server fixes both.
+function needsRedis(report) {
+  return (report.checks || []).some((c) => !c.ok && (c.id === 'sharedCache' || c.id === 'sharedLock'));
+}
+
+// RedisSetup is the fix for the two rows above, offered where the problem is reported
+// instead of as a sentence telling the operator to go and edit config.json by hand.
+//
+// TEST BEFORE SAVE is the whole point of the two-button shape: a wrong address saved
+// blind costs a restart to discover, and the restart lands on an instance that cannot
+// reach its cache. The test uses the same connection the running app would.
+//
+// Saving does NOT restart by itself. The operator is told a restart is needed and asked
+// to press it, because a wizard that restarts the server underneath somebody who was
+// half way through typing is the kind of helpfulness nobody thanks you for.
+function RedisSetup({ setup, applied, disabled, onToast, onApplied, t }) {
+  const [values, setValues] = useState({ address: 'localhost:6379', password: '', db: 0, useTls: false });
+  const [testing, setTesting] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+
+  const field = (name, value) => setValues((v) => ({ ...v, [name]: value }));
+  const payload = () => ({
+    address: (values.address || '').trim(),
+    password: values.password,
+    db: Number(values.db) || 0,
+    useTls: !!values.useTls,
+  });
+  const missingAddress = !(values.address || '').trim();
+
+  const test = async () => {
+    if (missingAddress) { onToast && onToast(t('deploy.redis.addressRequired'), 'error'); return; }
+    setTesting(true);
+    const r = await setup.test(payload()).catch(() => ({ ok: false }));
+    setTesting(false);
+    if (!r || !r.ok) { onToast && onToast((r && r.message) || t('deploy.redis.testFailed'), 'error'); return; }
+    onToast && onToast(t('deploy.redis.testOk'), 'success');
+  };
+
+  const apply = async () => {
+    if (missingAddress) { onToast && onToast(t('deploy.redis.addressRequired'), 'error'); return; }
+    setApplying(true);
+    const r = await setup.apply(payload()).catch(() => ({ ok: false }));
+    setApplying(false);
+    if (!r || !r.ok) { onToast && onToast((r && r.message) || t('deploy.redis.applyFailed'), 'error'); return; }
+    onToast && onToast(t('deploy.redis.applied'), 'success');
+    onApplied && onApplied();
+  };
+
+  const busy = disabled || testing || applying || restarting;
+  return (
+    <div className="dep-block dep-redis">
+      <h4><span className="dep-inline"><Ico n="layers" sz={15} /> {t('deploy.redis.title')}</span></h4>
+      <p className="dep-hint">{t('deploy.redis.body')}</p>
+      {applied ? null : (
+      <div className="dep-redis-grid">
+        <label className="dep-redis-field">
+          <span>{t('deploy.redis.address')}</span>
+          <input value={values.address} onChange={(e) => field('address', e.target.value)} placeholder="redis.internal:6379" disabled={busy} />
+        </label>
+        <label className="dep-redis-field">
+          <span>{t('deploy.redis.password')}</span>
+          <input type="password" value={values.password} onChange={(e) => field('password', e.target.value)} autoComplete="new-password" disabled={busy} />
+        </label>
+        <label className="dep-redis-field dep-redis-narrow">
+          <span>{t('deploy.redis.db')}</span>
+          <input value={values.db} onChange={(e) => field('db', e.target.value)} inputMode="numeric" disabled={busy} />
+        </label>
+        <label className="dep-redis-check">
+          <input type="checkbox" checked={values.useTls} onChange={(e) => field('useTls', e.target.checked)} disabled={busy} />
+          <span>{t('deploy.redis.tls')}</span>
+        </label>
+      </div>
+      )}
+      {applied ? null : <p className="dep-hint">{t('deploy.redis.everyInstance')}</p>}
+      {applied ? null : (
+        <div className="dep-actions">
+          <button type="button" className="dep-btn dep-btn-quiet" onClick={test} disabled={busy}>
+            {testing ? t('deploy.redis.testing') : t('deploy.redis.test')}
+          </button>
+          <button type="button" className="dep-btn" onClick={apply} disabled={busy}>
+            {applying ? t('deploy.redis.applying') : t('deploy.redis.apply')}
+          </button>
+        </div>
+      )}
+      {applied ? (
+        <div className="dep-restart" role="alert">
+          <span className="dep-inline"><Ico n="warning" sz={15} /> {t('deploy.redis.restartRequired')}</span>
+          <button
+            type="button"
+            className="dep-btn"
+            disabled={restarting}
+            onClick={() => { setRestarting(true); setup.restart(); }}
+          >
+            {restarting ? t('deploy.redis.restarting') : t('deploy.redis.restartNow')}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

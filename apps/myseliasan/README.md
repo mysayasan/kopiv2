@@ -620,7 +620,23 @@ arranged OUTSIDE the app (load balancer HTTPS + WebSocket/SSE passthrough, a sha
 file, the fleet's floor-plan storage, the media relay's public IPs, and load-balancer/VIP URLs) and
 the caveats a clustered install still carries (see `docs/HOWTO.md`'s "Remaining known gaps"). It defaults
 to `standalone`, which is what every install was before this step existed, and later steps (sign-in,
-node adoption, done) show an extra hint when `clustered` was chosen.
+node adoption, done) show an extra hint when `clustered` was chosen. **Here, and only here**, a
+failing `sharedCache`/`sharedLock` row also offers an inline "Point this instance at Redis" form
+(test the connection, then save and restart) instead of just naming the problem — the Settings
+screen's copy of the same panel stays a read-only checklist. See `docs/HOWTO.md`'s "Which apps can
+actually be clustered".
+
+The **adopt a node** step no longer dead-ends when no fleet key has ever been set: previously it
+told the operator to go generate one from the Nodes page and come back, which meant leaving the
+wizard for a prerequisite it could not do anything without. It now offers a **Generate fleet key**
+button right there (`POST /api/nodes/fleet-key`, no confirmation needed — on this screen the key
+is by definition unset), and the scan/manual-entry actions stay disabled until a key exists.
+
+Toasts raised by the wizard (and by the forced-password-change screen) now actually render:
+both screens return before reaching the app shell that owns the `ToastStack`, so every success
+message — the site just created, the fleet key just generated, the Redis connection just
+confirmed — was previously pushed into a list nothing displayed. `App.js` now renders the stack
+alongside each pre-app screen instead of only inside the authenticated shell.
 
 Deliberately **not** offered, unlike mymatasan's and myidsan's wizards: an alerts step
 (myseliasan has no notification-destination API to configure yet) and a restore-from-backup

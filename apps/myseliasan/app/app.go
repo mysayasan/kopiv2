@@ -212,6 +212,12 @@ func (m *module) Migrations() []bootstrap.Migration {
 				if err != nil {
 					return err
 				}
+				if len(existing) == 0 {
+					// No floor_plan table on this database yet, so there is nothing to alter. The
+					// auto-migrator runs next and creates it at the entity's current shape,
+					// these columns included.
+					return nil
+				}
 				if !existing["bg_path"] {
 					if _, err := tx.ExecContext(ctx, "ALTER TABLE floor_plan ADD COLUMN bg_path TEXT"); err != nil {
 						return fmt.Errorf("add floor_plan.bg_path: %w", err)
@@ -247,6 +253,12 @@ func (m *module) Migrations() []bootstrap.Migration {
 				if err != nil {
 					return err
 				}
+				if len(existing) == 0 {
+					// No site table on this database yet, so there is nothing to alter. The
+					// auto-migrator runs next and creates it at the entity's current shape,
+					// these columns included.
+					return nil
+				}
 				colType := "TEXT"
 				if engine == "mariadb" {
 					colType = "VARCHAR(32)"
@@ -272,6 +284,12 @@ func (m *module) Migrations() []bootstrap.Migration {
 				existing, err := tableColumns(ctx, tx, engine, "managed_node")
 				if err != nil {
 					return err
+				}
+				if len(existing) == 0 {
+					// No managed_node table on this database yet, so there is nothing to alter. The
+					// auto-migrator runs next and creates it at the entity's current shape,
+					// these columns included.
+					return nil
 				}
 				colType := "BIGINT"
 				if engine == "sqlite" {
@@ -301,6 +319,12 @@ func (m *module) Migrations() []bootstrap.Migration {
 				existing, err := tableColumns(ctx, tx, engine, "managed_node")
 				if err != nil {
 					return err
+				}
+				if len(existing) == 0 {
+					// No managed_node table on this database yet, so there is nothing to alter. The
+					// auto-migrator runs next and creates it at the entity's current shape,
+					// these columns included.
+					return nil
 				}
 				if !existing["auto_renew"] {
 					if _, err := tx.ExecContext(ctx, "ALTER TABLE managed_node ADD COLUMN auto_renew "+geoColumnType("BOOLEAN", engine)); err != nil {
@@ -351,6 +375,12 @@ func (m *module) Migrations() []bootstrap.Migration {
 				if err != nil {
 					return err
 				}
+				if len(existing) == 0 {
+					// No site table on this database yet, so there is nothing to alter. The
+					// auto-migrator runs next and creates it at the entity's current shape,
+					// these columns included.
+					return nil
+				}
 				colType := "TEXT"
 				if engine == "mariadb" {
 					colType = "VARCHAR(32)"
@@ -387,6 +417,12 @@ func (m *module) Migrations() []bootstrap.Migration {
 				existing, err := tableColumns(ctx, tx, engine, "floor_plan")
 				if err != nil {
 					return err
+				}
+				if len(existing) == 0 {
+					// No floor_plan table on this database yet, so there is nothing to alter. The
+					// auto-migrator runs next and creates it at the entity's current shape,
+					// these columns included.
+					return nil
 				}
 				if !existing["has_plan_image"] {
 					if _, err := tx.ExecContext(ctx, "ALTER TABLE floor_plan ADD COLUMN has_plan_image "+geoColumnType("BOOLEAN", engine)); err != nil {
@@ -470,6 +506,20 @@ WHERE id NOT IN (
 			},
 		},
 		{
+			// The version columns arrived with the staged-rollout work and were left to the
+			// auto-migrator, which is additive: ADD COLUMN with no default, so every node
+			// adopted before that upgrade has NULL in both. The driver now reads a NULL
+			// numeric as zero rather than failing the whole SELECT (see
+			// infra/db/sql/scan_value.go), but the data should still say what it means —
+			// "" is "no version reported", 0 is "never reported" — and an appliance that
+			// rolls BACK to an older binary must not hit the crash again.
+			ID:   "20260901-01-managed-node-version-backfill",
+			Name: "backfill NULL version/version_seen_at on managed_node",
+			Exec: func(ctx context.Context, tx *sql.Tx, engine string) error {
+				return ensureManagedNodeVersionColumns(ctx, tx, engine)
+			},
+		},
+		{
 			// The rollup gained a per-source dimension (per-node baselines); existing
 			// tables need the source column added and the old slot unique index dropped
 			// so the auto-migrator recreates it including source. Shared with mymatasan.
@@ -488,6 +538,12 @@ func ensureFloor3DColumns(ctx context.Context, tx *sql.Tx, engine string) error 
 	existing, err := tableColumns(ctx, tx, engine, "floor_plan")
 	if err != nil {
 		return err
+	}
+	if len(existing) == 0 {
+		// No floor_plan table on this database yet, so there is nothing to alter. The
+		// auto-migrator runs next and creates it at the entity's current shape,
+		// these columns included.
+		return nil
 	}
 	textType := "TEXT"
 	if engine == "mariadb" {
@@ -525,6 +581,12 @@ func ensurePlacementMountColumns(ctx context.Context, tx *sql.Tx, engine string)
 	if err != nil {
 		return err
 	}
+	if len(existing) == 0 {
+		// No node_placement table on this database yet, so there is nothing to alter. The
+		// auto-migrator runs next and creates it at the entity's current shape,
+		// these columns included.
+		return nil
+	}
 	for _, name := range []string{"mount_height", "pitch"} {
 		if existing[name] {
 			continue
@@ -548,6 +610,12 @@ func ensureSiteGeoColumns(ctx context.Context, tx *sql.Tx, engine string) error 
 	existing, err := tableColumns(ctx, tx, engine, "site")
 	if err != nil {
 		return err
+	}
+	if len(existing) == 0 {
+		// No site table on this database yet, so there is nothing to alter. The
+		// auto-migrator runs next and creates it at the entity's current shape,
+		// these columns included.
+		return nil
 	}
 	adds := []struct{ name, base string }{
 		{"lat", "DOUBLE PRECISION"},
@@ -588,6 +656,12 @@ func ensureFailoverCapacityColumns(ctx context.Context, tx *sql.Tx, engine strin
 	if err != nil {
 		return err
 	}
+	if len(existing) == 0 {
+		// No failover_plan table on this database yet, so there is nothing to alter. The
+		// auto-migrator runs next and creates it at the entity's current shape,
+		// these columns included.
+		return nil
+	}
 	cols := []struct {
 		name    string
 		colType string
@@ -616,6 +690,12 @@ func ensureFloorDesignColumn(ctx context.Context, tx *sql.Tx, engine string) err
 	if err != nil {
 		return err
 	}
+	if len(existing) == 0 {
+		// No floor_plan table on this database yet, so there is nothing to alter. The
+		// auto-migrator runs next and creates it at the entity's current shape,
+		// these columns included.
+		return nil
+	}
 	colType := "TEXT"
 	if engine == "mariadb" {
 		colType = "LONGTEXT"
@@ -638,6 +718,12 @@ func ensurePlacementFovColumns(ctx context.Context, tx *sql.Tx, engine string) e
 	existing, err := tableColumns(ctx, tx, engine, "node_placement")
 	if err != nil {
 		return err
+	}
+	if len(existing) == 0 {
+		// No node_placement table on this database yet, so there is nothing to alter. The
+		// auto-migrator runs next and creates it at the entity's current shape,
+		// these columns included.
+		return nil
 	}
 	for _, name := range []string{"heading", "fov"} {
 		if existing[name] {
@@ -664,6 +750,12 @@ func ensureManagedNodeGeoColumns(ctx context.Context, tx *sql.Tx, engine string)
 	if err != nil {
 		return err
 	}
+	if len(existing) == 0 {
+		// No managed_node table on this database yet, so there is nothing to alter. The
+		// auto-migrator runs next and creates it at the entity's current shape,
+		// these columns included.
+		return nil
+	}
 	adds := []struct{ name, base string }{
 		{"lat", "DOUBLE PRECISION"},
 		{"lon", "DOUBLE PRECISION"},
@@ -687,6 +779,16 @@ func ensureManagedNodeGeoColumns(ctx context.Context, tx *sql.Tx, engine string)
 // map_placed is BOOLEAN on postgres, so its zero value is `false`, not `0` (a boolean-vs-
 // integer type error) — sqlite/mariadb store it as an integer where 0 is correct. Idempotent.
 func backfillManagedNodeGeoNulls(ctx context.Context, tx *sql.Tx, engine string) error {
+	existing, err := tableColumns(ctx, tx, engine, "managed_node")
+	if err != nil {
+		return err
+	}
+	if len(existing) == 0 {
+		// No managed_node table on this database yet, so there are no rows to
+		// backfill. The auto-migrator runs next and creates it at the entity's
+		// current shape, these columns included.
+		return nil
+	}
 	falseLit := "0"
 	if engine == "postgres" {
 		falseLit = "false"
@@ -700,6 +802,43 @@ func backfillManagedNodeGeoNulls(ctx context.Context, tx *sql.Tx, engine string)
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("backfill managed_node geo NULLs: %w", err)
 		}
+	}
+	return nil
+}
+
+// ensureManagedNodeVersionColumns adds the reported-version columns to managed_node if absent
+// and backfills NULLs (Version is a non-pointer string, VersionSeenAt a non-pointer int64).
+// Idempotent, like every other migration here.
+func ensureManagedNodeVersionColumns(ctx context.Context, tx *sql.Tx, engine string) error {
+	existing, err := tableColumns(ctx, tx, engine, "managed_node")
+	if err != nil {
+		return err
+	}
+	if len(existing) == 0 {
+		// No managed_node table on this database yet, so there is nothing to alter. The
+		// auto-migrator runs next and creates it at the entity's current shape, these
+		// columns included.
+		return nil
+	}
+	textType := "TEXT"
+	if engine == "mariadb" {
+		textType = "VARCHAR(255)"
+	}
+	if !existing["version"] {
+		if _, err := tx.ExecContext(ctx, "ALTER TABLE managed_node ADD COLUMN version "+textType); err != nil {
+			return fmt.Errorf("add managed_node.version: %w", err)
+		}
+	}
+	if !existing["version_seen_at"] {
+		if _, err := tx.ExecContext(ctx, "ALTER TABLE managed_node ADD COLUMN version_seen_at "+geoColumnType("BIGINT", engine)); err != nil {
+			return fmt.Errorf("add managed_node.version_seen_at: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE managed_node SET version = '' WHERE version IS NULL"); err != nil {
+		return fmt.Errorf("backfill managed_node.version NULLs: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE managed_node SET version_seen_at = 0 WHERE version_seen_at IS NULL"); err != nil {
+		return fmt.Errorf("backfill managed_node.version_seen_at NULLs: %w", err)
 	}
 	return nil
 }

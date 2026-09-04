@@ -710,23 +710,8 @@ button.mp-event-main:hover .mp-event-title { text-decoration: underline; }
 /* --- Add-building wizard (step 1: name, glyph, one area or several) --- */
 /* Wider than the plain site dialog because the area list needs room to breathe. */
 .bld-wizard { width: min(480px, 94vw); max-height: 92vh; overflow-y: auto; }
-.bld-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-/* The kind question has three answers (building / outdoor area / point asset), so it gets its own
-   track count; it stacks to one column on a narrow dialog rather than squeezing three tiles. */
-.bld-choice-3 { grid-template-columns: repeat(3, 1fr); }
-@media (max-width: 620px) { .bld-choice-3 { grid-template-columns: 1fr; } }
-.bld-choice-opt {
-  display: grid; grid-template-columns: auto 1fr; grid-template-areas: "ico title" "ico sub";
-  gap: 2px 8px; align-items: center; text-align: left;
-  padding: 10px; border: 1px solid var(--border-soft); border-radius: 9px;
-  background: var(--bg-body); color: var(--text-secondary); cursor: pointer; font: inherit;
-}
-.bld-choice-opt svg { grid-area: ico; opacity: 0.8; }
-.bld-choice-opt:hover { border-color: var(--accent); }
-.bld-choice-opt.active { border-color: var(--accent); background: var(--accent-bg); color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
-.bld-choice-t { grid-area: title; font-size: 0.85rem; font-weight: 650; color: var(--text-primary); }
-.bld-choice-opt.active .bld-choice-t { color: var(--accent); }
-.bld-choice-s { grid-area: sub; font-size: 0.72rem; color: var(--text-faint); }
+/* The .bld-choice* kind picker moved to asset-kind.css: the setup wizard renders it too and
+   does not load this stylesheet. Both screens import it from there. */
 .bld-arealist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .bld-arearow { display: flex; align-items: center; gap: 7px; color: var(--text-muted); }
 .bld-arearow input[type="text"] { flex: 1 1 auto; min-width: 0; padding: 7px 9px; border: 1px solid var(--border-soft); border-radius: 7px; background: var(--bg-body); color: var(--text-primary); font: inherit; font-size: 0.85rem; }

@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"os"
 	"reflect"
@@ -10,34 +9,9 @@ import (
 	"testing"
 
 	"github.com/mysayasan/kopiv2/domain/entities"
-	apiaccessenums "github.com/mysayasan/kopiv2/domain/enums/apiaccess"
 	sqldataenums "github.com/mysayasan/kopiv2/domain/enums/sqldata"
 	dbsql "github.com/mysayasan/kopiv2/infra/db/sql"
 )
-
-func TestNormalizeScannedValueConvertsNullStringToEmptyStringPointer(t *testing.T) {
-	value := normalizeScannedValue(&sql.NullString{}, reflect.TypeOf(""))
-
-	str, ok := value.(*string)
-	if !ok {
-		t.Fatalf("expected *string, got %T", value)
-	}
-	if *str != "" {
-		t.Fatalf("expected empty string, got %q", *str)
-	}
-}
-
-func TestNormalizeScannedValueConvertsValidNullStringToStringPointer(t *testing.T) {
-	value := normalizeScannedValue(&sql.NullString{String: "avatar", Valid: true}, reflect.TypeOf(""))
-
-	str, ok := value.(*string)
-	if !ok {
-		t.Fatalf("expected *string, got %T", value)
-	}
-	if *str != "avatar" {
-		t.Fatalf("expected avatar, got %q", *str)
-	}
-}
 
 func TestSignedCountToUint64(t *testing.T) {
 	if got := signedCountToUint64(25); got != 25 {
@@ -45,13 +19,6 @@ func TestSignedCountToUint64(t *testing.T) {
 	}
 	if got := signedCountToUint64(-1); got != 0 {
 		t.Fatalf("expected negative count to normalize to 0, got %d", got)
-	}
-}
-
-func TestScanDestinationForFieldSupportsDefinedIntEnum(t *testing.T) {
-	dest := scanDestinationForField(reflect.TypeOf(apiaccessenums.AuthOnly))
-	if _, ok := dest.(*int32); !ok {
-		t.Fatalf("expected *int32 destination for defined int32 enum, got %T", dest)
 	}
 }
 

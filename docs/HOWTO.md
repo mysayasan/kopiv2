@@ -485,6 +485,20 @@ setup wizard (myseliasan: a dedicated Deployment step, before sign-in and node a
 folded into the existing "Where sessions live" step) and the Settings panel (both apps, `storage`
 section) both render this checklist and record the declaration.
 
+**`myseliasan`'s wizard Deployment step, uniquely, can also fix the two Redis-backed rows in
+place.** The shared `DeploymentPanel` (`frontend/shared/src/Deployment.js`) takes an optional
+`redisSetup` prop (`{test, apply, restart}`); only `views/components/setup.js`'s
+`DeploymentStep` supplies it, so only the first-run wizard renders the inline "Point this
+instance at Redis" form (test the address before saving, then a PUT to the safe subset of
+`config.json` via `PUT /api/settings/storage`, then a restart prompt) — the Settings screen's
+own `DeploymentPanel` call passes no `redisSetup` and stays a read-only checklist. The form
+appears whenever the `sharedCache`/`sharedLock` rows are failing (or right after it has been
+used, so the "restart now" prompt is not lost under a report that has since gone green from the
+saved-but-not-yet-loaded config) and clears both rows with one save, since the session cache and
+the coordination lock come from the same Redis. Saving never restarts the process by itself —
+the operator presses "Restart now" — because the setup wizard is the one screen where an
+unannounced mid-typing restart would be worst.
+
 **The at-rest encryption key must also be the SAME key on every instance.** Two instances holding
 different keys look completely healthy until one reads a sealed column the other wrote — for
 myseliasan that is the fleet CA private key and PSK (the whole fleet's trust); for

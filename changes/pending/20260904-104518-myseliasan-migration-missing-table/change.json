@@ -1,0 +1,6 @@
+{
+  "type": "fixed",
+  "scope": "myseliasan",
+  "summary": "Fix myseliasan failing to boot at all when upgrading from a version old enough to predate a table one of its versioned migrations alters. Migrations run before the additive auto-migrator and only against non-fresh databases, so a migration meets any database that predates the table it targets - an install upgrading from before failover_plan, floor_plan, site, or managed_node existed hit an ALTER TABLE against a table that was not there yet and crashed on boot with 'relation \"failover_plan\" does not exist'. Every affected migration now checks the table exists first and is a no-op when it does not, since there is nothing to alter - the auto-migrator creates the table immediately afterward at its current shape, columns included. Also adds a new migration that backfills the managed_node.version/versionSeenAt columns' NULLs to their documented meaning ('' = no version ever reported, 0 = never seen) rather than relying solely on the driver's NULL-as-zero-value fallback.",
+  "compatibility": "Fixes a boot-time crash on upgrade for any existing myseliasan install whose database predates one of these four tables; a fresh install or one already past this point is unaffected (the guard is a no-op once the table exists). No config or API change; no operator action needed."
+}
