@@ -122,6 +122,17 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-09-04 — myseliasan 1.82.0, core 1.112.1 (164ed63)
+
+### Added
+
+- **myseliasan**: The first-run setup wizard's deployment-mode step can now fix a failing shared-cache/shared-lock check in place instead of only reporting it: a 'Point this instance at Redis' form tests the connection, saves it through the existing settings API, and prompts for the restart, clearing both rows with one save since they come from the same Redis (the Settings screen's copy of the same panel is unchanged and stays read-only). The node-adoption step no longer dead-ends when no fleet key has ever been set - it now generates one inline instead of sending the operator to the Nodes page and back. Also fixes two defects found while building this: every toast raised by the setup wizard or the forced-password-change screen was silently dropped because those screens render before the app shell that owns the toast stack, and the kind-picker tiles (building/outdoor area/point asset) rendered as an unstyled fused bar in the wizard because their CSS lived in a stylesheet only the fleet map loaded (moved to its own shared stylesheet, asset-kind.css). Also gitignores apps/*/clips/ (event-clip runtime output pulled from nodes), alongside the existing apps/*/recordings/ rule.
+
+### Fixed
+
+- **infra,myseliasan**: Fix a NULL value in a numeric column breaking an entire list read (not just one row) on PostgreSQL and MariaDB. The auto-migrator adds a new entity field as an ALTER TABLE ADD COLUMN with no default, so every existing row has NULL in it; strings and bools already scanned NULL-safely, but numeric fields (int/uint/float, of any width) were scanned into a raw pointer that database/sql cannot put a NULL into, so the very first list query to touch an un-backfilled numeric column failed outright with 'converting NULL to int64 is unsupported' - observed as myseliasan's fleet Nodes list going empty on upgrade because the new managed_node.versionSeenAt column had NULLs. The scan-destination and NULL-normalisation logic is unified into one shared infra/db/sql/scan_value.go used by both drivers (previously duplicated and divergent between them), and every numeric kind now scans through sql.NullInt64/sql.NullFloat64, reading a NULL as the field's zero value. Never reproduced on SQLite, which is why the suite's SQLite-only unit tests never caught it.
+- **myseliasan**: Fix myseliasan failing to boot at all when upgrading from a version old enough to predate a table one of its versioned migrations alters. Migrations run before the additive auto-migrator and only against non-fresh databases, so a migration meets any database that predates the table it targets - an install upgrading from before failover_plan, floor_plan, site, or managed_node existed hit an ALTER TABLE against a table that was not there yet and crashed on boot with 'relation "failover_plan" does not exist'. Every affected migration now checks the table exists first and is a no-op when it does not, since there is nothing to alter - the auto-migrator creates the table immediately afterward at its current shape, columns included. Also adds a new migration that backfills the managed_node.version/versionSeenAt columns' NULLs to their documented meaning ('' = no version ever reported, 0 = never seen) rather than relying solely on the driver's NULL-as-zero-value fallback.
 ## 2026-09-03 — myseliasan 1.81.0, core 1.112.0 (3056a4d)
 
 ### Added
