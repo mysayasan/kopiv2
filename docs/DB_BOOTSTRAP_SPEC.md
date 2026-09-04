@@ -301,6 +301,27 @@ so a retry after a partial failure is safe to re-run.
 7. Additive-only changes (a new field) need **no** migration at all — the auto-migrator adds
    the column. Only reach for a migration when auto-migrate genuinely cannot do the job.
 
+### A migration can meet a database that predates the table it alters
+
+An `ALTER TABLE`-shaped migration assumes the table it names already exists. That is true of a
+database old enough to need the migration at all (baselining, above, skips it on a fresh one)
+— but "old enough to need this migration" does not imply "old enough to have this table". A
+database that predates the table itself (the app was upgraded from before that entity
+existed) hits the `ALTER` against a table that is not there and fails outright:
+
+```
+migration 20260825-01-failover-capacity: add failover_plan.standby_max:
+relation "failover_plan" does not exist (42P01)
+```
+
+`myseliasan`'s `app/app.go` (`Migrations()`) is a worked example: every migration that alters
+`failover_plan`, `floor_plan`, `site`, or `managed_node` probes the table's existing columns
+first (`tableColumns`) and now returns immediately, doing nothing, when that probe reports
+zero columns — there is genuinely nothing to alter, and the additive auto-migrator (which runs
+next in the pipeline) creates the table at the entity's current shape, the migration's columns
+included. Write the same guard into any migration whose `Exec` alters a table younger than the
+app's oldest supported upgrade path, not just younger than the migration itself.
+
 ## Schema Drift Detection
 
 `infra/db/bootstrap/drift.go` reports the differences the additive auto-migrator cannot fix,
