@@ -23,6 +23,7 @@ func NewManualApi(router *mux.Router) {
 	g := router.PathPrefix("/manual").Subrouter()
 	g.HandleFunc("", h.List).Methods("GET")
 	g.HandleFunc("/bundle", h.Bundle).Methods("GET")
+	g.HandleFunc("/search", h.Search).Methods("GET")
 	g.HandleFunc("/assets/{name}", func(w http.ResponseWriter, r *http.Request) {
 		h.Asset(w, r, mux.Vars(r)["name"])
 	}).Methods("GET")

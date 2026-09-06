@@ -11,8 +11,13 @@ roles.
 
 ## Behavior
 
-- `ManualHandlers{lib}` / `NewManualHandlers(lib)` — constructs the handler set over one
-  app's manual library.
+- `ManualHandlers{lib, corpusOnce, corpus}` / `NewManualHandlers(lib)` — constructs the
+  handler set over one app's manual library. `corpus` is a `retrieval.Corpus`
+  (`manual/retrieval/retrieval.go.md`) built lazily by `index()` on the first `Search` call
+  (`sync.Once`), over exactly one `retrieval.Source{App: "self", Library: lib}` — a reader
+  who only ever clicks through the contents pays nothing for it, and unlike the fleet
+  agent's multi-app corpus, an appliance searching its own manual has only one possible
+  answer to "which product is this from".
 - `List(w, r)` — `GET` handler. Resolves the requested `?lang=` (`language(r)`, defaulting
   to English inside the library — no validation needed at this layer) and returns
   `{language, languages, items}` where `items` is `lib.Articles(lang)` (metadata only).
@@ -20,6 +25,16 @@ roles.
   (bodies included) — the client fetches this once and then searches/prints entirely
   offline, with no per-article round trip and no server-side search index to keep in step
   with the content.
+- `Search(w, r)` — `GET` handler for `?q=&lang=&limit=`. Ranks the query with BM25 over the
+  same retrieval engine the myseliasan fleet agent already grounds its answers in (nothing
+  new is indexed), returning the matching **section** rather than the whole article —
+  `{language, query, items: [{slug, anchor, title, heading, language, snippet}]}`. `limit`
+  defaults to 8 and is clamped to 1–25. A query under two runes returns `items: []` rather
+  than ranking the whole manual by noise — a reader still typing is not yet a question.
+  Each result's own `language` may differ from the requested one: a question with little to
+  say in ms/zh/ar falls back to English, same as the fleet agent's retrieval does, because
+  operators type English product nouns (ONVIF, RTSP, Modbus) inside a non-English sentence
+  constantly.
 - `Get(w, r, slug)` — one article by slug (caller passes `slug`, since the mux variable
   name is the app's own route-registration choice, not this package's); `404` via
   `controllers.ErrNotFound` when the slug doesn't exist for the resolved language.

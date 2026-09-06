@@ -8,6 +8,8 @@ This folder is the technical documentation set for the mini framework inside thi
 - `REQUEST_FLOW.md`: request lifecycle and runtime flow.
 - `HOWTO.md`: runbooks and operational procedures (includes MyMataSan live audio, PTZ, and recording stream selection).
 - `DB_BOOTSTRAP_SPEC.md`: shared code-first database bootstrap design.
+- `MANUAL_DIAGRAMS.md`: author-facing guide to the built-in manual's drawn-figure grammar
+  (`flow`/`arch`/`seq`/`spec` fences), backed by `domain/shared/manual/diagram`.
 - `MYIOTSAN_PLAN.md`: implementation plan for MyIotSan, the planned fourth app (IoT sensor hub).
 - `MYMATASAN_TIER2_PLAN.md`: MyMataSan Tier 2 architectural-debt plan (composition-root decomposition, config seam, migrations, RBAC).
 - `FLAGSHIP_HARDENING_PLAN.md`: phased plan to close the 24 findings from the 2026-08-19 MyMataSan + MySeliaSan condition register (evidence integrity, control-plane backup, fleet-scale operations). Its status board is the resume point — update it in the commit that lands the work.

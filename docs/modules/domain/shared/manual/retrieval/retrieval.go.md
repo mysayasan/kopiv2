@@ -100,4 +100,6 @@ used — instead of trusting a threshold to prevent one. See
 - `domain/shared/manual/retrieval/chunk.go.md` — section splitting
 - `domain/shared/manual/retrieval/tokenize.go.md` — the four-language tokenizer
 - `domain/shared/manual/retrieval/bm25.go.md` — ranking
-- `apps/myseliasan/services/agent_docs.go.md` — the only consumer today
+- `apps/myseliasan/services/agent_docs.go.md` — the fleet-agent consumer, a multi-app corpus
+- `domain/shared/apis/manual.go.md` — the `GET /manual/search` consumer, a single-source
+  (`App: "self"`) corpus over the calling app's own manual only
