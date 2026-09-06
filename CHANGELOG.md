@@ -125,6 +125,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-09-06 — myidsan 1.51.0, myiotsan 0.32.0, mymatasan 1.150.0, myseliasan 1.84.0 (a6795f0)
+
+### Added
+
+- **mymatasan,myseliasan,myidsan,myiotsan**: The theme picker used to live only inside each app's signed-in workspace header, which made the sign-in screen -- the one screen every user starts on -- the one screen where it could not be changed. The theme is a reader setting (localStorage, applied to <html> before anything is authenticated), so a person who needs the dark or high-contrast palette needed it to read the sign-in form. mymatasan's LoginPage, ChangePasswordPage, and RecoveryGatePage now render a new local LoginControls strip (replacing three duplicated .login-lang-switch copies) with the theme dropdown beside the existing language one. myseliasan and myiotsan's shared AuthShell (used by their sign-in, forced-password-change, pending-clearance, and no-access screens) renders a ThemeDropdown beside LanguageDropdown; both apps' .login-lang-switch rule also gained display:flex, since it had only ever held one child and the second control was silently wrapping onto its own line. myidsan's SPA auth screens (AuthScreen, ChangePasswordScreen, PendingClearanceScreen, EnrollMfaScreen) had no control strip at all -- neither language nor theme -- and gain a new AuthControls strip and .auth-controls CSS rule for both. mypintusan is deliberately unchanged: it ships one dark palette as a product-identity choice and has no theme system to extend. No new user-facing strings (the existing theme.* dictionary keys are reused), no new routes, no API or schema change.
 ## 2026-09-06 — mymatasan 1.149.0, myseliasan 1.83.0, core 1.113.0 (78fd73d)
 
 ### Added
