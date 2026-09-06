@@ -223,6 +223,23 @@ function LoginBrand({ subtitle }) {
 // standardized with mymatasan/myseliasan. The avatar + role open the self-service
 // Profile (change password, two-factor); the signed-in identity itself is shown there,
 // not here.
+// AuthControls is the strip in the corner of every pre-session screen: language, then theme.
+//
+// myidsan had neither. Both are the reader's setting rather than the account's — held in
+// localStorage and applied to <html> long before anything is authenticated — so the sign-in
+// screen was the one screen in the product where someone who needs the high-contrast palette,
+// or cannot read English, had no way to say so. On an IDENTITY PROVIDER that is the screen most
+// likely to be the first thing a stranger to the product ever sees.
+function AuthControls({ lang, onLangChange, theme, onThemeChange }) {
+  if (!onLangChange && !onThemeChange) return null
+  return (
+    <div className="auth-controls">
+      {onLangChange ? <LanguageDropdown lang={lang} onLang={onLangChange} /> : null}
+      {onThemeChange ? <ThemeDropdown theme={theme} onThemeChange={onThemeChange} /> : null}
+    </div>
+  )
+}
+
 function AccountCard({ roleLabel, onLogout, onOpenProfile }) {
   const t = useT()
   return (
@@ -452,21 +469,21 @@ function AppInner({ lang, onLangChange }) {
   }
 
   if (!session) {
-    return <AuthScreen onAuthed={handleAuthed} sessionError={sessionError} />
+    return <AuthScreen onAuthed={handleAuthed} sessionError={sessionError} lang={lang} onLangChange={onLangChange} theme={theme} onThemeChange={changeTheme} />
   }
 
   if (mustChange) {
-    return <ChangePasswordScreen onDone={refreshSession} onLogout={handleLogout} />
+    return <ChangePasswordScreen onDone={refreshSession} onLogout={handleLogout} lang={lang} onLangChange={onLangChange} theme={theme} onThemeChange={changeTheme} />
   }
 
   // Checked after the password gate so someone owing both is walked through them in a
   // sensible order: set a password you chose, then add a factor to it.
   if (mustEnrollMfa) {
-    return <EnrollMfaScreen onDone={refreshSession} onLogout={handleLogout} />
+    return <EnrollMfaScreen onDone={refreshSession} onLogout={handleLogout} lang={lang} onLangChange={onLangChange} theme={theme} onThemeChange={changeTheme} />
   }
 
   if (pending) {
-    return <PendingClearanceScreen email={currentEmail} onRefresh={refreshSession} onLogout={handleLogout} />
+    return <PendingClearanceScreen email={currentEmail} onRefresh={refreshSession} onLogout={handleLogout} lang={lang} onLangChange={onLangChange} theme={theme} onThemeChange={changeTheme} />
   }
 
   if (setupNeeded && isSuperadmin) {
@@ -609,7 +626,7 @@ function ThemeDropdown({ theme, onThemeChange }) {
 //
 // Sign out is deliberately offered: someone who cannot enrol right now (no phone to hand)
 // must be able to leave rather than be trapped on a screen they cannot complete.
-function EnrollMfaScreen({ onDone, onLogout }) {
+function EnrollMfaScreen({ onDone, onLogout, lang, onLangChange, theme, onThemeChange }) {
   const t = useT()
   const [enroll, setEnroll] = useState(null)
   const [label, setLabel] = useState('')
@@ -638,6 +655,7 @@ function EnrollMfaScreen({ onDone, onLogout }) {
 
   return (
     <div className="auth-layout">
+      <AuthControls lang={lang} onLangChange={onLangChange} theme={theme} onThemeChange={onThemeChange} />
       <section className="auth-panel">
         <div className="brand-block auth-brand">
           <BrandLogo wordmark="myidsan" />
@@ -692,7 +710,7 @@ function EnrollMfaScreen({ onDone, onLogout }) {
 
 // ChangePasswordScreen forces the seeded stock superadmin (must-change-password) to
 // set its own password before reaching the app — mirrors myseliasan's first-login flow.
-function ChangePasswordScreen({ onDone, onLogout }) {
+function ChangePasswordScreen({ onDone, onLogout, lang, onLangChange, theme, onThemeChange }) {
   const t = useT()
   const [form, setForm] = useState({ current: '', next: '', confirm: '' })
   const [error, setError] = useState('')
@@ -718,6 +736,7 @@ function ChangePasswordScreen({ onDone, onLogout }) {
 
   return (
     <div className="auth-layout">
+      <AuthControls lang={lang} onLangChange={onLangChange} theme={theme} onThemeChange={onThemeChange} />
       <section className="auth-panel">
         <LoginBrand subtitle={t('cpw.subtitle')} />
         <div className="message warning">{t('cpw.securityNote')}</div>
@@ -746,7 +765,7 @@ function ChangePasswordScreen({ onDone, onLogout }) {
 // PendingClearanceScreen gates a freshly-provisioned account (authenticated but with
 // no role yet) out of the app until an administrator grants it access. It offers only
 // a re-check and a log-out — there is nothing else the account may do.
-function PendingClearanceScreen({ email, onRefresh, onLogout }) {
+function PendingClearanceScreen({ email, onRefresh, onLogout, lang, onLangChange, theme, onThemeChange }) {
   const t = useT()
   const [busy, setBusy] = useState(false)
   const recheck = async () => {
@@ -755,6 +774,7 @@ function PendingClearanceScreen({ email, onRefresh, onLogout }) {
   }
   return (
     <div className="auth-layout">
+      <AuthControls lang={lang} onLangChange={onLangChange} theme={theme} onThemeChange={onThemeChange} />
       <section className="auth-panel">
         <LoginBrand subtitle={t('pend.subtitle')} />
         <div className="message warning">{t('pend.hint', { email: email ? ` (${email})` : '' })}</div>
@@ -768,7 +788,7 @@ function PendingClearanceScreen({ email, onRefresh, onLogout }) {
   )
 }
 
-function AuthScreen({ onAuthed, sessionError }) {
+function AuthScreen({ onAuthed, sessionError, lang, onLangChange, theme, onThemeChange }) {
   const t = useT()
   const [mode, setMode] = useState('login')
   const [form, setForm] = useState({
@@ -937,6 +957,7 @@ function AuthScreen({ onAuthed, sessionError }) {
 
   return (
     <div className="auth-layout">
+      <AuthControls lang={lang} onLangChange={onLangChange} theme={theme} onThemeChange={onThemeChange} />
       <section className="auth-panel">
         <LoginBrand subtitle={t('auth.subAdmin')} />
         {mfa && !mfa.method ? (

@@ -236,15 +236,15 @@ function AppInner({ lang, onLangChange }) {
   // The pre-app screens take the language switcher too — it lives in the workspace
   // header, which the user cannot reach until they are signed in and cleared.
   if (authState === 'anon') {
-    return <LoginScreen onLoggedIn={loadSession} lang={lang} onLangChange={onLangChange} />;
+    return <LoginScreen onLoggedIn={loadSession} lang={lang} onLangChange={onLangChange} theme={theme} onThemeChange={changeTheme} />;
   }
   if (authState === 'mustchange') {
-    return withToasts(<ChangePasswordScreen onDone={loadSession} onToast={pushToast} onLogout={logout} lang={lang} onLangChange={onLangChange} />);
+    return withToasts(<ChangePasswordScreen onDone={loadSession} onToast={pushToast} onLogout={logout} lang={lang} onLangChange={onLangChange} theme={theme} onThemeChange={changeTheme} />);
   }
   // Authenticated but no role assigned yet — gate the whole control plane behind a
   // clearance screen until a superadmin grants a role.
   if (session?.pending && !session?.isSuperadmin) {
-    return <PendingClearanceScreen email={session?.email} onRefresh={loadSession} onLogout={logout} lang={lang} onLangChange={onLangChange} />;
+    return <PendingClearanceScreen email={session?.email} onRefresh={loadSession} onLogout={logout} lang={lang} onLangChange={onLangChange} theme={theme} onThemeChange={changeTheme} />;
   }
   // Cleared to use the app, but this install has never been set up. Runs LAST of the
   // pre-app gates so the wizard is only ever reached by a signed-in, password-changed,

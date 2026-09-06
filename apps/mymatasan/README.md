@@ -299,7 +299,7 @@ The Cameras detail page (which previously dropped straight into the tab bar with
 
 ### Theming
 
-A **Theme** dropdown in the top bar lets you switch between **Light**, **Dark**, and **Slate** themes. The selection is persisted in `localStorage` and applied via a CSS custom-property theme class on `<html>`. Additional themes can be added by extending the `THEMES`, `THEME_LABELS`, and `THEME_ICONS` constants at the top of `App.js`.
+A **Theme** dropdown in the top bar lets you switch between **Light**, **Dark**, and **Slate** themes. The selection is persisted in `localStorage` and applied via a CSS custom-property theme class on `<html>`. Additional themes can be added by extending the `THEMES`, `THEME_LABELS`, and `THEME_ICONS` constants at the top of `App.js`. The picker also appears on every pre-session screen — sign-in, forced password change, and the encryption-key recovery gate (`LoginControls` in `components/layout.js`, replacing three copies of the same `.login-lang-switch` strip) — alongside the language switcher, since the theme is a reader setting applied to `<html>` before anyone is authenticated: the sign-in screen is the one screen every user starts on, so it was the one screen where the theme could not be changed.
 
 ### Form UX standard
 

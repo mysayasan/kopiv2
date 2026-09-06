@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Ico, useT, PasswordField, LanguageDropdown } from '@shared';
 import { BrandLogo, LoginHelpLink } from './layout';
-import { FormBusyOverlay, Message } from './ui';
+import { FormBusyOverlay, Message, ThemeDropdown } from './ui';
 import { api } from '../lib/helpers';
 
 // A lockout answers 429 with the remaining wait in the body (retryAfterSeconds) as well as
@@ -20,17 +20,18 @@ function lockoutMessage(t, r, fallback) {
 
 // The three pre-app screens (sign-in, forced password change, pending clearance) all
 // wear the same chrome as mymatasan's login: a centered .login-panel card under the
-// large brand mark, with the language switcher pinned to the top corner so a user can
-// pick their language before they can read anything else. AuthShell is that chrome.
+// large brand mark, with the language and theme pickers pinned to the top corner so a user
+// can set both before they can read anything else. AuthShell is that chrome.
 // `help` is a <LoginHelpLink> rendered under the card. It is a prop rather than something
 // AuthShell picks, because each pre-session screen raises a different question and the whole
 // point of a help link here is that it answers the one in front of you.
-function AuthShell({ subtitle, hint, lang, onLangChange, busy, message, help, children }) {
+function AuthShell({ subtitle, hint, lang, onLangChange, theme, onThemeChange, busy, message, help, children }) {
   return (
     <main className="login-screen">
-      {onLangChange ? (
+      {onLangChange || onThemeChange ? (
         <div className="login-lang-switch">
-          <LanguageDropdown lang={lang} onLang={onLangChange} />
+          {onLangChange ? <LanguageDropdown lang={lang} onLang={onLangChange} /> : null}
+          {onThemeChange ? <ThemeDropdown theme={theme} onThemeChange={onThemeChange} /> : null}
         </div>
       ) : null}
       <section className="login-panel">
@@ -50,7 +51,7 @@ function AuthShell({ subtitle, hint, lang, onLangChange, busy, message, help, ch
 
 // LoginScreen offers both sign-in paths: federated (myidsan SSO) and the local
 // bootstrap stock-superadmin username/password.
-export function LoginScreen({ onLoggedIn, lang, onLangChange }) {
+export function LoginScreen({ onLoggedIn, lang, onLangChange, theme, onThemeChange }) {
   const t = useT();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -87,6 +88,8 @@ export function LoginScreen({ onLoggedIn, lang, onLangChange }) {
       subtitle={t('auth.subSignin')}
       lang={lang}
       onLangChange={onLangChange}
+      theme={theme}
+      onThemeChange={onThemeChange}
       busy={busy}
       message={err}
       help={<LoginHelpLink slug="first-sign-in" anchor="bootstrap" />}
@@ -118,7 +121,7 @@ export function LoginScreen({ onLoggedIn, lang, onLangChange }) {
 
 // ChangePasswordScreen forces the stock superadmin (must-change) to pick a new
 // password before reaching the app.
-export function ChangePasswordScreen({ onDone, onToast, onLogout, lang, onLangChange }) {
+export function ChangePasswordScreen({ onDone, onToast, onLogout, lang, onLangChange, theme, onThemeChange }) {
   const t = useT();
   const [current, setCurrent] = useState('');
   const [next1, setNext1] = useState('');
@@ -146,6 +149,8 @@ export function ChangePasswordScreen({ onDone, onToast, onLogout, lang, onLangCh
       hint={t('auth.changeHint')}
       lang={lang}
       onLangChange={onLangChange}
+      theme={theme}
+      onThemeChange={onThemeChange}
       busy={busy}
       message={err}
       help={<LoginHelpLink slug="first-sign-in" anchor="bootstrap" />}
@@ -175,7 +180,7 @@ export function ChangePasswordScreen({ onDone, onToast, onLogout, lang, onLangCh
 // PendingClearanceScreen gates a freshly-provisioned account (authenticated but with
 // no role yet) out of the control plane until a superadmin assigns it a role on the
 // RBAC page. It offers only a re-check and a log-out.
-export function PendingClearanceScreen({ email, onRefresh, onLogout, lang, onLangChange }) {
+export function PendingClearanceScreen({ email, onRefresh, onLogout, lang, onLangChange, theme, onThemeChange }) {
   const t = useT();
   const [busy, setBusy] = useState(false);
   async function recheck() {
@@ -188,6 +193,8 @@ export function PendingClearanceScreen({ email, onRefresh, onLogout, lang, onLan
       hint={t('auth.pendingHint', { email: email ? ` (${email})` : '' })}
       lang={lang}
       onLangChange={onLangChange}
+      theme={theme}
+      onThemeChange={onThemeChange}
       busy={busy}
       help={<LoginHelpLink slug="first-sign-in" anchor="troubleshooting" />}
     >
