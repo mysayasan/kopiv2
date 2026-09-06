@@ -6,7 +6,7 @@ Registers ONVIF discovery and saved-device API routes for standalone `mymatasan`
 
 ## Routes
 
-- `POST /api/onvif/discover`: run local WS-Discovery with optional `timeoutMs`, upsert discovered devices by XAddr, then return best-effort camera metadata and unauthenticated stream hints when the camera exposes them.
+- `POST /api/onvif/discover`: run local WS-Discovery with optional `timeoutMs`, upsert discovered devices by XAddr, then return best-effort camera metadata and unauthenticated stream hints when the camera exposes them. Finding zero devices is a normal, successful result, not an error — a scan only fails (`400`, with the underlying network reason in the message) when every network listener the scan opened failed outright, i.e. nothing could reach the multicast group at all (see `infra/onvif/client.go.md`). Previously any listener failure that left the device list empty was reported as an opaque `500`, which is what a host with a non-functional virtual adapter (VirtualBox host-only, WSL/Hyper-V vEthernet, link-local) got on every scan that found no camera.
 - `POST /api/onvif/probe`: probe one manual IP, host, or ONVIF device-service URL.
 - `GET /api/onvif/stream-config`: return current runtime WebRTC, ICE server, and MJPEG fallback live-view settings.
 - `GET /api/onvif/devices`: list saved ONVIF devices.

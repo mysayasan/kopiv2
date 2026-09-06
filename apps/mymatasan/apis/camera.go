@@ -93,7 +93,7 @@ type cameraEncoderRequest struct {
 // registration order — which is exactly the kind of thing that works in a unit test and
 // 404s on the appliance.
 func NewCameraApi(router *mux.Router, serv services.ICameraService, settings services.IRuntimeSettingsService, streamManager *stream.Manager, healthProber services.ICameraHealthProber, audit *Auditor) *mux.Router {
-	handler := &cameraApi{serv: serv, settings: settings, streamManager: streamManager, healthProber: healthProber}
+	handler := &cameraApi{serv: serv, settings: settings, streamManager: streamManager, healthProber: healthProber, audit: audit}
 	group := router.PathPrefix("/cameras").Subrouter()
 
 	group.HandleFunc("", handler.get).Methods("GET")

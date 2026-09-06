@@ -472,7 +472,7 @@ It performs:
 
 ## ONVIF To RTSP Setup Flow
 
-1. `POST /api/onvif/discover` sends WS-Discovery probes on the local network, upserts matching ONVIF devices by XAddr, and returns them enriched with best-effort unauthenticated device information, capabilities, stream URI, and snapshot URI fields when the camera exposes them.
+1. `POST /api/onvif/discover` sends WS-Discovery probes on the local network, upserts matching ONVIF devices by XAddr, and returns them enriched with best-effort unauthenticated device information, capabilities, stream URI, and snapshot URI fields when the camera exposes them. An empty result is success (no camera answered yet); the call fails only if every network listener the scan opened could not send at all, and the failure reason travels with the `400`.
 2. `POST /api/onvif/probe` checks one manually entered host or device-service URL.
 3. `POST /api/onvif/devices/discovered` saves or updates the device record by ONVIF XAddr.
 4. `POST /api/onvif/devices/{id}/stream-options` calls ONVIF `GetCapabilities`, `GetProfiles`, and `GetStreamUri` for every media profile so the UI can show stream1/stream2 style choices.

@@ -707,6 +707,23 @@ func (s *trainingService) completeModel(id int64, filePath, metrics string) {
 // by name). Ordered fastest/least-accurate → slowest/most-accurate.
 var stockModelOptions = []string{"yolo11n.pt", "yolo11s.pt", "yolo11m.pt", "yolo11l.pt", "yolo11x.pt"}
 
+// canonicalStockModel matches a requested model against the downloadable options,
+// accepting either the file name the picker lists ("yolo11x.pt") or the bare
+// variant name ("yolo11x"). Callers that miss here are treated as a local path,
+// so being strict about the suffix would turn a stock pick into "file not found".
+func canonicalStockModel(model string) (string, bool) {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return "", false
+	}
+	for _, opt := range stockModelOptions {
+		if strings.EqualFold(opt, model) || strings.EqualFold(strings.TrimSuffix(opt, ".pt"), model) {
+			return opt, true
+		}
+	}
+	return "", false
+}
+
 // StockModelInfo is the current base model + the selectable options.
 type StockModelInfo struct {
 	Current string   `json:"current"`
@@ -733,22 +750,16 @@ func (s *trainingService) SetStockModel(ctx context.Context, model string, userI
 		return errors.New("stock model is not configurable on this host")
 	}
 	model = strings.TrimSpace(model)
-	if model == "" || strings.EqualFold(model, "yolo11n.pt") || strings.EqualFold(model, "default") {
+	canonical, known := canonicalStockModel(model)
+	if model == "" || canonical == "yolo11n.pt" || strings.EqualFold(model, "default") {
 		_ = os.Remove(s.stockModelFile)
 		s.reloadDetector()
 		return nil
 	}
 
 	resolved := ""
-	known := false
-	for _, opt := range stockModelOptions {
-		if strings.EqualFold(opt, model) {
-			known = true
-			break
-		}
-	}
 	if known {
-		path, err := s.downloadStockModel(strings.ToLower(model))
+		path, err := s.downloadStockModel(strings.ToLower(canonical))
 		if err != nil {
 			return err
 		}

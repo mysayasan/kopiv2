@@ -183,6 +183,7 @@ func (c *Client) Discover(ctx context.Context, timeout time.Duration) ([]Device,
 	var wg sync.WaitGroup
 	errs := make(chan error, len(listenAddrs))
 
+	started := 0
 	for _, listenAddr := range listenAddrs {
 		listenAddr := listenAddr
 		conn, err := net.ListenUDP("udp4", listenAddr)
@@ -193,6 +194,7 @@ func (c *Client) Discover(ctx context.Context, timeout time.Duration) ([]Device,
 			continue
 		}
 
+		started++
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -217,15 +219,44 @@ func (c *Client) Discover(ctx context.Context, timeout time.Duration) ([]Device,
 	wg.Wait()
 	close(errs)
 
-	if len(devicesByAddr) == 0 {
-		for err := range errs {
-			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-				return nil, err
-			}
+	// One interface failing is normal, not a failed scan. A workstation typically carries
+	// adapters that cannot carry a multicast probe at all — VirtualBox host-only, WSL/Hyper-V
+	// vEthernet, a link-local 169.254.x fallback — and sending to 239.255.255.250 on those
+	// returns "network is unreachable" every time. Treating that as the scan's result meant
+	// that on any such machine, the moment no camera answered (all of them offline, the
+	// appliance on a different subnet, a first run before any camera is plugged in), the
+	// operator was told "internal server Error" instead of "no cameras found" — from the
+	// wizard's own "Add your first camera" step and from the Discover screen alike. Report a
+	// failure only when EVERY listener failed, i.e. nothing was asked of the network at all.
+	var firstErr error
+	failed := 0
+	for err := range errs {
+		if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			continue
 		}
+		failed++
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	if shouldFailDiscovery(len(devicesByAddr), started, failed) {
+		return nil, firstErr
 	}
 
 	return c.enrichDiscoveredDevices(ctx, mapDevices(devicesByAddr)), nil
+}
+
+// shouldFailDiscovery reports whether a scan should be answered with an error rather
+// than with the (possibly empty) list of what it found.
+//
+// found is how many devices answered, started how many interfaces we probed from, and
+// failed how many of those could not send at all. A scan is a failure only when the
+// probe never left the machine: every listener failed AND nothing was found. Finding
+// nothing is a legitimate answer — no cameras on this subnet yet — and one deaf virtual
+// adapter among several working ones is not the operator's problem to be told about as
+// an error.
+func shouldFailDiscovery(found, started, failed int) bool {
+	return found == 0 && started > 0 && failed == started
 }
 
 func discoverOnConn(ctx context.Context, conn *net.UDPConn, addr *net.UDPAddr, deadline time.Time) ([]Device, error) {

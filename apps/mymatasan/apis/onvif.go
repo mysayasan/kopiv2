@@ -2,6 +2,7 @@ package apis
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -66,7 +67,12 @@ func (a *onvifApi) discover(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := a.serv.Discover(r.Context(), req.TimeoutMs)
 	if err != nil {
-		controllers.SendError(w, controllers.ErrInternalServerError, err.Error())
+		// A discovery failure is a fact about this machine's network — no multicast route,
+		// a firewall eating WS-Discovery — and the operator is the only one who can act on
+		// it. A 5xx hides its detail outside dev, so the screen said "internal server Error"
+		// and named nothing. Report it like probe does: the caller's own network, with the
+		// reason attached.
+		controllers.SendError(w, controllers.ErrBadRequest, fmt.Sprintf("camera discovery failed: %v", err))
 		return
 	}
 	controllers.SendResult(w, res, "succeed")
