@@ -11,6 +11,7 @@ Registers mymatasan's built-in user manual (`apps/mymatasan/manual.Library`,
 - `NewManualApi(router *mux.Router)` mounts under `/manual`:
   - `GET /manual` — article index (`List`).
   - `GET /manual/bundle` — the whole book, bodies included (`Bundle`).
+  - `GET /manual/search` — ranked BM25 search over the manual, `?q=&lang=&limit=` (`Search`).
   - `GET /manual/assets/{name}` — figures (`Asset`).
   - `GET /manual/{slug}` — one article (`Get`); registered **last** so `bundle` and
     `assets` are matched by their own routes first.

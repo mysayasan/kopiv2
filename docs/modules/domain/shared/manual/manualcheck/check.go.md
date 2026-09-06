@@ -21,7 +21,7 @@ func TestManual(t *testing.T) { manualcheck.Library(t, manual.Library) }
 
 Fails immediately if the library ships no language folders, or if `DefaultLanguage`
 (`"en"`) is not among them — every other language falls back to it, so its absence would
-make every other check meaningless. Otherwise runs four subtests:
+make every other check meaningless. Otherwise runs five subtests:
 
 - **Metadata** — every article that actually belongs to a language (not an English
   fallback) must have a non-empty `Title`, `Category`, `CategoryLabel`, `Summary`, `Body`,
@@ -41,6 +41,14 @@ make every other check meaningless. Otherwise runs four subtests:
   to one of these ids; a translator dropping or renaming one would make the deep link land
   at the top of the page in that language only — the check exists because that bug is
   otherwise the hardest one on this list to notice by hand.
+- **Diagrams** — every ```` ```flow ````/```` ```arch ````/```` ```seq ````/```` ```spec ````
+  fence (`domain/shared/manual/diagram`, `diagram/diagram.go.md`) must parse, every node's
+  `=> slug#anchor` link must resolve the same way a contextual "?" button's does, and every
+  non-English copy of a figure must fingerprint identically to the English original —
+  same nodes, same edges, same links, same spec values, in any order. See
+  `diagrams.go.md`. A separate opt-in helper, `SpecValues`, lets an app assert a
+  ```` ```spec ```` row's literal (a port, a path, a default) against the real constant its
+  own source uses.
 
 ## Notes
 
@@ -55,3 +63,7 @@ make every other check meaningless. Otherwise runs four subtests:
   other direction: instead of the manual checking itself, it checks that the app's frontend
   contextual-help wiring still points at real articles/anchors in this manual. It reuses
   `articleAnchors` defined here.
+- `diagrams.go` (`diagrams.go.md`), same package, is the Diagrams subtest wired in above,
+  plus the opt-in `SpecValues` helper. It reuses `anchorsIn`/`headingAnchor` from this file
+  to resolve a figure's `=> slug#anchor` links, so a figure link and a markdown link can
+  never disagree about what counts as a valid target.

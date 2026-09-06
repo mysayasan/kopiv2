@@ -1,7 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Ico } from './icons';
-import { useT } from './i18n';
+import { RTL_LANGS, useT } from './i18n';
+import { isDiagramKind, renderDiagram } from './manual/diagram';
 import './styles/manual.css';
 
 // The built-in user manual, shared by every app in the suite.
@@ -116,8 +117,12 @@ function collectList(lines, start, itemRe) {
 // opts.idPrefix namespaces heading ids. It is empty in the reader (so `#credentials` deep links
 // work verbatim) and set per article when the whole manual is printed into one document, where
 // the same anchor legitimately appears in several articles.
+//
+// opts.t and opts.rtl are only reached by the diagram fences: a figure needs the translator for
+// its own furniture (a spec table's column headings) and needs to know whether to mirror its
+// layout. Both have safe defaults, so a caller that renders prose need not supply either.
 export function renderManualMarkdown(md, opts = {}) {
-  const o = { assetBase: '/api/manual/assets', idPrefix: '', ...opts };
+  const o = { assetBase: '/api/manual/assets', idPrefix: '', t: (k) => k, rtl: false, ...opts };
   const lines = String(md || '').replace(/\r\n/g, '\n').split('\n');
   const outline = [];
   let html = '';
@@ -127,12 +132,18 @@ export function renderManualMarkdown(md, opts = {}) {
   while (i < lines.length) {
     const line = lines[i];
 
-    // Fenced code. Locked to LTR: an Arabic page must not mirror a command or a file path.
+    // A fence is either a drawn figure or code. Code is locked to LTR: an Arabic page must not
+    // mirror a command or a file path.
     if (/^```/.test(line)) {
+      const info = line.replace(/^```/, '').trim();
       const buf = [];
       i++;
       while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]);
       i++;
+      if (isDiagramKind(info)) {
+        html += renderDiagram(info, buf.join('\n'), { t: o.t, rtl: o.rtl });
+        continue;
+      }
       html += `<pre class="manual-code" dir="ltr"><code>${esc(buf.join('\n'))}</code></pre>`;
       continue;
     }
@@ -230,6 +241,11 @@ function stripMarkdown(md) {
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
     .replace(ANCHOR_RE, '')
     .replace(/\{#[A-Za-z0-9._-]+\}/g, '')
+    // Emphasis markers, which the line-start pass below cannot reach because they sit mid-
+    // sentence. Manual prose is heavily bolded, so without this a search result reads
+    // "the **outage count** before" — the syntax showing through the answer.
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1$2')
     .replace(/^[>#\s|*-]+/gm, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -250,7 +266,7 @@ export function useManual() {
 // Without a provider the hooks still resolve, so a "?" button in a not-yet-wired app renders and
 // does nothing instead of crashing the page it sits on.
 const EMPTY_MANUAL = {
-  ready: false, error: '', articles: [], languages: [], language: 'en',
+  ready: false, error: '', articles: [], languages: [], language: 'en', apiBase: '',
   openHelp: () => {}, close: () => {}, print: () => {}, get: () => null,
 };
 
@@ -337,6 +353,7 @@ export function ManualProvider({ apiBase = '', lang = 'en', appName = '', childr
     ...state,
     appName,
     version,
+    apiBase,
     assetBase: `${apiBase}/api/manual/assets`,
     get,
     openHelp: (slug, anchor) => setDrawer({ slug, anchor: anchor || '' }),
@@ -379,13 +396,27 @@ function useArticleNavigation(onSelect, containerRef) {
 }
 
 // ArticleBody renders one article and scrolls to `anchor` whenever it changes.
-function ArticleBody({ article, anchor, onSelect, assetBase, scrollRoot }) {
-  const ref = useRef(null);
+//
+// onOutline hands the article's heading structure back to whoever is showing it — the full-page
+// reader draws a navigation rail from it, the drawer ignores it.
+function ArticleBody({ article, anchor, onSelect, assetBase, scrollRoot, onOutline, bodyRef }) {
+  const t = useT();
+  const manual = useManual();
+  // bodyRef lets the outline rail query the headings this body rendered. It is a plain prop
+  // rather than a forwarded ref because the rail needs the same node the click handler and the
+  // anchor scroller already use, and sharing one ref is simpler than forwarding it.
+  const localRef = useRef(null);
+  const ref = bodyRef || localRef;
   const onClick = useArticleNavigation(onSelect, ref);
+  const rtl = RTL_LANGS.includes(manual.language);
   const rendered = useMemo(
-    () => renderManualMarkdown(article?.body, { assetBase }),
-    [article?.body, assetBase],
+    () => renderManualMarkdown(article?.body, { assetBase, t, rtl }),
+    [article?.body, assetBase, t, rtl],
   );
+
+  useEffect(() => {
+    if (onOutline) onOutline(rendered.outline);
+  }, [rendered.outline, onOutline]);
 
   useEffect(() => {
     if (!article) return;
@@ -446,6 +477,126 @@ function groupByCategory(articles) {
   return groups;
 }
 
+// useManualSearch ranks a query against the manual, server-side.
+//
+// The server runs BM25 with the article's own structure as field weights — the same retriever the
+// fleet agent grounds its answers in — so a question reaches a section without having to share a
+// word with its title, and a result opens at the SECTION rather than the top of the article.
+//
+// The local substring pass below it is the fallback, not the plan. It runs when the endpoint is
+// missing (an app that has not registered the route yet) or unreachable, because the whole bundle
+// is already in memory and degrading to a worse search beats degrading to none.
+function useManualSearch(articles, plainBodies, apiBase, language, query) {
+  const needle = query.trim().toLowerCase();
+  const [remote, setRemote] = useState(null);
+
+  useEffect(() => {
+    if (needle.length < 2) {
+      setRemote(null);
+      return undefined;
+    }
+    let live = true;
+    // A keystroke is not a question. Waiting for a pause costs nothing perceptible and turns a
+    // typed sentence into one request instead of thirty.
+    const timer = setTimeout(async () => {
+      try {
+        const url = `${apiBase}/api/manual/search?lang=${encodeURIComponent(language)}&q=${encodeURIComponent(needle)}`;
+        const res = await fetch(url, { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
+        if (!res.ok) throw new Error(String(res.status));
+        const json = await res.json();
+        const payload = json?.data?.result ?? json?.result ?? json;
+        // The server returns the section's raw markdown, because that is what it indexed and
+        // what it hands the fleet agent. A reader must not be shown `**bold**` and link syntax
+        // in a search result, so it is reduced here with the same stripper the local pass uses.
+        const items = (Array.isArray(payload?.items) ? payload.items : [])
+          .map((i) => ({ ...i, snippet: stripMarkdown(i.snippet) }));
+        if (live) setRemote(items);
+      } catch (_) {
+        if (live) setRemote(null); // fall through to the local pass
+      }
+    }, 180);
+    return () => { live = false; clearTimeout(timer); };
+  }, [needle, apiBase, language]);
+
+  const local = useMemo(() => {
+    if (needle.length < 2) return null;
+    return articles
+      .map((a, n) => {
+        const m = matchScore(a, plainBodies[n], needle);
+        return m ? { slug: a.slug, anchor: '', title: a.title, heading: '', snippet: m.where, rank: m.rank } : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.rank - b.rank);
+  }, [articles, plainBodies, needle]);
+
+  if (needle.length < 2) return null;
+  return remote || local;
+}
+
+// ManualOutline is the "on this page" rail: the article's own headings, with the one you are
+// reading marked.
+//
+// The outline has been computed on every render since the reader was written and thrown away by
+// every caller. Showing it is the difference between an article you scroll and an article you can
+// see the shape of — which matters most on exactly the long reference pages this manual is
+// growing.
+function ManualOutline({ outline, containerRef }) {
+  const t = useT();
+  const [active, setActive] = useState('');
+
+  // The scroll is listened for on the WINDOW, in the capture phase, rather than on the article.
+  // The article is not a scroll container — depending on the app it is the page, a main region or
+  // a dialog body that actually moves — and a capturing window listener sees all of them without
+  // this component having to know which. Positions are then read against the viewport, which is
+  // the one frame of reference every one of those cases shares.
+  useEffect(() => {
+    if (!outline.length) return undefined;
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      let current = outline[0].id;
+      for (const h of outline) {
+        const el = containerRef.current?.querySelector(`#${CSS.escape(h.id)}`);
+        if (el && el.getBoundingClientRect().top <= 96) current = h.id;
+      }
+      setActive(current);
+    };
+    const onScroll = () => {
+      if (!frame) frame = window.requestAnimationFrame(measure);
+    };
+    measure();
+    window.addEventListener('scroll', onScroll, { passive: true, capture: true });
+    window.addEventListener('resize', onScroll, { passive: true });
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      window.removeEventListener('scroll', onScroll, { capture: true });
+      window.removeEventListener('resize', onScroll);
+    };
+  }, [outline, containerRef]);
+
+  // One heading is the article's own title restated; a rail with a single entry is furniture.
+  if (outline.length < 2) return null;
+
+  return (
+    <nav className="manual-outline" aria-label={t('manual.onThisPage')}>
+      <div className="manual-index-cat">{t('manual.onThisPage')}</div>
+      {outline.map((h) => (
+        <button
+          key={h.id}
+          type="button"
+          className={`manual-outline-item lvl-${Math.min(h.level, 4)}${h.id === active ? ' active' : ''}`}
+          onClick={() => {
+            const el = containerRef.current?.querySelector(`#${CSS.escape(h.id)}`);
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }}
+        >
+          {h.text}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
 // matchScore ranks one article against the query, preferring a title hit over a summary hit over
 // a body hit, and returns the snippet to show. `plain` is the pre-stripped body: stripping the
 // markdown of every article on every keystroke is the difference between search that feels
@@ -469,7 +620,9 @@ export function ManualLibrary({ initialSlug = '' }) {
   const [slug, setSlug] = useState(initialSlug);
   const [anchor, setAnchor] = useState('');
   const [query, setQuery] = useState('');
+  const [outline, setOutline] = useState([]);
   const scrollRoot = useRef(null);
+  const bodyRef = useRef(null);
 
   // Settle on the first article as soon as the manual arrives, so the page is never an empty
   // pane waiting for a click.
@@ -488,17 +641,7 @@ export function ManualLibrary({ initialSlug = '' }) {
     [manual.articles],
   );
 
-  const needle = query.trim().toLowerCase();
-  const results = useMemo(() => {
-    if (needle.length < 2) return null;
-    return manual.articles
-      .map((a, n) => {
-        const m = matchScore(a, plainBodies[n], needle);
-        return m ? { article: a, ...m } : null;
-      })
-      .filter(Boolean)
-      .sort((a, b) => a.rank - b.rank);
-  }, [manual.articles, plainBodies, needle]);
+  const results = useManualSearch(manual.articles, plainBodies, manual.apiBase, manual.language, query);
 
   const groups = useMemo(() => groupByCategory(manual.articles), [manual.articles]);
   const article = manual.get(slug);
@@ -529,13 +672,16 @@ export function ManualLibrary({ initialSlug = '' }) {
             <div className="manual-index-cat">{t('manual.results', { n: results.length })}</div>
             {results.map((r) => (
               <button
-                key={r.article.slug}
+                key={`${r.slug}#${r.anchor || ''}`}
                 type="button"
-                className={`manual-index-item${r.article.slug === slug ? ' active' : ''}`}
-                onClick={() => { select(r.article.slug, ''); }}
+                className={`manual-index-item${r.slug === slug ? ' active' : ''}`}
+                onClick={() => { select(r.slug, r.anchor || ''); }}
               >
-                <span className="manual-index-title">{r.article.title}</span>
-                <span className="manual-index-snippet">{r.where}</span>
+                <span className="manual-index-title">{r.title}</span>
+                {/* The heading is why this result is the answer — it names the section the
+                    reader is about to land in, not just the article it lives in. */}
+                {r.heading ? <span className="manual-index-heading">{r.heading}</span> : null}
+                <span className="manual-index-snippet">{r.snippet}</span>
               </button>
             ))}
             {results.length === 0 ? <div className="manual-index-empty">{t('manual.noResults')}</div> : null}
@@ -570,11 +716,13 @@ export function ManualLibrary({ initialSlug = '' }) {
         </div>
         <UntranslatedNotice article={article} language={manual.language} />
         <ArticleBody
+          bodyRef={bodyRef}
           article={article}
           anchor={anchor}
           onSelect={select}
           assetBase={manual.assetBase}
           scrollRoot={scrollRoot}
+          onOutline={setOutline}
         />
         <div className="manual-pager">
           {previous ? (
@@ -589,6 +737,8 @@ export function ManualLibrary({ initialSlug = '' }) {
           ) : <span />}
         </div>
       </article>
+
+      <ManualOutline outline={outline} containerRef={bodyRef} />
     </div>
   );
 }
@@ -694,7 +844,12 @@ function ManualPrintable({ job }) {
 
   const chapters = printed.map((a) => ({
     article: a,
-    html: renderManualMarkdown(a.body, { assetBase: manual.assetBase, idPrefix: `${a.slug}--` }).html,
+    html: renderManualMarkdown(a.body, {
+      assetBase: manual.assetBase,
+      idPrefix: `${a.slug}--`,
+      t,
+      rtl: RTL_LANGS.includes(manual.language),
+    }).html,
   }));
 
   const stamp = new Date().toLocaleDateString();

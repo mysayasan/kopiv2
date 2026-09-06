@@ -9,12 +9,20 @@
 
 /* ---------------------------------------------------------------- full-page library ---- */
 
+/* Contents, article, and the article's own headings. The outline rail is the first thing to go
+ * when there is no room for it: losing "on this page" costs a reader some orientation, losing the
+ * contents costs them the manual. */
 .manual-page {
   display: grid;
-  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr) 190px;
   gap: 20px;
   align-items: start;
   min-height: 0;
+}
+
+@media (max-width: 1180px) {
+  .manual-page { grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); }
+  .manual-outline { display: none; }
 }
 
 .manual-state {
@@ -27,6 +35,7 @@
   top: 0;
   max-height: calc(100vh - 120px);
   overflow-y: auto;
+  overflow-x: hidden;
   padding-inline-end: 4px;
   border-inline-end: 1px solid var(--ui-border);
 }
@@ -76,6 +85,11 @@
   color: var(--ui-text);
   font: inherit;
   cursor: pointer;
+  /* An app is entitled to `button { white-space: nowrap }` for its own controls, and mymatasan
+   * has exactly that. These are buttons, so without this every contents entry and every search
+   * snippet is one long line in a 260px column — clipped, with a sideways scrollbar under it.
+   * A shared control has to state every property an app might reasonably own. */
+  white-space: normal;
 }
 
 .manual-index-item:hover { background: var(--ui-accent-soft); }
@@ -158,6 +172,24 @@
 .manual-body {
   color: var(--ui-text);
   line-height: 1.65;
+}
+
+/* A reading measure of ~74 characters is a property of SENTENCES, so it is applied to the
+ * sentences. It used to cap the whole body, which quietly starved every table, code block and
+ * figure of the column they had: a five-stage diagram was clipped to the width of a paragraph
+ * and made to scroll inside it, in a reader that had room to show the whole thing. */
+.manual-body > p,
+.manual-body > ul,
+.manual-body > ol,
+.manual-body > hr,
+.manual-body > blockquote,
+.manual-body > h1,
+.manual-body > h2,
+.manual-body > h3,
+.manual-body > h4,
+.manual-body > h5,
+.manual-body > h6,
+.manual-body > .manual-callout {
   max-width: 74ch;
 }
 
@@ -359,6 +391,209 @@
 
 .manual-help-btn:hover { color: var(--ui-accent); }
 
+/* --------------------------------------------------------------- "on this page" ---- */
+
+.manual-outline {
+  position: sticky;
+  top: 0;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  /* Stated, not left to compute. `overflow-y: auto` alone makes the other axis auto too, and the
+   * rail then grew a horizontal scrollbar over a one-pixel overhang. A rail never scrolls
+   * sideways — its items wrap. */
+  overflow-x: hidden;
+  padding-inline-start: 12px;
+  border-inline-start: 1px solid var(--ui-border);
+}
+
+.manual-outline-item {
+  display: block;
+  width: 100%;
+  text-align: start;
+  border: 0;
+  background: none;
+  padding: 4px 0 4px 8px;
+  /* The marker sits in the border so the active state does not shift the text sideways. */
+  border-inline-start: 2px solid transparent;
+  color: var(--ui-muted);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.4;
+  cursor: pointer;
+  white-space: normal; /* same reason as .manual-index-item */
+}
+
+.manual-outline-item:hover { color: var(--ui-text); }
+
+.manual-outline-item.active {
+  /* The background is restated deliberately. These are <button> elements inside five different
+   * apps, and an app is entitled to its own broad `button.active { background: var(--accent) }` —
+   * mymatasan has exactly that. A shared component that sets only `color` inherits that fill and
+   * renders accent text on an accent ground, which is invisible rather than merely wrong. Any
+   * shared control has to state every property an app might reasonably own. */
+  background: transparent;
+  color: var(--ui-accent);
+  border-inline-start-color: var(--ui-accent);
+}
+
+.manual-outline-item:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: -2px;
+}
+
+/* Depth is shown by indent alone; a second type size would fight the rail's own quietness. */
+.manual-outline-item.lvl-3 { padding-inline-start: 18px; }
+.manual-outline-item.lvl-4 { padding-inline-start: 28px; }
+
+/* A search result names the section it will open at, above the snippet that proves it. */
+.manual-index-heading {
+  display: block;
+  font-size: 11.5px;
+  color: var(--ui-accent);
+  margin-top: 1px;
+}
+
+/* ---------------------------------------------------------------------- figures ---- */
+
+/* Drawn figures: ```flow, ```arch, ```seq (SVG) and ```spec (a table).
+ *
+ * Every colour here is a --ui-* token, which is what lets one figure read correctly in five apps'
+ * palettes and in both themes without this file knowing any of them. Nothing in a figure is
+ * scripted, so it survives window.print() intact. */
+
+.mdia-figure {
+  margin: 22px 0;
+  padding: 0;
+}
+
+.mdia-scroll {
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.mdia-svg {
+  display: block;
+  margin: 0 auto;
+}
+
+.mdia-caption {
+  margin-top: 8px;
+  font-size: 12.5px;
+  color: var(--ui-muted);
+  line-height: 1.5;
+}
+
+/* Shapes. `plain` is the default; the rest are tones that carry meaning — a refusal, an outcome,
+ * a store, something outside the appliance — and are the only places a figure spends colour. */
+.mdia-shape {
+  fill: var(--ui-surface);
+  stroke: var(--ui-border);
+  stroke-width: 1.2;
+}
+
+.mdia-shape-lid {
+  fill: none;
+  stroke: var(--ui-border);
+  stroke-width: 1.2;
+}
+
+.mdia-label {
+  fill: var(--ui-text);
+  font-size: 12.5px;
+  text-anchor: middle;
+  font-family: inherit;
+  /* Each label picks its own direction from its own first strong character. A figure mixes
+   * translated prose with Latin terms — a port, a protocol, an English product noun — and in an
+   * Arabic article the alternative is watching "Credential known?" render as "Credential ?known"
+   * because the paragraph direction dragged the punctuation to the wrong end. */
+  unicode-bidi: plaintext;
+}
+
+.mdia-ask .mdia-shape { stroke: var(--ui-text); }
+
+.mdia-ext .mdia-shape {
+  fill: none;
+  stroke-dasharray: 4 3;
+}
+
+.mdia-store .mdia-shape { fill: var(--ui-bg, var(--ui-surface)); }
+
+.mdia-ok .mdia-shape {
+  stroke: var(--ui-accent);
+  stroke-width: 1.6;
+}
+.mdia-ok .mdia-label { fill: var(--ui-accent); }
+
+.mdia-deny .mdia-shape {
+  stroke: var(--ui-danger, #c0392b);
+  stroke-width: 1.4;
+}
+.mdia-deny .mdia-label { fill: var(--ui-danger, #c0392b); }
+
+.mdia-alert .mdia-shape {
+  stroke: var(--ui-warn, #b06a12);
+  stroke-width: 1.6;
+}
+.mdia-alert .mdia-label { fill: var(--ui-warn, #b06a12); }
+
+/* Edges */
+.mdia-edge {
+  fill: none;
+  stroke: var(--ui-muted);
+  stroke-width: 1.3;
+}
+
+.mdia-dashed { stroke-dasharray: 5 4; }
+.mdia-back { stroke-dasharray: 2 3; }
+
+.mdia-svg marker path { fill: var(--ui-muted); }
+
+.mdia-lifeline {
+  stroke: var(--ui-border);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+}
+
+/* An arrow's label sits on a plate, because a word laid straight over a line at a branch is
+ * exactly where legibility matters most. */
+.mdia-elabel rect {
+  fill: var(--ui-surface);
+  stroke: none;
+}
+
+.mdia-elabel text,
+.mdia-msg {
+  fill: var(--ui-muted);
+  font-size: 11px;
+  text-anchor: middle;
+  font-family: inherit;
+  unicode-bidi: plaintext;
+}
+
+/* A node that links into another article is a control, and says so. */
+.mdia-linked { cursor: pointer; }
+.mdia-linked .mdia-shape { stroke-dasharray: none; }
+.mdia-linked:hover .mdia-shape { stroke: var(--ui-accent); }
+.mdia-linked:hover .mdia-label { fill: var(--ui-accent); }
+.mdia-linked:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+}
+
+/* A spec table states literal values; the value column is the one being looked up, so it leads. */
+.mdia-spec th[scope='row'] {
+  width: 1%;
+  white-space: nowrap;
+  text-align: start;
+  font-weight: 500;
+  vertical-align: top;
+}
+
+.mdia-spec th[scope='row'] code { white-space: nowrap; }
+
+/* Same reason as the figure labels: a spec row is a literal beside a sentence about it. */
+.mdia-spec td { unicode-bidi: plaintext; }
+
 /* ------------------------------------------------------------------------- print ---- */
 
 /* The print document lives in a portal on <body>; on screen it must never be visible. */
@@ -436,6 +671,29 @@
   }
 
   .manual-print code { background: transparent; }
+
+  /* Figures are drawn from --ui-* tokens, and on an appliance running the dark theme those are
+   * a dark fill and a pale stroke — which prints as a black box. Paper gets its own palette:
+   * white fills, black lines, and the meaning-carrying tones kept as line WEIGHT rather than
+   * colour, so a monochrome office printer still shows a refusal as different from an outcome. */
+  .manual-print .mdia-figure { break-inside: avoid; }
+  .manual-print .mdia-scroll { overflow: visible; }
+  /* On screen a wide figure scrolls; paper has nowhere to scroll to, so here it scales. */
+  .manual-print .mdia-svg { max-width: 100%; height: auto; }
+  .manual-print .mdia-shape { fill: #fff; stroke: #000; stroke-width: 1; }
+  .manual-print .mdia-shape-lid { stroke: #000; }
+  .manual-print .mdia-ext .mdia-shape { fill: none; }
+  .manual-print .mdia-label { fill: #000; }
+  .manual-print .mdia-ok .mdia-shape,
+  .manual-print .mdia-alert .mdia-shape { stroke-width: 2.2; }
+  .manual-print .mdia-deny .mdia-shape { stroke-width: 2.2; stroke-dasharray: 5 3; }
+  .manual-print .mdia-edge { stroke: #000; }
+  .manual-print .mdia-lifeline { stroke: #666; }
+  .manual-print .mdia-svg marker path { fill: #000; }
+  .manual-print .mdia-elabel rect { fill: #fff; }
+  .manual-print .mdia-elabel text,
+  .manual-print .mdia-msg,
+  .manual-print .mdia-caption { fill: #000; color: #333; }
 
   /* Screen colour on paper reads as grey; underline carries the link instead. */
   .manual-print a { color: #000; text-decoration: underline; }

@@ -4,9 +4,12 @@ import (
 	"mime"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/mysayasan/kopiv2/domain/shared/manual"
+	"github.com/mysayasan/kopiv2/domain/shared/manual/retrieval"
 	"github.com/mysayasan/kopiv2/domain/utils/controllers"
 )
 
@@ -22,11 +25,26 @@ import (
 // is no runtime state and no per-user data, so there is nothing here to leak between roles.
 type ManualHandlers struct {
 	lib *manual.Library
+
+	// corpus is the ranked search index over lib, built on the first search and never before.
+	// A reader who only ever clicks through the contents pays nothing for it.
+	corpusOnce sync.Once
+	corpus     *retrieval.Corpus
 }
 
 // NewManualHandlers builds the handler set over one app's manual library.
 func NewManualHandlers(lib *manual.Library) *ManualHandlers {
 	return &ManualHandlers{lib: lib}
+}
+
+// index builds the search corpus lazily. It is a corpus of ONE source: unlike the fleet agent,
+// which searches several apps' manuals and must say which product an answer came from, an
+// appliance searching its own manual has only one possible answer to that question.
+func (h *ManualHandlers) index() *retrieval.Corpus {
+	h.corpusOnce.Do(func() {
+		h.corpus = retrieval.New(retrieval.Source{App: "self", Library: h.lib})
+	})
+	return h.corpus
 }
 
 // List returns the article index for the requested language (`?lang=ms`), metadata only.
@@ -52,6 +70,53 @@ func (h *ManualHandlers) Bundle(w http.ResponseWriter, r *http.Request) {
 		"language":  lang,
 		"languages": h.lib.Languages(),
 		"items":     h.lib.Bundle(lang),
+	}, "succeed")
+}
+
+// Search ranks the manual against a question (`?q=how+do+i+adopt+a+node&lang=ms`).
+//
+// The reader has always been able to search — by substring, client-side, over the bundle it had
+// already downloaded. That finds a page only when the reader guessed a word the author used.
+// This ranks by BM25 with the article's own structure as field weights, so "the door does not
+// unlock" reaches the troubleshooting section without sharing a word with its title, and it
+// returns the SECTION rather than the article, so a result opens where the answer is.
+//
+// The engine is the one the fleet agent already grounds its answers in; nothing new is indexed,
+// and its golden tests keep asserting that a given question finds a given section.
+//
+// A question asked in ms/zh/ar falls back to English when its own language has little to say —
+// operators type English product nouns (ONVIF, RTSP, Modbus) inside a Malay sentence constantly,
+// and each result carries the language it came from so the reader can be told.
+func (h *ManualHandlers) Search(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	lang := h.lib.Language(language(r))
+
+	limit := 8
+	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 && n <= 25 {
+		limit = n
+	}
+
+	// An empty or one-character query is a reader still typing, not a question. Answering it
+	// would rank the whole manual by noise, so it returns nothing rather than something wrong.
+	items := []map[string]any{}
+	if len([]rune(query)) >= 2 {
+		for _, hit := range h.index().Search(lang, query, limit) {
+			items = append(items, map[string]any{
+				"slug":     hit.Chunk.Slug,
+				"anchor":   hit.Chunk.Anchor,
+				"title":    hit.Chunk.ArticleTitle,
+				"heading":  hit.Chunk.Heading,
+				"language": hit.Chunk.Lang,
+				"snippet":  hit.Chunk.Snippet(240),
+			})
+		}
+	}
+
+	cacheable(w)
+	controllers.SendResult(w, map[string]any{
+		"language": lang,
+		"query":    query,
+		"items":    items,
 	}, "succeed")
 }
 

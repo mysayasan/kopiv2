@@ -14,6 +14,7 @@ adapted to myseliasan's own route prefix.
   once `router` itself is the API subrouter):
   - `GET /manual` — article index (`List`).
   - `GET /manual/bundle` — the whole book, bodies included (`Bundle`).
+  - `GET /manual/search` — ranked BM25 search over the manual, `?q=&lang=&limit=` (`Search`).
   - `GET /manual/assets/{name}` — figures (`Asset`).
   - `GET /manual/{slug}` — one article (`Get`); registered **last** so `bundle` and
     `assets` are matched by their own routes first.

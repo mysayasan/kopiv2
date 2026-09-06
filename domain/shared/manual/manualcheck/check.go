@@ -13,6 +13,9 @@
 //   - A drifted anchor. Contextual "?" buttons in the UI deep-link to `{#anchor}` ids. If a
 //     translator drops or renames one, the deep link lands at the top of the page in that
 //     language only — the single most annoying bug to notice by hand.
+//   - A diagram that lost an edge in translation, or states a port the software stopped using.
+//     See diagrams.go; a wrong figure is worse than a missing one, because a reader trusts it
+//     without checking.
 package manualcheck
 
 import (
@@ -48,6 +51,7 @@ func Library(t *testing.T, lib *manual.Library) {
 	t.Run("LanguageParity", func(t *testing.T) { languageParity(t, lib, langs) })
 	t.Run("Links", func(t *testing.T) { links(t, lib, langs) })
 	t.Run("Anchors", func(t *testing.T) { anchors(t, lib, langs) })
+	t.Run("Diagrams", func(t *testing.T) { diagrams(t, lib, langs) })
 }
 
 // metadata asserts every article carries the frontmatter the index and print TOC need.

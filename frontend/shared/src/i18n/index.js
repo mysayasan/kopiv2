@@ -198,6 +198,12 @@ const en = {
   'manual.loadFailed': 'The manual could not be loaded.',
   'manual.missing': 'That page is not in this manual.',
   'manual.empty': 'This manual is empty.',
+  'manual.onThisPage': 'On this page',
+  'manual.diagram.value': 'Value',
+  'manual.diagram.meaning': 'What it is',
+  'manual.diagram.flow': 'Diagram: how this decision is made',
+  'manual.diagram.arch': 'Diagram: how the parts fit together',
+  'manual.diagram.seq': 'Diagram: the order things happen in',
 };
 
 // Malay (Bahasa Melayu) — Malaysia's national language.
@@ -380,6 +386,12 @@ const ms = {
   'manual.loadFailed': 'Manual tidak dapat dimuatkan.',
   'manual.missing': 'Halaman itu tiada dalam manual ini.',
   'manual.empty': 'Manual ini kosong.',
+  'manual.onThisPage': 'Dalam halaman ini',
+  'manual.diagram.value': 'Nilai',
+  'manual.diagram.meaning': 'Apa maksudnya',
+  'manual.diagram.flow': 'Rajah: bagaimana keputusan ini dibuat',
+  'manual.diagram.arch': 'Rajah: bagaimana bahagian-bahagiannya bercantum',
+  'manual.diagram.seq': 'Rajah: susunan perkara berlaku',
 };
 
 // Chinese (Simplified).
@@ -562,6 +574,12 @@ const zh = {
   'manual.loadFailed': '无法加载手册。',
   'manual.missing': '本手册中没有该页面。',
   'manual.empty': '本手册为空。',
+  'manual.onThisPage': '本页内容',
+  'manual.diagram.value': '值',
+  'manual.diagram.meaning': '含义',
+  'manual.diagram.flow': '图示：如何做出该判定',
+  'manual.diagram.arch': '图示：各部分如何组合',
+  'manual.diagram.seq': '图示：事情发生的顺序',
 };
 
 // Arabic (العربية) — right-to-left.
@@ -744,6 +762,12 @@ const ar = {
   'manual.loadFailed': 'تعذّر تحميل الدليل.',
   'manual.missing': 'هذه الصفحة ليست في هذا الدليل.',
   'manual.empty': 'هذا الدليل فارغ.',
+  'manual.onThisPage': 'في هذه الصفحة',
+  'manual.diagram.value': 'القيمة',
+  'manual.diagram.meaning': 'ما تعنيه',
+  'manual.diagram.flow': 'رسم: كيف يُتَّخذ هذا القرار',
+  'manual.diagram.arch': 'رسم: كيف تترابط الأجزاء',
+  'manual.diagram.seq': 'رسم: ترتيب حدوث الأمور',
 };
 
 const DICTS = { en, ms, zh, ar };
