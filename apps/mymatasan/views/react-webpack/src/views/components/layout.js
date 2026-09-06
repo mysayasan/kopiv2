@@ -63,18 +63,41 @@ function LoginHelpLink({ slug, anchor }) {
   );
 }
 
-export function LoginPage({ credentials, busy, message, lockoutUntil, onChange, onSubmit, lang, onLangChange }) {
+// LoginControls is the strip in the corner of every pre-session screen: contextual help, then the
+// language and theme pickers.
+//
+// The theme belongs here for the same reason the language does. Both are the reader's setting
+// rather than the account's — they are held in localStorage, applied to <html> before anything is
+// authenticated, and someone who needs the high-contrast or the dark palette needs it to read the
+// sign-in form, not after they have already got past it. Leaving the picker inside the workspace
+// made the one screen every user starts on the one screen they could not adjust.
+//
+// Each control renders only when it is given a handler, so a caller that has no theme state
+// (or no language state) gets the rest of the strip rather than a crash.
+function LoginControls({ help, lang, onLangChange, theme, onThemeChange }) {
+  if (!onLangChange && !onThemeChange) return null;
+  return (
+    <div className="login-lang-switch">
+      {help}
+      {onLangChange ? <LanguageDropdown lang={lang} onLang={onLangChange} /> : null}
+      {onThemeChange ? <ThemeDropdown theme={theme} onThemeChange={onThemeChange} /> : null}
+    </div>
+  );
+}
+
+export function LoginPage({ credentials, busy, message, lockoutUntil, onChange, onSubmit, lang, onLangChange, theme, onThemeChange }) {
   const t = useT();
   const lockRemaining = useCountdown(lockoutUntil || 0);
   const locked = lockRemaining > 0;
   return (
     <main className="login-screen">
-      {onLangChange ? (
-        <div className="login-lang-switch">
-          <LoginHelpLink slug="first-sign-in" />
-          <LanguageDropdown lang={lang} onLang={onLangChange} />
-        </div>
-      ) : null}
+      <LoginControls
+        help={<LoginHelpLink slug="first-sign-in" />}
+        lang={lang}
+        onLangChange={onLangChange}
+        theme={theme}
+        onThemeChange={onThemeChange}
+      />
       <form className="login-panel" onSubmit={onSubmit}>
         <div className="login-brand">
           <BrandLogo size={104} className="brand-logo--login" />
@@ -253,7 +276,7 @@ export function MagicWordEasterEgg({ onDismiss }) {
 // ChangePasswordPage is the forced first-login password change. It reuses the
 // login-panel chrome so the transition from sign-in feels seamless. Validation
 // (match + length) happens here; the server re-checks and is the source of truth.
-export function ChangePasswordPage({ busy, message, onSubmit, onCancel, lang, onLangChange }) {
+export function ChangePasswordPage({ busy, message, onSubmit, onCancel, lang, onLangChange, theme, onThemeChange }) {
   const t = useT();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -276,12 +299,13 @@ export function ChangePasswordPage({ busy, message, onSubmit, onCancel, lang, on
 
   return (
     <main className="login-screen">
-      {onLangChange ? (
-        <div className="login-lang-switch">
-          <LoginHelpLink slug="first-sign-in" anchor="change-password" />
-          <LanguageDropdown lang={lang} onLang={onLangChange} />
-        </div>
-      ) : null}
+      <LoginControls
+        help={<LoginHelpLink slug="first-sign-in" anchor="change-password" />}
+        lang={lang}
+        onLangChange={onLangChange}
+        theme={theme}
+        onThemeChange={onThemeChange}
+      />
       <form className="login-panel" onSubmit={submit}>
         <div className="login-brand">
           <BrandLogo size={104} className="brand-logo--login" />
@@ -331,7 +355,7 @@ export function ChangePasswordPage({ busy, message, onSubmit, onCancel, lang, on
 // chrome — including the language switcher — and lets the operator upload their exported
 // recovery key + passphrase to restore access. The raw key file is read as bytes and
 // base64-encoded for the unlock request; nothing here needs a session.
-export function RecoveryGatePage({ keyId, busy, restarting, message, onSubmit, lang, onLangChange }) {
+export function RecoveryGatePage({ keyId, busy, restarting, message, onSubmit, lang, onLangChange, theme, onThemeChange }) {
   const t = useT();
   const [passphrase, setPassphrase] = useState('');
   const [fileName, setFileName] = useState('');
@@ -363,12 +387,13 @@ export function RecoveryGatePage({ keyId, busy, restarting, message, onSubmit, l
 
   return (
     <main className="login-screen">
-      {onLangChange ? (
-        <div className="login-lang-switch">
-          <LoginHelpLink slug="first-sign-in" anchor="recovery-gate" />
-          <LanguageDropdown lang={lang} onLang={onLangChange} />
-        </div>
-      ) : null}
+      <LoginControls
+        help={<LoginHelpLink slug="first-sign-in" anchor="recovery-gate" />}
+        lang={lang}
+        onLangChange={onLangChange}
+        theme={theme}
+        onThemeChange={onThemeChange}
+      />
       <form className="login-panel" onSubmit={submit}>
         <div className="login-brand">
           <BrandLogo size={104} className="brand-logo--login" />

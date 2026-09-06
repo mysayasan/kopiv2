@@ -2646,6 +2646,8 @@ function AppInner({ lang, onLangChange }) {
         message={message?.text || ''}
         lang={lang}
         onLangChange={onLangChange}
+        theme={theme}
+        onThemeChange={changeTheme}
         onSubmit={submitRecovery}
       />
     );
@@ -2663,6 +2665,8 @@ function AppInner({ lang, onLangChange }) {
             message={message?.text || ''}
             lang={lang}
             onLangChange={onLangChange}
+            theme={theme}
+            onThemeChange={changeTheme}
             onSubmit={completePasswordChange}
             onCancel={logout}
           />
@@ -2674,6 +2678,8 @@ function AppInner({ lang, onLangChange }) {
             lockoutUntil={lockoutUntil}
             lang={lang}
             onLangChange={onLangChange}
+            theme={theme}
+            onThemeChange={changeTheme}
             onChange={setCredentials}
             onSubmit={login}
           />

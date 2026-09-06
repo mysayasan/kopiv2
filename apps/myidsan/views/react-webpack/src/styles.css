@@ -165,6 +165,22 @@ button:disabled {
   display: grid;
   place-items: center;
   padding: 24px;
+  /* Positioning context for .auth-controls, which is pinned to the corner rather than placed in
+     the grid — the card must stay optically centred whether or not the strip is there. */
+  position: relative;
+}
+
+/* Language and theme pickers on the pre-session screens. Mirrors .login-lang-switch, the
+   suite-wide login standard in the other apps; myidsan uses .auth-layout rather than
+   .login-screen, so it needs its own selector for the same treatment. */
+.auth-controls {
+  position: absolute;
+  top: 18px;
+  inset-inline-end: 20px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .auth-panel {

@@ -1,19 +1,20 @@
 import { useState } from 'react';
 import { Ico, useT, PasswordField, LanguageDropdown } from '@shared';
 import { BrandLogo } from './layout';
-import { FormBusyOverlay, Message } from './ui';
+import { FormBusyOverlay, Message, ThemeDropdown } from './ui';
 import { api } from '../lib/helpers';
 
 // The pre-app screens (sign-in, forced password change) wear the suite's standard
 // login chrome: a centered .login-panel card under the large brand mark, with the
-// language switcher pinned to the top corner so a user can pick their language before
+// language and theme pickers pinned to the top corner so a user can set both before
 // they can read anything else. AuthShell is that chrome.
-function AuthShell({ subtitle, hint, lang, onLangChange, busy, message, children }) {
+function AuthShell({ subtitle, hint, lang, onLangChange, theme, onThemeChange, busy, message, children }) {
   return (
     <main className="login-screen">
-      {onLangChange ? (
+      {onLangChange || onThemeChange ? (
         <div className="login-lang-switch">
-          <LanguageDropdown lang={lang} onLang={onLangChange} />
+          {onLangChange ? <LanguageDropdown lang={lang} onLang={onLangChange} /> : null}
+          {onThemeChange ? <ThemeDropdown theme={theme} onThemeChange={onThemeChange} /> : null}
         </div>
       ) : null}
       <section className="login-panel">
@@ -32,7 +33,7 @@ function AuthShell({ subtitle, hint, lang, onLangChange, busy, message, children
 
 // LoginScreen is the local username/password sign-in. myiotsan authenticates against
 // its own account store (the session cookie is set by POST /api/auth/login).
-export function LoginScreen({ onLoggedIn, lang, onLangChange }) {
+export function LoginScreen({ onLoggedIn, lang, onLangChange, theme, onThemeChange }) {
   const t = useT();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -53,7 +54,7 @@ export function LoginScreen({ onLoggedIn, lang, onLangChange }) {
   }
 
   return (
-    <AuthShell subtitle={t('auth.subSignin')} lang={lang} onLangChange={onLangChange} busy={busy} message={err}>
+    <AuthShell subtitle={t('auth.subSignin')} lang={lang} onLangChange={onLangChange} theme={theme} onThemeChange={onThemeChange} busy={busy} message={err}>
       <form className="login-form" onSubmit={login}>
         <label>
           {t('auth.username')}
@@ -83,10 +84,10 @@ export function LoginScreen({ onLoggedIn, lang, onLangChange }) {
 // So a refusal gets its own screen, and it says the true thing: you are signed in, and this
 // account is not permitted to use this application. It offers sign-out, because the one useful
 // action is to come back as somebody else.
-export function NoAccessScreen({ onLogout, lang, onLangChange }) {
+export function NoAccessScreen({ onLogout, lang, onLangChange, theme, onThemeChange }) {
   const t = useT();
   return (
-    <AuthShell subtitle={t('auth.subNoAccess')} lang={lang} onLangChange={onLangChange}>
+    <AuthShell subtitle={t('auth.subNoAccess')} lang={lang} onLangChange={onLangChange} theme={theme} onThemeChange={onThemeChange}>
       <p className="login-note">{t('auth.noAccessBody')}</p>
       <div className="login-form">
         <button type="button" onClick={onLogout}>
@@ -99,7 +100,7 @@ export function NoAccessScreen({ onLogout, lang, onLangChange }) {
 
 // ChangePasswordScreen forces an account flagged must-change (the stock admin on first
 // login) to pick a new password before reaching the app.
-export function ChangePasswordScreen({ onDone, onToast, onLogout, lang, onLangChange }) {
+export function ChangePasswordScreen({ onDone, onToast, onLogout, lang, onLangChange, theme, onThemeChange }) {
   const t = useT();
   const [current, setCurrent] = useState('');
   const [next1, setNext1] = useState('');
@@ -127,6 +128,8 @@ export function ChangePasswordScreen({ onDone, onToast, onLogout, lang, onLangCh
       hint={t('auth.changeHint')}
       lang={lang}
       onLangChange={onLangChange}
+      theme={theme}
+      onThemeChange={onThemeChange}
       busy={busy}
       message={err}
     >

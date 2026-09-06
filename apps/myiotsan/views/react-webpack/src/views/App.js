@@ -146,13 +146,13 @@ function AppInner({ lang, onLangChange }) {
   // The pre-app screens take the language switcher too — it lives in the workspace
   // header, which the user cannot reach until they are signed in.
   if (authState === 'anon') {
-    return <LoginScreen onLoggedIn={loadSession} lang={lang} onLangChange={onLangChange} />;
+    return <LoginScreen onLoggedIn={loadSession} lang={lang} onLangChange={onLangChange} theme={theme} onThemeChange={changeTheme} />;
   }
   if (authState === 'noaccess') {
-    return <NoAccessScreen onLogout={logout} lang={lang} onLangChange={onLangChange} />;
+    return <NoAccessScreen onLogout={logout} lang={lang} onLangChange={onLangChange} theme={theme} onThemeChange={changeTheme} />;
   }
   if (authState === 'mustchange') {
-    return <ChangePasswordScreen onDone={loadSession} onToast={pushToast} onLogout={logout} lang={lang} onLangChange={onLangChange} />;
+    return <ChangePasswordScreen onDone={loadSession} onToast={pushToast} onLogout={logout} lang={lang} onLangChange={onLangChange} theme={theme} onThemeChange={changeTheme} />;
   }
 
   return (

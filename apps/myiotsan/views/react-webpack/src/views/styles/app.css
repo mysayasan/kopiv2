@@ -416,6 +416,12 @@ label {
   top: 18px;
   inset-inline-end: 20px;
   z-index: 5;
+  /* A row, because the strip now holds the language AND theme pickers. It held only the language
+     picker when this rule was written, so block layout looked correct and the second control
+     silently dropped onto its own line underneath. */
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 /* margin:auto inside a flex container centers the panel when there's room and
