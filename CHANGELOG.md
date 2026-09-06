@@ -124,6 +124,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-09-06 — mymatasan 1.149.0, myseliasan 1.83.0, core 1.113.0 (78fd73d)
+
+### Added
+
+- **core,mymatasan,myseliasan**: The built-in suite manual (shared by mymatasan and myseliasan) can now draw figures and answer questions instead of only listing pages. A new grammar (domain/shared/manual/diagram) lets an article fence declare a flow/arch/seq/spec block -- structure (node ids, shapes, edges, link targets, spec literals) kept byte-identical across all four shipped languages, prose translated -- rendered client-side as inline SVG (frontend/shared/src/manual/diagram.js) using the app's own theme tokens, RTL-mirrored, and print-safe; a spec block instead renders as a real reference table whose literal values (ports, paths, defaults) can be asserted against the software's own constants via a new manualcheck.SpecValues helper. The manual build guard (manualcheck.Library) gained a fifth subtest, Diagrams, that fails if a fence does not parse, if a translated copy of a figure loses or gains a node/edge, or if a figure's link points at an article or anchor that no longer exists -- the same silent-rot failure modes the existing Links/Anchors checks already close for prose. Both apps also gained GET /api/manual/search (?q=&lang=&limit=), which ranks a question with the same BM25 retriever the myseliasan fleet agent already grounds its chat answers in and returns the matching section rather than the whole article; the manual's search box now calls this endpoint first and falls back to the previous client-side substring search only if the request fails. A long article also now renders an on-this-page outline rail from its own heading structure, tracking scroll position to highlight the current section. No manual content ships a diagram or spec block yet -- this lands the grammar, the renderer, the build guard, and the search endpoint that later articles will use; docs/MANUAL_DIAGRAMS.md is the author-facing guide to the new fence syntax.
 ## 2026-09-06 — mymatasan 1.148.2 (be883ea)
 
 ### Fixed
