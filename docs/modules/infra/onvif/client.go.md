@@ -9,6 +9,15 @@ Provides a lightweight ONVIF client for local device discovery, manual device-se
 - Send WS-Discovery `Probe` messages to the ONVIF multicast address.
 - Send probes from the default UDP socket and each active multicast-capable IPv4 interface.
 - Read ProbeMatch responses until the configured timeout expires.
+- `Discover` returns an error only when **every** listener failed to send at all
+  (`shouldFailDiscovery`) — i.e. nothing could reach the multicast group from any
+  interface. A listener that sent fine but heard no reply, or a mix where some interfaces
+  failed and others didn't, is not an error: it returns the (possibly empty) device list.
+  A typical workstation carries adapters that can never carry a multicast probe
+  (VirtualBox host-only, WSL/Hyper-V vEthernet, a link-local `169.254.x` fallback), so
+  treating any per-interface send failure as fatal used to fail the whole scan on such a
+  machine the moment no camera answered — every camera offline, the appliance on another
+  subnet, or simply no camera added yet.
 - Normalize discovered service `XAddr` values into host, port, scope, and type fields.
 - Enrich discovered devices with best-effort unauthenticated device information, capabilities, stream URI, and snapshot URI data.
 - Probe a manually supplied IP, host, or ONVIF device-service URL.

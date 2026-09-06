@@ -566,7 +566,7 @@ function AiStep({ busy, onAiCapability, onInstallAiDeps, onStockModel, onApplySt
     setCap(c);
     const m = await onStockModel();
     setModel(m);
-    if (m?.current && !choice) setChoice(m.current.replace(/\.pt$/i, ''));
+    if (m?.current && !choice) setChoice(m.current);
   };
   useEffect(() => { refresh(); /* eslint-disable-next-line */ }, []);
 
@@ -576,7 +576,12 @@ function AiStep({ busy, onAiCapability, onInstallAiDeps, onStockModel, onApplySt
   }
   async function apply() {
     await onApplyStockModel(choice);
-    await refresh();
+    // Re-read only the model, not the whole step: the AI-runtime probe shells out to
+    // Python and takes seconds, and picking a model changes nothing about the runtime.
+    // Going through refresh() left "Current: <old model>" on screen for that whole wait,
+    // directly under a toast saying the new one had been set.
+    const m = await onStockModel();
+    if (m) setModel(m);
   }
 
   const ready = cap?.available;
@@ -614,7 +619,7 @@ function AiStep({ busy, onAiCapability, onInstallAiDeps, onStockModel, onApplySt
           <div className="setup-actions">
             <select value={choice} onChange={(e) => setChoice(e.target.value)} disabled={busy}>
               {model.options.map((opt) => (
-                <option key={opt} value={opt.replace(/\.pt$/i, '')}>{opt}</option>
+                <option key={opt} value={opt}>{opt}</option>
               ))}
             </select>
             <button type="button" onClick={apply} disabled={busy || !choice}>
