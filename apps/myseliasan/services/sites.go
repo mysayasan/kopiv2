@@ -136,6 +136,20 @@ type ISiteService interface {
 	UpdateSitePosition(ctx context.Context, id int64, lat, lon float64, placed bool, by int64) (*entities.Site, error)
 	DeleteSite(ctx context.Context, id int64) error
 
+	// EnsurePointArea gives a point asset (junction, gate, pole) the ONE implicit area its cameras
+	// are pinned to, and returns it. Idempotent: a point asset that already has an area gets that
+	// one back untouched. Non-point sites are left alone — their areas are the operator's to make.
+	//
+	// A point asset has no surface to draw, which is why it was previously given no area at all —
+	// and why the map fell back to showing "every camera on the assigned appliance" as its
+	// cameras. That fallback is wrong whenever one recorder feeds more than one place, which is
+	// the normal case. Giving the point asset a real (if tiny) area means its cameras are PLACED,
+	// so the same rule holds everywhere: the cameras here are the ones pinned here.
+	EnsurePointArea(ctx context.Context, siteID, by int64) (*entities.FloorPlan, error)
+	// EnsurePointAreas backfills every point asset created before the implicit area existed, and
+	// reports how many it repaired. Idempotent, so it is safe to run on every boot.
+	EnsurePointAreas(ctx context.Context) (int, error)
+
 	// SiteFloorplans returns every floor of a building, each with ALL of its placements (cameras
 	// from any node) — the building-oriented drill-down, so clicking a building on the map opens
 	// its plans with every camera inside regardless of which node records it.
@@ -455,7 +469,76 @@ func (s *siteService) CreateSite(ctx context.Context, name, description, icon, k
 		return nil, err
 	}
 	row.Id = int64(id)
+	// A point asset's areas are not the operator's to create — it is offered none in the wizard,
+	// because there is nothing to draw. Make its one implicit area here so it is never a site that
+	// cannot hold a camera. A failure here is not fatal to the create (the boot-time backfill
+	// repairs it), so the caller still gets the site it asked for.
+	if row.Kind == entities.SiteKindPoint {
+		if _, aerr := s.EnsurePointArea(ctx, row.Id, by); aerr != nil {
+			return &row, nil
+		}
+	}
 	return &row, nil
+}
+
+// pointAreaName labels a point asset's implicit area. It is never shown: the editor hides the area
+// bar for a point asset and the drill-down titles itself with the site alone, precisely because
+// "Jalan Ampang junction · At this point" is noise. It exists so the row is not nameless in the
+// database and in a report.
+const pointAreaName = "At this point"
+
+// A point asset's canvas is small on purpose: it is somewhere to arrange a handful of cameras
+// around a pole or gate and aim them, not a floor to lay out. Big enough that coverage arcs at the
+// default 70° do not overlap into an unreadable smear.
+const (
+	pointAreaWidth  = 600
+	pointAreaHeight = 400
+)
+
+// EnsurePointArea gives a point asset its single implicit area. See ISiteService.
+func (s *siteService) EnsurePointArea(ctx context.Context, siteID, by int64) (*entities.FloorPlan, error) {
+	site, err := s.sites.GetById(ctx, "", uint64(siteID))
+	if err != nil || site == nil {
+		return nil, ErrSiteUnknown
+	}
+	if entities.NormalizeSiteKind(site.Kind) != entities.SiteKindPoint {
+		return nil, nil // not a point asset — its areas are the operator's to make
+	}
+	floors, err := s.ListFloors(ctx, siteID)
+	if err != nil {
+		return nil, err
+	}
+	if len(floors) > 0 {
+		return floors[0], nil // already has one; never make a second
+	}
+	return s.AddBlankFloor(ctx, siteID, pointAreaName, 0, pointAreaWidth, pointAreaHeight, by)
+}
+
+// EnsurePointAreas backfills every point asset that predates the implicit area. See ISiteService.
+func (s *siteService) EnsurePointAreas(ctx context.Context) (int, error) {
+	sites, err := s.ListSites(ctx)
+	if err != nil {
+		return 0, err
+	}
+	repaired := 0
+	for _, site := range sites {
+		if site == nil || entities.NormalizeSiteKind(site.Kind) != entities.SiteKindPoint {
+			continue
+		}
+		floors, ferr := s.ListFloors(ctx, site.Id)
+		if ferr != nil {
+			return repaired, ferr
+		}
+		if len(floors) > 0 {
+			continue
+		}
+		// by=0: nobody in particular created this, the upgrade did.
+		if _, aerr := s.AddBlankFloor(ctx, site.Id, pointAreaName, 0, pointAreaWidth, pointAreaHeight, 0); aerr != nil {
+			return repaired, aerr
+		}
+		repaired++
+	}
+	return repaired, nil
 }
 
 func (s *siteService) UpdateSite(ctx context.Context, id int64, name, description, icon, kind string, ordinal int, by int64) (*entities.Site, error) {

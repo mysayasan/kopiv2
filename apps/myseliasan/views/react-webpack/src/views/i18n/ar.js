@@ -211,8 +211,6 @@ export default {
   "map.assetName": "الاسم",
   "map.assetIcon": "أيقونة",
   "map.noAssetsYet": "لا يوجد شيء على الخريطة بعد — أضف مبنى أو منطقة خارجية أو أصلاً نقطياً للبدء.",
-  "map.appliancesHere": "الأجهزة هنا",
-  "map.noAppliancesHere": "لم يُعيَّن أي جهاز هنا بعد — عيّن واحداً من القائمة الجانبية.",
   "map.siteUpdated": "تم تحديث المبنى.",
   "map.deleteFloor": "حذف هذا الطابق",
   "map.siteCreateFailed": "تعذّر إنشاء الموقع.",

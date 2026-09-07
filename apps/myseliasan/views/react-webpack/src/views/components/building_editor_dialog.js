@@ -5,7 +5,7 @@ import { api, apiBase, csrfToken } from '../lib/helpers';
 import { nodeTone } from '../lib/fleet_status';
 import { FloorEditor } from './floor_editor';
 import { SiteDialog } from './asset_wizard';
-import { multiPlan, normKind, siteGlyph } from './site_kinds';
+import { multiPlan, normKind, showsAreaBar, siteGlyph } from './site_kinds';
 import { nodeKindOf } from './layout';
 
 // BuildingEditorDialog is the authoring surface for ONE building, opened as a modal over the
@@ -60,6 +60,10 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
   const nowSec = Math.floor(Date.now() / 1000);
   // Multi-plan affordances are a building's alone (see site_kinds).
   const canAddAreas = multiPlan(building.kind);
+  // A point asset has exactly one area and the operator never named it, so the bar would be a row
+  // of chrome around a label ("At this point") that means nothing to them. Its cameras still drop
+  // onto that area from the palette exactly as anywhere else.
+  const areaBar = showsAreaBar(building.kind);
 
   const nodesById = {};
   for (const n of nodes) nodesById[n.nodeId] = n;
@@ -334,6 +338,7 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
           <button type="button" className="icon-button bld-head-close" onClick={onClose} aria-label={t('bld.done')} title={t('bld.done')}><Ico n="x" sz={15} /></button>
         </header>
 
+        {areaBar ? (
         <div className="bld-areabar" role="tablist" aria-label={t('bld.areas')}>
           {floors.map((f) => (
             <AreaTab key={f.id} floor={f} active={activeFloor && activeFloor.id === f.id} onOpen={setActiveFloor} onRename={renameArea} />
@@ -349,6 +354,7 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
             </>
           ) : null}
         </div>
+        ) : null}
 
         <div className="bld-body">
           <aside className="bld-palette">

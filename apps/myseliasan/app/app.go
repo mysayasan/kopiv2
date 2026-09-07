@@ -1162,6 +1162,15 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	// fleet cipher that protects the CA key/PSK, stored under <dataDir>/floorplans.
 	planDir := apphost.ResolveWritablePath(deps.DataDir, "floorplans")
 	siteService := services.NewSiteService(deps.Db, secretCipher, planDir)
+	// Point assets created before they had an implicit area own no area at all, so nothing can be
+	// pinned to them — which is why the map used to report every camera on the assigned appliance
+	// as theirs. Give each one its area so "the cameras here" means the cameras placed here.
+	// Idempotent, so this is a no-op on every boot after the first.
+	if n, err := siteService.EnsurePointAreas(context.Background()); err != nil {
+		deps.Logger.Warnf("myseliasan.sites", "point-asset area backfill failed: %v", err)
+	} else if n > 0 {
+		deps.Logger.Infof("myseliasan.sites", "point-asset area backfill: repaired %d site(s)", n)
+	}
 	apis.NewSitesApi(api, *deps.Auth, controlSession, siteService)
 
 	// Availability (SLA) reporting over the recorded history. Mounted on the nodes API

@@ -37,6 +37,20 @@ floor-plan images, and node/camera placements on those plans — the indoor half
     regardless of which node owns the camera. This is the multi-node building drill-down
     (`BuildingFloorView` in `node_floor_view.js`) — clicking a building marker shows every camera
     physically inside it, whichever node happens to record each one.
+  - `EnsurePointArea(ctx, siteID, by)` — gives a `SiteKindPoint` site the ONE implicit area its
+    cameras are pinned to (a generated blank `pointAreaWidth`×`pointAreaHeight` = 600×400 canvas
+    named `"At this point"`, via `AddBlankFloor`), and returns it. Idempotent: a point asset that
+    already has an area (`len(ListFloors(...)) > 0`) gets that one back untouched; a non-point site
+    is left alone (`nil, nil`) since its areas are the operator's to make. `CreateSite` calls this
+    for a new point asset right after the insert (best-effort — a failure there is repaired by the
+    boot-time backfill below, not fatal to the create). Exists because a point asset used to own no
+    area at all, so nothing could be pinned to it, and the map fell back to attributing **every
+    camera on every appliance assigned to it** — wrong whenever one recorder feeds more than one
+    place, which is the normal case.
+  - `EnsurePointAreas(ctx)` — the boot-time backfill: walks every site, calls the same
+    `AddBlankFloor` for each `SiteKindPoint` site that still has zero floors, and returns how many
+    it repaired. Idempotent (a no-op on every boot after the first), called unconditionally from
+    `app.go` right after `NewSiteService` — see `app/app.go.md`.
 - **Floors** — `ListFloors`/`GetFloor`/`UpdateFloor`/`DeleteFloor`, plus:
   - `AddFloor(ctx, siteID, name, img, contentType, design, by)` — the **uploaded-image** path;
     thin wrapper over `addFloorBytes` (below) with `keepBg = (design == "")` (a plain uploaded

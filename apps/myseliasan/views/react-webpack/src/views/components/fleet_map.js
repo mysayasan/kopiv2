@@ -4,9 +4,9 @@ import { useT, Ico, Tabs } from '@shared';
 import { api, apiBase } from '../lib/helpers';
 import { nodeTone, nodeToneKey, TONES } from '../lib/fleet_status';
 import { BuildingFloorView, CameraWindow, MediaWindow } from './node_floor_view';
-import { AssetWizard, SiteDialog } from './asset_wizard';
+import { AssetWizard } from './asset_wizard';
 import { BuildingEditorDialog } from './building_editor_dialog';
-import { KIND_BUILDING, KIND_OUTDOOR, KIND_POINT, KIND_ORDER, normKind, hasPlans, siteGlyph } from './site_kinds';
+import { KIND_BUILDING, KIND_OUTDOOR, KIND_POINT, KIND_ORDER, normKind, hasDrawablePlan, siteGlyph } from './site_kinds';
 import { nodeKindOf } from './layout';
 
 // OpenLayers, driven directly through refs (no React wrapper — see the note in Phase 0).
@@ -451,38 +451,6 @@ function NodeCameraPopup({ node, nowSec, onOpenNode, onPlay, onOpenMedia, onLoca
 }
 NodeCameraPopup.propTypes = { node: PropTypes.object, nowSec: PropTypes.number, onOpenNode: PropTypes.func, onPlay: PropTypes.func, onOpenMedia: PropTypes.func, onLocate: PropTypes.func, onAck: PropTypes.func, onClose: PropTypes.func };
 
-// SiteAssetPopup is what a POINT asset (a junction, a gate, a pole) opens: it has no plan to drill
-// into, so the marker answers "what is mounted here?" instead. With exactly one appliance the map
-// skips this and opens that appliance's device card directly — this card is for the none and
-// several cases, where jumping to "the" appliance would be a guess.
-function SiteAssetPopup({ site, nodes, nowSec, onOpenNode, onClose }) {
-  const t = useT();
-  return (
-    <div className="mp-card" role="dialog" aria-label={site.name}>
-      <div className="mp-head">
-        <span className="mp-id as-static">
-          <span className="mp-avatar as-glyph" aria-hidden="true">{siteGlyph(site)}</span>
-          <span className="mp-title" title={site.name}>{site.name}</span>
-        </span>
-        <button type="button" className="icon-button mp-close" onClick={onClose} aria-label={t('nset.close')}><Ico n="x" sz={14} /></button>
-      </div>
-      <div className="mp-solo-head"><Ico n="cpu" sz={13} /> {t('map.appliancesHere')} {nodes.length > 0 ? <span className="mp-tab-count">{nodes.length}</span> : null}</div>
-      <div className="mp-body">
-        {nodes.length === 0 ? (
-          <div className="mp-empty"><Ico n="cpu" sz={22} /><span>{t('map.noAppliancesHere')}</span></div>
-        ) : nodes.map((n) => (
-          <button key={n.nodeId} type="button" className="mp-cam" onClick={() => onOpenNode(n)}>
-            <span className="cam-dot" style={{ background: nodeTone(n, nowSec).color }} />
-            <span className="mp-cam-name">{n.name || n.nodeId}</span>
-            <Ico n="chev-right" sz={12} />
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-SiteAssetPopup.propTypes = { site: PropTypes.object, nodes: PropTypes.array, nowSec: PropTypes.number, onOpenNode: PropTypes.func, onClose: PropTypes.func };
-
 // MapPopupFrame positions the node popup relative to the pin's VIEWPORT coordinates (x, y) and
 // keeps it fully on screen: centred over the pin and floated above it, but dropped below when the
 // header would clip the top edge, and clamped horizontally + vertically so it never spills out —
@@ -618,9 +586,6 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   placingRef.current = placing;
   // Camera popup: the node whose pin was clicked + where to anchor the card.
   const [popup, setPopup] = useState(null); // { node, x, y }
-  // A point asset's appliance chooser: shown when a junction/pole has none or several appliances,
-  // since there is no single device card to jump straight to.
-  const [sitePopup, setSitePopup] = useState(null); // { site, nodes, x, y }
   // Drill-down: the node whose floor plan is open (with its cameras), or null for the map.
   const [drill, setDrill] = useState(null); // { node, floorplans }
   // Live footage windows: several can be open at once (each its own floating window). Opened
@@ -635,7 +600,6 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   const [notifByNode, setNotifByNode] = useState({});
   const [notifByCam, setNotifByCam] = useState({}); // "nodeId::cameraId" -> { count, sev } — building attribution
   const [camHealth, setCamHealth] = useState({}); // "nodeId::cameraId" -> health string ('online'|'offline'|…)
-  const [camsByNode, setCamsByNode] = useState({}); // nodeId -> ["nodeId::cameraId", …] — a point asset's cameras
   const pinLayerRef = useRef(null);
   const notifReloadRef = useRef(null); // the notif-tally loader, so an ack can refresh pin badges now
   // Buildings (sites) are the OTHER thing on the map — a building is where cameras physically live,
@@ -653,7 +617,6 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   // also the re-entry point for an EXISTING building (from the rail or the drill-down).
   const [wizardOpen, setWizardOpen] = useState(false);
   const [editorSite, setEditorSite] = useState(null);
-  const [renameSite, setRenameSite] = useState(null); // a point asset being renamed (it has no editor)
   const [busy, setBusy] = useState(false); // a building create/save is in flight
   const buildingSourceRef = useRef(null);
   const buildingLayerRef = useRef(null);
@@ -727,31 +690,30 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   useEffect(() => {
     let live = true;
     const nodeIds = Array.from(new Set(sites.filter((s) => s.site && s.site.mapPlaced).flatMap((s) => resolvedNodeIds(s))));
-    if (nodeIds.length === 0) { setCamHealth({}); setCamsByNode({}); return undefined; }
+    if (nodeIds.length === 0) { setCamHealth({}); return undefined; }
     Promise.all(nodeIds.map((nid) => api(`/api/nodes/${encodeURIComponent(nid)}/proxy/api/cameras?limit=200`, { noRedirect: true })
       .then((r) => ({ nid, list: r.ok ? (Array.isArray(r.body) ? r.body : (r.body?.items || [])) : [] }))
       .catch(() => ({ nid, list: [] }))))
       .then((results) => {
         if (!live) return;
         const m = {};
-        const byNode = {};
         results.forEach(({ nid, list }) => {
-          byNode[nid] = list.map((c) => `${nid}::${c.id}`);
           list.forEach((c) => { m[`${nid}::${c.id}`] = (c.healthStatus || '').toLowerCase(); });
         });
         setCamHealth(m);
-        setCamsByNode(byNode);
       });
     return () => { live = false; };
   }, [sites, resolvedNodeIds]);
 
-  // A site's cameras. A building/outdoor area knows them from its plan placements; a point asset has
-  // no plan, so its cameras are simply every camera on the appliance assigned to it.
-  const resolvedCamKeys = useCallback((row) => {
-    const keys = row.cameraKeys || [];
-    if (keys.length > 0 || !row.site || hasPlans(row.site.kind)) return keys;
-    return resolvedNodeIds(row).flatMap((nid) => camsByNode[nid] || []);
-  }, [resolvedNodeIds, camsByNode]);
+  // A site's cameras are the ones PLACED there — for every kind, including a point asset, which
+  // now owns an implicit area to pin them to.
+  //
+  // This used to fall back, for a point asset, to "every camera on every appliance assigned here".
+  // That is wrong whenever one recorder feeds more than one place, which is the normal case: an
+  // NVR with cameras in two buildings, assigned to a junction, made the junction claim all of
+  // them. A camera holds exactly one pin fleet-wide, so a placement is the only honest answer to
+  // "what is here".
+  const resolvedCamKeys = useCallback((row) => row.cameraKeys || [], []);
 
 
   // Open a live footage window for a camera near the click (x, y = viewport coords). Adds a new
@@ -836,33 +798,21 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   const openNodeRef = useRef(openNode);
   openNodeRef.current = openNode;
 
-  // Clicking a site opens the right thing for what it IS. A building or outdoor area opens its
-  // plans with EVERY camera on them (multi-node) — the digital-twin drill, shown even with no plans
-  // yet. A point asset has no plan to open, so it opens the device card of the appliance mounted
-  // there instead; with several appliances it first offers the choice, with none it says so.
+  // Clicking a site opens its plans with EVERY camera on them (multi-node) — the digital-twin
+  // drill, shown even with no plans yet. Every kind takes this path now, a point asset included:
+  // it owns one implicit area, so the cameras on that junction or gate are pinned things you can
+  // see and click, not an inferred list borrowed from whichever appliance was assigned to it.
   // focusFloorId opens the drill-down on a SPECIFIC area (clicked in the rail), rather than the
   // default first plan — otherwise clicking one area could land you on the other.
   const openBuilding = useCallback(async (site, px, focusFloorId) => {
-    if (!hasPlans(site.kind)) {
-      const rect = containerRef.current ? containerRef.current.getBoundingClientRect() : { left: 0, top: 0 };
-      const x = Math.round(rect.left + (px ? px[0] : 0));
-      const y = Math.round(rect.top + (px ? px[1] : 0));
-      const mine = nodesBySiteId[site.id] || [];
-      setDrill(null);
-      if (mine.length === 1) { setSitePopup(null); setPopup({ node: mine[0], x, y }); return; }
-      setPopup(null);
-      setSitePopup({ site, nodes: mine, x, y });
-      return;
-    }
     let plans = [];
     try {
       const res = await api(`/api/sites/${site.id}/floorplans`);
       plans = res.ok && Array.isArray(res.body) ? res.body.filter((p) => p && p.floor) : [];
     } catch (_) { /* open empty */ }
     setPopup(null);
-    setSitePopup(null);
     setDrill({ kind: 'site', site, floorplans: plans, focusFloorId });
-  }, [nodesBySiteId]);
+  }, []);
   const openBuildingRef = useRef(openBuilding);
   openBuildingRef.current = openBuilding;
 
@@ -963,52 +913,20 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
       // thenEdit: the map click that drops the marker also opens the editor, so "add an asset" ends
       // on the plan surface rather than back at a map with an unexplained new marker. A point asset
       // has no editor, so it simply lands on the map and waits for an appliance to be assigned.
-      setPlacing({ kind: 'site', id: created.id, name: created.name, siteKind: normKind(siteKind), thenEdit: hasPlans(siteKind) });
+      setPlacing({ kind: 'site', id: created.id, name: created.name, siteKind: normKind(siteKind), thenEdit: true });
       if (onToast) onToast(t('bld.createdPlaceIt', { name: created.name }), 'success');
     } catch (_) {
       if (onToast) onToast(t('map.siteCreateFailed'), 'error');
     } finally { setBusy(false); }
   }, [onToast, t]);
 
-  // Rename / re-glyph an asset in place. A building or outdoor area gets this inside its editor;
-  // a point asset has no editor, so the rail's pencil opens this dialog directly.
-  const saveSiteMeta = useCallback(async (site, name, icon) => {
-    setBusy(true);
-    try {
-      const res = await api(`/api/sites/${site.id}`, { method: 'PUT', body: JSON.stringify({ name, description: site.description || '', icon, kind: normKind(site.kind), ordinal: site.ordinal || 0 }) });
-      if (!res.ok) throw new Error();
-      setRenameSite(null);
-      if (siteReloadRef.current) siteReloadRef.current();
-      if (onToast) onToast(t('map.siteUpdated'), 'success');
-    } catch (_) {
-      if (onToast) onToast(t('map.error'), 'error');
-    } finally { setBusy(false); }
-  }, [onToast, t]);
-
-  // Delete an asset from the rename dialog (used for point assets, which have no editor). Takes its
-  // floor plans and camera placements with it; guarded by a confirm.
-  const deleteSiteMeta = useCallback(async (site) => {
-    if (!window.confirm(t('map.deleteAssetConfirm', { name: site.name }))) return;
-    setBusy(true);
-    try {
-      const res = await api(`/api/sites/${site.id}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error();
-      setRenameSite(null);
-      if (siteReloadRef.current) siteReloadRef.current();
-      if (onToast) onToast(t('map.assetDeleted', { name: site.name }), 'success');
-    } catch (_) {
-      if (onToast) onToast(t('map.error'), 'error');
-    } finally { setBusy(false); }
-  }, [onToast, t]);
-
   // Open the authoring dialog for an asset. Takes the site row (id/name/icon/kind) from wherever the
-  // operator asked — rail row, drill-down header, or the drop that just finished. A point asset has
-  // no plan surface to author, so for it "edit" means renaming/re-glyphing the marker.
+  // operator asked — rail row, drill-down header, or the drop that just finished. A point asset
+  // opens the same editor as everything else: it has no walls to draw, but it has an area to drop
+  // its cameras onto and aim them, which is the only way its cameras get placed at all.
   const openEditor = useCallback((site) => {
     setPopup(null);
-    setSitePopup(null);
     setDrill(null);
-    if (!hasPlans(site.kind)) { setRenameSite(site); return; }
     setEditorSite(site);
   }, []);
   const openEditorRef = useRef(openEditor);
@@ -1239,11 +1157,10 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
           openNodeRef.current(node, px);
         } else {
           setPopup(null);
-          setSitePopup(null);
         }
       });
       // Close the popups when the map moves (they would otherwise float away from their marker).
-      map.on('movestart', () => { setPopup(null); setSitePopup(null); });
+      map.on('movestart', () => setPopup(null));
 
       // Track whether the current view is beyond every downloaded region's coverage (→ offer a
       // download of the area you're looking at).
@@ -1414,7 +1331,8 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
     const kind = normKind(s.kind);
     const onMap = !!s.mapPlaced;
     const worst = siteToneKey(row);
-    const expandable = hasPlans(kind);
+    // A point asset expands to nothing: its single area is implicit and unnamed to the operator.
+    const expandable = hasDrawablePlan(kind);
     const isOpen = expandable && !!expandedSites[s.id];
     const fl = floorsBySite[s.id];
     const placingThis = placing && placing.kind === 'site' && placing.id === s.id;
@@ -1568,17 +1486,6 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
               />
             </MapPopupFrame>
           ) : null}
-          {sitePopup ? (
-            <MapPopupFrame x={sitePopup.x} y={sitePopup.y}>
-              <SiteAssetPopup
-                site={sitePopup.site}
-                nodes={sitePopup.nodes}
-                nowSec={nowSec}
-                onOpenNode={(n) => { const { x, y } = sitePopup; setSitePopup(null); setPopup({ node: n, x, y }); }}
-                onClose={() => setSitePopup(null)}
-              />
-            </MapPopupFrame>
-          ) : null}
           {drill ? (
             <div className="fleet-map-drill">
               <BuildingFloorView site={drill.site} floorplans={drill.floorplans} nodesById={nodesById} notifByCam={notifByCam} focusCameraId={drill.focusCameraId} focusFloorId={drill.focusFloorId} onBack={() => { const s = drill.site; setDrill(null); flyToSite(s); }} onPlay={playCamera} onRemovePlacements={removeGhostPlacements} onEdit={openEditor} />
@@ -1610,18 +1517,6 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
 
       {wizardOpen ? (
         <AssetWizard busy={busy} onCreate={createBuilding} onCancel={() => setWizardOpen(false)} />
-      ) : null}
-
-      {renameSite ? (
-        <SiteDialog
-          initialName={renameSite.name}
-          initialIcon={renameSite.icon}
-          kind={renameSite.kind}
-          busy={busy}
-          onSave={(name, icon) => saveSiteMeta(renameSite, name, icon)}
-          onDelete={() => deleteSiteMeta(renameSite)}
-          onCancel={() => setRenameSite(null)}
-        />
       ) : null}
 
       {editorSite ? (

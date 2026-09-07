@@ -211,8 +211,6 @@ export default {
   'map.assetName': 'Nama',
   'map.assetIcon': 'Ikon',
   'map.noAssetsYet': 'Belum ada apa-apa pada peta — tambah bangunan, kawasan atau aset titik untuk bermula.',
-  'map.appliancesHere': 'Peranti di sini',
-  'map.noAppliancesHere': 'Belum ada peranti ditugaskan di sini — tugaskan satu dalam senarai sisi.',
   'map.siteUpdated': 'Bangunan dikemas kini.',
   'map.deleteFloor': 'Padam lantai ini',
   'map.siteCreateFailed': 'Tidak dapat mencipta tapak.',

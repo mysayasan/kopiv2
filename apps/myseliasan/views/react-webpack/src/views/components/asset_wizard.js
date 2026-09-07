@@ -3,7 +3,7 @@ import PropTypes from 'prop-types';
 import { useT, Ico } from '@shared';
 import {
   KIND_BUILDING, KIND_OUTDOOR, KIND_POINT, KIND_ORDER, KIND_ICO,
-  normKind, multiPlan, hasPlans, iconsFor, defaultIconFor,
+  normKind, multiPlan, hasDrawablePlan, iconsFor, defaultIconFor,
 } from './site_kinds';
 
 // Re-exported so the existing callers keep working now that the palette is per-kind.
@@ -46,7 +46,7 @@ export function AssetWizard({ busy, onCreate, onCancel }) {
     //  - outdoor : exactly one ground plan.
     //  - building: one plan, or the areas the operator listed.
     let plans = [];
-    if (hasPlans(kind)) {
+    if (hasDrawablePlan(kind)) {
       if (askAreas && multi) plans = trimmedAreas;
       else plans = [kind === KIND_OUTDOOR ? t('bld.areaGrounds') : t('bld.areaMain')];
     }

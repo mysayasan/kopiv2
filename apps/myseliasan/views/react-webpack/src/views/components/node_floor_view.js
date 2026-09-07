@@ -6,6 +6,7 @@ import { NodeCameraTile } from './node_manager';
 import { PTZRing } from './nodecam/ptz';
 import { nodeTone, TONES } from '../lib/fleet_status';
 import { carveSeg, rectCenter, rectSize } from './plan_geometry';
+import { showsAreaBar, siteGlyph } from './site_kinds';
 
 // FloorPlanGrid draws the AUTHORED geometry (walls, openings, stairs, raised floors, parking) over
 // the plan image in the read-only 2D view. The editor stores this as vectors in floor.grid and only
@@ -711,7 +712,9 @@ export function BuildingFloorView({ site, floorplans, nodesById = {}, notifByCam
         </button>
         <span className="floor-view-title">
           <span className="rail-dot" style={{ background: siteTone.color }} />
-          <span className="floor-view-emoji">{site.icon || '🏢'}</span> {site.name} · {floor.name}
+          {/* A point asset's single area is implicit and unnamed by the operator, so the title is
+              the junction/gate alone — "Main gate · At this point" reads as a bug, not a location. */}
+          <span className="floor-view-emoji">{siteGlyph(site)}</span> {site.name}{showsAreaBar(site.kind) ? ` · ${floor.name}` : ''}
         </span>
         {floorplans.length > 1 ? (
           <div className="floor-view-switch">

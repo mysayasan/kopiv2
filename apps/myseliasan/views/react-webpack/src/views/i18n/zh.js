@@ -211,8 +211,6 @@ export default {
   'map.assetName': '名称',
   'map.assetIcon': '图标',
   'map.noAssetsYet': '地图上还没有任何内容 — 添加建筑、户外区域或点位资产即可开始。',
-  'map.appliancesHere': '此处的设备',
-  'map.noAppliancesHere': '此处尚未分配设备 — 请在侧栏列表中分配一台。',
   'map.siteUpdated': '建筑已更新。',
   'map.deleteFloor': '删除此楼层',
   'map.siteCreateFailed': '无法创建站点。',

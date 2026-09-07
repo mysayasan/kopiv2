@@ -213,8 +213,6 @@ export default {
   'map.assetName': 'Name',
   'map.assetIcon': 'Icon',
   'map.noAssetsYet': 'Nothing on the map yet — add a building, an area or a point asset to get started.',
-  'map.appliancesHere': 'Appliances here',
-  'map.noAppliancesHere': 'No appliance assigned here yet — assign one in the side list.',
   'map.siteUpdated': 'Building updated.',
   'map.deleteFloor': 'Delete this floor',
   'map.siteCreateFailed': 'Could not create the site.',

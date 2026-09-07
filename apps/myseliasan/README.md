@@ -68,24 +68,28 @@ created, positioned and authored entirely from it:
   silhouette (disc/square/diamond) so the shape reads even when the name label doesn't: a
   **building** (has storeys, drawn with walls/doors/stairs and stacked by elevation in 3D), an
   **outdoor area** (one open ground surface — a park, yard, campus, car park — with exactly one
-  plan, no "how many areas" question), or a **point asset** (a junction, pole, gate, barrier — no
-  plan at all; its cameras reach it only through the appliance(s) assigned to it). A node appliance
-  **never** gets its own pin — a site, not the node that happens to record its cameras, is the
-  map's true anchor for "where is this camera physically": a node's own box can sit in a rack,
-  another building, or off-site, while its cameras are placed on that site's floor plans (or, for a
-  point asset, simply assigned to it) regardless. There is no standalone/off-site node placement
-  any more (the old "place on map" button, node drag-to-place, and the Nodes-layer toggle are all
-  gone; the node-pin map layer is kept in the code but is fed no data and stays hidden). Drag a
-  site's marker to reposition it (`PUT /api/sites/{id}/position`). An unplaced site (never dragged
-  onto the map) stays in the rail rather than plotted at `(0,0)` — see `Site.MapPlaced` in
-  `entities/site.go.md`. A marker takes the *worst* status among the nodes that answer for it (own
-  cameras inside it, or are assigned to it for a point asset), and its unread-notification badge
-  sums only those cameras' alerts (`GET /api/notifications/tally?unread=true`), never a whole
-  node's — a node recording cameras in several sites would otherwise over-count every one of them.
-  Clicking a building or outdoor marker opens its **floor plans with every camera inside, from any
-  node** (`BuildingFloorView`, see below); clicking a point marker instead opens the device card of
-  the appliance mounted there (or a chooser when several share the point, or an empty state when
-  none do) — there is no plan surface for a point asset to drill into.
+  plan, no "how many areas" question), or a **point asset** (a junction, pole, gate, barrier —
+  nothing to draw walls on, so no *authored* plan; but it still owns exactly ONE **implicit** area,
+  server-generated (`ISiteService.EnsurePointArea`, `services/sites.go.md`), so its cameras are
+  **pinned** to it the same as everywhere else, not inferred from whichever appliance happens to be
+  assigned to it). A node appliance **never** gets its own pin — a site, not the node that happens
+  to record its cameras, is the map's true anchor for "where is this camera physically": a node's
+  own box can sit in a rack, another building, or off-site, while its cameras are placed on that
+  site's floor plans (for a point asset, its one implicit area) regardless. There is no
+  standalone/off-site node placement any more (the old "place on map" button, node drag-to-place,
+  and the Nodes-layer toggle are all gone; the node-pin map layer is kept in the code but is fed no
+  data and stays hidden). Drag a site's marker to reposition it (`PUT /api/sites/{id}/position`).
+  An unplaced site (never dragged onto the map) stays in the rail rather than plotted at `(0,0)` —
+  see `Site.MapPlaced` in `entities/site.go.md`. A marker takes the *worst* status among the nodes
+  that own a camera pinned to it, and its unread-notification badge sums only those cameras' alerts
+  (`GET /api/notifications/tally?unread=true`), never a whole node's — a node recording cameras in
+  several sites (a point asset among them) would otherwise over-count every one of them; this used
+  to be a real bug for a point asset specifically, since with no area of its own it fell back to
+  claiming every camera on its assigned appliance(s), correct only when that appliance recorded
+  nowhere else. Clicking any marker — building, outdoor or point alike — opens its **floor plans
+  with every camera inside, from any node** (`BuildingFloorView`, see below); a point asset's
+  editor has no area tabs to switch between (it owns exactly one, unnamed), but the plan itself,
+  the camera palette and the drill-down are otherwise identical to a building's.
 - **Site-centric rail**: the side rail lists **every site**, grouped by kind (buildings, outdoor
   areas, point assets — a stable order so the headings don't jump around) — placed and unplaced —
   each with a status dot (worst among the nodes that answer for it) and camera count. A building
@@ -94,8 +98,8 @@ created, positioned and authored entirely from it:
   building editor changes its areas) — clicking a floor row jumps straight into the building editor
   on that specific area (not just the first one). A placed row flies the map to it on click; an
   unplaced one enters placing mode the same way it always did. A point asset's row has an **edit**
-  (pencil) button that opens a small rename/re-glyph dialog directly, since it has no editor to
-  jump into. Nodes not yet assigned to any site appear in a separate **"Appliances"** section below
+  (pencil) button too, opening the same `BuildingEditorDialog` as any other kind — it has no walls
+  to draw, but it has its one implicit area to drop cameras onto and aim. Nodes not yet assigned to any site appear in a separate **"Appliances"** section below
   the site list, each row offering a site-selector dropdown (`PUT /api/nodes/{id}/building`) —
   assigning one is now the *only* way an appliance is represented on the map, since it stops
   needing a pin of its own the moment it belongs somewhere.
@@ -104,15 +108,16 @@ created, positioned and authored entirely from it:
   added** — building / outdoor area / point asset — because the kind decides everything after: a
   **glyph** picker drawn from that kind's own palette (`Site.Icon`, `site_kinds.js`), and, for a
   building only, whether it is a **single area** or has **several areas** (floors, wings, rooms —
-  "Ground floor", "1st floor", "Kitchen"); an outdoor area always gets exactly one ground plan and
-  a point asset gets none at all — there is no area question for either. Each area becomes a
-  `FloorPlan` row under the new `Site`. On save the site and its areas are created (`POST
-  /api/sites` with `{name, icon, kind}`, then one `POST /api/sites/{id}/areas` per area — each area
-  is a **generated blank white canvas**, not an upload) and the map enters placing mode so the
-  operator clicks/drags the marker onto its geographic spot; dropping it opens the building editor
-  for a building/outdoor area, so "add an asset" ends on the plan surface rather than back at a map
-  with an unexplained new marker — a point asset simply lands on the map with nothing further to
-  author until an appliance is assigned to it.
+  "Ground floor", "1st floor", "Kitchen"); an outdoor area always gets exactly one ground plan, and
+  a point asset gets none from the wizard — there is no area question for either. Each wizard-made
+  area becomes a `FloorPlan` row under the new `Site` (`POST /api/sites` with `{name, icon, kind}`,
+  then one `POST /api/sites/{id}/areas` per area — each area is a **generated blank white
+  canvas**, not an upload); a point asset instead gets its ONE **implicit** area made server-side
+  right after the insert (`ISiteService.EnsurePointArea`, a smaller 600×400 canvas the operator
+  never names), so it is never a site that cannot hold a camera. Either way the map then enters
+  placing mode so the operator clicks/drags the marker onto its geographic spot; dropping it opens
+  the building editor for **every** kind, point asset included, so "add an asset" always ends on
+  the plan surface rather than back at a map with an unexplained new marker.
 - **Authoring a building or outdoor area**: dropping (or re-opening) one opens
   `building_editor_dialog.js`, a near-fullscreen modal over the map: area tabs along the top
   (add/rename/delete an area — a single-plan outdoor area has none of this), a node/camera palette
@@ -154,10 +159,10 @@ created, positioned and authored entirely from it:
   to that same blank canvas (`DELETE /api/floors/{id}/image`) — walls, stairs, doors and camera
   placements all survive; only the picture is cleared (`FloorPlan.HasPlanImage` is what lets the
   editor know whether there is a plan to remove — see `entities/site.go.md`). Re-entry for an
-  existing building/outdoor area: an **edit** button on an unplaced site's rail row (it has no
-  marker to click into yet), and an **Edit plan** button in the read-only building drill-down
-  (`BuildingFloorView`, below). A point asset has no plan surface — its rail-row pencil opens the
-  small rename/re-glyph dialog instead (see "Site-centric rail" above).
+  existing building/outdoor/point asset: an **edit** button on an unplaced site's rail row (it has
+  no marker to click into yet), and an **Edit plan** button in the read-only building drill-down
+  (`BuildingFloorView`, below) — the same editor opens for a point asset too, just with its area
+  bar hidden (see "Site-centric rail" above).
 - **Floor plans**: an operator's placements (`NodePlacement`) are **myseliasan's own record**, not
   fetched from the node — that is deliberate: the live camera list is fetched over the tunnel and
   returns nothing when a node is offline, so a placement carries a name snapshot and stays

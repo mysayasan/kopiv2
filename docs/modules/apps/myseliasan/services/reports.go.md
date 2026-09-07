@@ -85,10 +85,16 @@ category and by the top-10 noisiest `Source`.
 
 One `H1` block per site (icon + name), each on `doc.AddPage()` after the first, with a
 `KeyValues` block (kind, description, coordinates when placed) and an "Appliances on site"
-table of nodes whose `SiteId` matches. A site whose kind has no plans
-(`!entities.HasPlans(s.Kind)` — a point asset) gets a note and skips straight to the next
-site. Otherwise every floor is fetched via `ISiteService.SiteFloorplans`, ordinal-sorted,
-and each gets its **own page** (`H1` = `"<site> — <floor>"`) with:
+table of nodes whose `SiteId` matches. A site whose kind has no **drawable** plan
+(`!entities.HasDrawablePlan(s.Kind)` — a point asset) gets a `H2 "Cameras at this point"`
+table instead of the floor-page loop below: every placement across the site's floors (in
+practice its one implicit area, `services.EnsurePointArea`) as a `Placement`/`Type`
+(Camera/Node)/`Coverage` (`<fov>° @ <heading>°`, or `—` with no `Fov`) row, or a
+`doc.Empty` note when nothing is pinned there yet — never a blank page, and never the old
+"it holds no floor plans; its cameras reach it through the owning node" claim, which was
+wrong whenever the owning appliance also recorded cameras elsewhere. Otherwise every floor
+is fetched via `ISiteService.SiteFloorplans`, ordinal-sorted, and each gets its **own page**
+(`H1` = `"<site> — <floor>"`) with:
 
 - `renderFloorPlan` — decrypts the plan image (`ISiteService.FloorImage`) and composites the
   camera pins + the authored wall/door/window/stairs geometry via
