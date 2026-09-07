@@ -126,6 +126,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-09-07 — mymatasan 1.151.0, myseliasan 1.85.0, core 1.114.0 (4961839)
+
+### Added
+
+- **mymatasan,myseliasan,infra,shared**: mymatasan's built-in manual ships its first real content using the diagram grammar landed in #240: a flow figure of the detection chain (frame -> models -> labels -> object classes -> rule -> alert) in 'How detection works', a flow figure walking the 'I get no alerts' checks in the order the prose already states in Troubleshooting, and in the Control plane article a seq figure of the adoption handshake plus a spec table naming the fleet's four ports (discovery/mTLS/control/media) where that section previously described them only in prose with no numbers. Structure (node ids, shapes, edges, spec values) is byte-identical across en/ms/zh/ar; only labels are translated, and the build guard now reports checking 4 figures across 4 languages. Using the grammar for real content exposed two renderer bugs, both fixed: a diamond ('ask') node was sized from the same text budget as rectangles and truncated a three-line question to an ellipsis; a sequence diagram's columns were sized from the actor names rather than the (much longer) message labels, truncating every message on the adoption figure. The four port numbers the new spec table states are no longer literals a reader has to trust: infra/pairing/packet.go gains exported DefaultDiscoveryPort/DefaultMTLSPort/DefaultControlPort/DefaultMediaPort constants (previously four unexported literals in four different packages), the three call sites (domain/shared/fleetnode/enrollment.go, apps/mymatasan/services/media_channel.go, apps/myseliasan/services/control_server.go) now reference them, and a new apps/mymatasan/manual/manual_test.go test (TestManualSpecValues) asserts the manual's table against those same constants -- the first live use of the manualcheck.SpecValues helper #240 shipped but nobody called yet.
 ## 2026-09-06 — myidsan 1.51.0, myiotsan 0.32.0, mymatasan 1.150.0, myseliasan 1.84.0 (a6795f0)
 
 ### Added
