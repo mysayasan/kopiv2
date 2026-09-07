@@ -90,3 +90,11 @@ issued by the fleet's own authority.
 
 The node **dials outward**. A node behind NAT at a remote site therefore needs no inbound port
 forwarding, which is usually what decides whether that site can be managed remotely at all.
+
+```spec
+title : The fleet's own ports, and which end opens the connection
+row discovery `49531/udp` : Multicast discovery on the local network. Only a control plane holding the same fleet key can see a node.
+row mtls `49532/tcp` : The node listens. This control plane dials in to release it and to check it is alive.
+row control `49533/tcp` : The node dials out to this control plane and holds the channel open for commands — which is why a remote site behind NAT needs no inbound forwarding.
+row media `49534/tcp` : The node dials out to relay live video, kept separate so it never competes with commands.
+```

@@ -56,6 +56,23 @@ itu, bukan peranan yang lebih luas di sini.
 Jaminan praktikalnya berbaloi dinyatakan dengan jelas: apabila nod menolak sesuatu arahan, **tiada
 apa yang dihantar**. Ia menyatakannya, dan peranti itu langsung tidak disentuh.
 
+```flow
+title : Dua kebenaran, diputuskan di dua tempat berbeza
+step  open : Anda membuka halaman sesebuah nod
+ask   reach : Adakah satah kawalan ini membenarkan anda mencapai nod itu?
+end   noreach : Ditolak di sini
+step  tunnel : Satah kawalan menerowong halaman itu kepada anda
+ask   grant => users-and-roles#node-access : Adakah pemberian anda pada nod itu membenarkan tindakan itu?
+end   refused : Ditolak oleh nod — dan tiada apa-apa dihantar
+ok    done : Nod melakukannya
+open -> reach
+reach -> noreach : tidak
+reach -> tunnel : ya
+tunnel -> grant
+grant -> refused : tidak
+grant -> done : ya
+```
+
 ## Halaman kosong mungkin bermakna tidak dapat dihubungi {#offline}
 
 Jika nod berada di luar talian, halaman ini tiada apa untuk dibaca.

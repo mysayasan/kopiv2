@@ -41,10 +41,11 @@ func SpecValues(t *testing.T, lib *manual.Library, want map[string]string)
 
 Separate from `Library` because it needs values only the calling **app** can name from its
 own source — it is opt-in, called from an app's own manual test alongside
-`manualcheck.Library`. `mymatasan` is the first (only) caller, in
+`manualcheck.Library`. `mymatasan` was the first caller, in
 `apps/mymatasan/manual/manual_test.go`'s `TestManualSpecValues`, asserting the
 `control-plane` article's port table against the four exported constants in
-`infra/pairing/packet.go` (`infra/pairing/packet.go.md`):
+`infra/pairing/packet.go` (`infra/pairing/packet.go.md`). `myseliasan` calls it the same
+way, from the other side of the same handshake — see below.
 
 ```go
 manualcheck.SpecValues(t, manual.Library, map[string]string{
@@ -83,4 +84,13 @@ shipping none.
   `` ```spec `` (the fleet port table) in `570-control-plane.md`, byte-identical in
   structure across `en`/`ms`/`zh`/`ar`. `Diagrams` reports "checked 4 figures across 4
   languages" for that app's suite.
+- `myseliasan`'s manual ships three figures too: a `` ```flow `` of the two-permission split
+  in `150-node-pages.md` (`{#authorization}` — control plane decides *reach*, the node
+  decides *do*, and a node refusal means nothing was sent), a `` ```flow `` in
+  `160-failover.md` (`{#takeover}`) showing a staged camera is not a camera until you take
+  over, and the one `` ```spec `` (the same four fleet ports, described from the control
+  plane's side) in `110-adopting-nodes.md` (`{#ports}`), byte-identical in structure across
+  `en`/`ms`/`zh`/`ar`. `Diagrams` reports "checked 3 figures across 4 languages" for that
+  app's suite. Both apps' `SpecValues` calls assert the **same** `pairing.Default*Port`
+  constants, so the two manuals' port tables cannot drift from each other either.
 - Author-facing guide: `docs/MANUAL_DIAGRAMS.md`.

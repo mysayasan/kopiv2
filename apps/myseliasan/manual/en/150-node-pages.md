@@ -55,6 +55,23 @@ broader role here.
 The practical guarantee is worth stating plainly: when the node refuses a command, **nothing was
 sent**. It says so, and the device was never touched.
 
+```flow
+title : Two permissions, decided in two different places
+step  open : You open a node's pages
+ask   reach : Does this control plane let you reach that node?
+end   noreach : Refused here
+step  tunnel : The control plane tunnels the pages to you
+ask   grant => users-and-roles#node-access : Does your grant on that node allow the action?
+end   refused : Refused by the node — and nothing was sent
+ok    done : The node does it
+open -> reach
+reach -> noreach : no
+reach -> tunnel : yes
+tunnel -> grant
+grant -> refused : no
+grant -> done : yes
+```
+
 ## An empty page may mean unreachable {#offline}
 
 If the node is offline, these pages have nothing to read.

@@ -92,3 +92,11 @@ sijil yang dikeluarkan oleh pihak berkuasa armada itu sendiri.
 
 Nod **mendail keluar**. Nod di sebalik NAT di tapak jauh oleh itu tidak memerlukan pemajuan port
 masuk, yang biasanya menjadi penentu sama ada tapak itu boleh diurus dari jauh langsung.
+
+```spec
+title : Port milik armada sendiri, dan hujung mana yang membuka sambungan
+row discovery `49531/udp` : Penemuan multicast pada rangkaian tempatan. Hanya satah kawalan yang memegang kunci armada sama dapat melihat sesebuah nod.
+row mtls `49532/tcp` : Nod itu mendengar. Satah kawalan ini mendail masuk untuk melepaskannya dan untuk memeriksa ia masih hidup.
+row control `49533/tcp` : Nod mendail keluar kepada satah kawalan ini dan mengekalkan saluran terbuka untuk arahan — sebab itu tapak jauh di sebalik NAT tidak perlu pemajuan port masuk.
+row media `49534/tcp` : Nod mendail keluar untuk menyampaikan video langsung, diasingkan supaya ia tidak pernah bersaing dengan arahan.
+```

@@ -94,6 +94,22 @@ Ambil alih melaporkan **bagi setiap kamera** apa yang sebenarnya berlaku, dibaca
 perakam dan bukan diandaikan. Kamera yang sedang merakam menyatakannya. Kamera yang strimnya
 tidak dapat dibuka menyatakan hal itu, berserta sebabnya, dan bukan dikira sebagai kejayaan.
 
+```flow
+title : Kamera yang dipentaskan bukan kamera sehingga anda ambil alih
+step  staged : Kamera dipentaskan pada peranti simpanan
+step  dormant : Tidak dicipta, tidak disenaraikan, tidak diperiksa kesihatan, tidak dirakam
+ask   stopped : Adakah perakam telah berhenti?
+step  idle : Tiada apa-apa berubah pada peranti simpanan
+ok    over : Ambil alih — peranti simpanan mencipta kamera itu dan merakamnya
+step  report : Dilaporkan bagi setiap kamera, dibaca semula daripada perakam dan bukan diandaikan
+staged -> dormant
+dormant -> stopped
+stopped -> idle : tidak
+stopped -> over : ya
+idle -> stopped : terus menunggu
+over -> report
+```
+
 ## Menyerahkan kamera semula {#failback}
 
 Apabila perakam sihat kembali, tekan **Serah semula**. Peranti simpanan akan berhenti merakam

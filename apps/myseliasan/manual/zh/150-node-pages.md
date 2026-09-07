@@ -47,6 +47,23 @@ operator 还能看到遥测历史并确认告警；admin 才能向设备下发�
 有一条实际保证值得明确说出来：当节点拒绝一条命令时，**什么都没有被发送**。它会明确告知，而设备
 从始至终未被触碰。
 
+```flow
+title : 两种权限，在两个不同的地方判定
+step  open : 你打开某个节点的页面
+ask   reach : 这个控制平面允许你访问该节点吗？
+end   noreach : 在这里被拒绝
+step  tunnel : 控制平面把页面隧道转发给你
+ask   grant => users-and-roles#node-access : 你在该节点上的授权允许这个操作吗？
+end   refused : 被节点拒绝——而且什么都没有被发送
+ok    done : 节点执行它
+open -> reach
+reach -> noreach : 否
+reach -> tunnel : 是
+tunnel -> grant
+grant -> refused : 否
+grant -> done : 是
+```
+
 ## 空白页面可能意味着不可达 {#offline}
 
 如果节点处于离线状态，这些页面就没有东西可读。
