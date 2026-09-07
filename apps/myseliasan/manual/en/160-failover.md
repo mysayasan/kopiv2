@@ -90,6 +90,22 @@ The takeover reports **per camera** what actually happened, read back from the r
 than assumed. A camera that is recording says so. A camera whose stream could not be opened
 says that instead, with the reason, rather than being counted as a success.
 
+```flow
+title : A staged camera is not a camera until you take over
+step  staged : Cameras staged on the spare
+step  dormant : Not created, not listed, not health-checked, not recorded
+ask   stopped : Has the recorder stopped?
+step  idle : Nothing changes on the spare
+ok    over : Take over — the spare creates the cameras and records them
+step  report : Reported per camera, read back from the recorder rather than assumed
+staged -> dormant
+dormant -> stopped
+stopped -> idle : no
+stopped -> over : yes
+idle -> stopped : keep waiting
+over -> report
+```
+
 ## Handing the cameras back {#failback}
 
 When the recorder is healthy again, press **Hand back**. The spare stops recording those

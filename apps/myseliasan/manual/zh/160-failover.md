@@ -73,6 +73,22 @@ order: 160
 接管会**逐个摄像头**报告实际发生了什么，这是从录制器读回来的，而不是假定的。正在录制的摄像头会
 如实说明；无法打开码流的摄像头会说明这一点并给出原因，而不是被算作成功。
 
+```flow
+title : 暂存的摄像头在你接管之前不是摄像头
+step  staged : 摄像头暂存在备用设备上
+step  dormant : 不创建、不列出、不做健康检查、不录制
+ask   stopped : 录像机停机了吗？
+step  idle : 备用设备上什么都不变
+ok    over : 接管——备用设备创建这些摄像头并开始录制
+step  report : 逐个摄像头报告，从录制器读回而不是假定
+staged -> dormant
+dormant -> stopped
+stopped -> idle : 否
+stopped -> over : 是
+idle -> stopped : 继续等待
+over -> report
+```
+
 ## 交还摄像头 {#failback}
 
 录像机恢复正常后，点击**交还**。备用设备就会停止录制那些摄像头。
