@@ -43,6 +43,33 @@ order: 910
 
 单一最常见的答案是第一条：录像打开了，而从来没有创建过任何规则。录像产出的是画面，不是告警。
 
+```flow
+title : 按此顺序排查——第一个「否」就是答案
+step  none : 收不到任何告警
+ask   rule : 这台摄像机上有规则吗？
+end   norule : 创建一条。录像产出的是画面，不是告警。
+ask   armed : 它启用了吗，且在时段内吗？
+end   disarmed : 启用它，或放宽时段
+ask   online => camera-health : 摄像机在线吗？
+end   offline : 先修好摄像机
+ask   ai : AI 运行时和模型在位吗？
+end   noai : 安装运行时和一个模型
+ask   deliver => notification-destinations : 配置了送达目标吗？
+end   nodeliver : 添加一个送达目标
+ok    good : 告警应当能收到
+none -> rule
+rule -> norule : 否
+rule -> armed : 是
+armed -> disarmed : 否
+armed -> online : 是
+online -> offline : 否
+online -> ai : 是
+ai -> noai : 否
+ai -> deliver : 是
+deliver -> nodeliver : 否
+deliver -> good : 是
+```
+
 ## 我收到的告警太多 {#too-many}
 
 几乎总是几何问题，而不是灵敏度问题：

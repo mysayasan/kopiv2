@@ -25,6 +25,23 @@ order: 310
 - **它看见了但没告警** → 规则：区域、时段、类别选择、最少帧数。
 - **它对不该报的东西告警** → 几乎总是规则：区域太大或阈值太低。
 
+```flow
+title : 模型产出事实，规则施加判断
+step  frame : 从检测码流取出一帧
+step  models : 每个活动模型都看这一帧
+step  labels : 原始标签、框与置信度
+step  classes => object-classes : 映射到您命名的对象类别
+ask   rule : 有规则判定它值得告警吗？
+end   quiet : 什么都不发生
+ok    alert : 告警
+frame -> models
+models -> labels
+labels -> classes
+classes -> rule
+rule -> quiet : 否
+rule -> alert : 是
+```
+
 ## 模型 {#models}
 
 **基础（内置）模型**始终开启。它识别常见的日常类别——人、车辆、动物等等。它的大小是速度与准确度之间

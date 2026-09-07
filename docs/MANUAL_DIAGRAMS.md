@@ -78,18 +78,24 @@ A spec block renders as a table, not a drawing — a reference value must stay s
 and findable with the browser's own search. The value is locked to left-to-right in every language,
 the same way a code block is.
 
-**Assert every value against the software.** In the app's manual test:
+**Assert every value against the software.** This is not a hypothetical — `mymatasan` does exactly
+this for its `control-plane` article's port table, in `apps/mymatasan/manual/manual_test.go`:
 
 ```go
 manualcheck.SpecValues(t, manual.Library, map[string]string{
-    "fleet-ports/discovery": fmt.Sprintf("%d/udp", pairing.DefaultPort),
-    "fleet-ports/control":   fmt.Sprintf("%d/tcp", fleetnode.DefaultMTLSPort),
+    "control-plane/discovery": fmt.Sprintf("%d/udp", pairing.DefaultDiscoveryPort),
+    "control-plane/mtls":      fmt.Sprintf("%d/tcp", pairing.DefaultMTLSPort),
+    "control-plane/control":   fmt.Sprintf("%d/tcp", pairing.DefaultControlPort),
+    "control-plane/media":     fmt.Sprintf("%d/tcp", pairing.DefaultMediaPort),
 })
 ```
 
-The key is `<article slug>/<row id>`. A key that no longer resolves fails the build rather than
-silently stopping — a check that quietly covers nothing is worse than no check, because it reads
-as coverage.
+`pairing.Default*Port` are the four exported constants in `infra/pairing/packet.go` — gathered
+there specifically so a test could name them; they used to be four unexported literals scattered
+across as many packages, which is exactly how a manual, a firewall note and the software drift
+apart. The key is `<article slug>/<row id>`. A key that no longer resolves fails the build rather
+than silently stopping — a check that quietly covers nothing is worse than no check, because it
+reads as coverage.
 
 This is not optional ceremony. A confidently wrong port number costs an integrator an afternoon,
 where no port number at all costs them a support call. **A reference section without

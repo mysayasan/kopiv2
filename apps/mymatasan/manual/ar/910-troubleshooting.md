@@ -46,6 +46,33 @@ order: 910
 
 والجواب المفرد الأشيع هو الأول: شُغّل التسجيل ولم تُنشأ قاعدة قط. فالتسجيل ينتج لقطات لا تنبيهات.
 
+```flow
+title : افحص بهذا الترتيب — أول «لا» هي جوابك
+step  none : لا تصل أي تنبيهات
+ask   rule : هل توجد قاعدة على هذه الكاميرا؟
+end   norule : أنشئ واحدة. فالتسجيل ينتج لقطات لا تنبيهات.
+ask   armed : هل هي مفعّلة وضمن جدولها؟
+end   disarmed : فعّلها أو وسّع الجدول
+ask   online => camera-health : هل الكاميرا متصلة؟
+end   offline : أصلح الكاميرا أولًا
+ask   ai : هل بيئة الذكاء الاصطناعي والنموذج موجودان؟
+end   noai : ثبّت البيئة ونموذجًا
+ask   deliver => notification-destinations : هل ضُبطت وجهة تسليم؟
+end   nodeliver : أضف وجهة
+ok    good : ينبغي أن تصل التنبيهات
+none -> rule
+rule -> norule : لا
+rule -> armed : نعم
+armed -> disarmed : لا
+armed -> online : نعم
+online -> offline : لا
+online -> ai : نعم
+ai -> noai : لا
+ai -> deliver : نعم
+deliver -> nodeliver : لا
+deliver -> good : نعم
+```
+
 ## تصلني تنبيهات كثيرة جدًا {#too-many}
 
 الأمر هندسة لا حساسية، دائمًا تقريبًا:

@@ -6,7 +6,7 @@ Implements the parent side of the bi-directional parent↔node control channel. 
 
 ## Key Type: ControlServer
 
-Built via `NewControlServer(registry, port, onEvent, logf)`. Default port: `49533`.
+Built via `NewControlServer(registry, port, onEvent, logf)`. Default port: `pairing.DefaultControlPort` (`49533`, `infra/pairing/packet.go.md`).
 
 ### Responsibilities
 
@@ -52,7 +52,7 @@ The node proxy API (`apps/myseliasan/apis/node_proxy.go`) depends on this narrow
 ## Notes
 
 - Connection tracking + request/response tunnel + node→parent event push all route through this channel.
-- The server listens on a separate port (`defaultControlPort = 49533`) from the node's mTLS management port (`49532`).
+- The server listens on a separate port (`defaultControlPort = pairing.DefaultControlPort`, `49533`; was a private `49533` literal in this file, now sourced from `infra/pairing/packet.go.md`) from the node's mTLS management port (`49532`).
 - `ErrNodeOffline` and `ErrNodeDisconnected` are both surfaced to API callers as a `404 node is not connected` (see `node_proxy.go.md`) — the former means the node was never connected, the latter that it disconnected mid-command.
 - `IsConnected` remains this instance's own local presence check, still used as-is by `NewAgentApi`'s chat grounding oracle (`services/agent_chat.go.md`, per-node liveness for a single request) and by `apis/node_media.go` (the media relay, which is not cluster-aware — see `services/node_peer.go.md`). `INodeRegistry.SetControlPresence` in `app.go`, however, is now wired to `NodeOwnerRegistry.ConnectedAnywhere` (`services/node_owner.go.md`), not to `IsConnected` directly — the heartbeat reconciler needs a deployment-wide answer ("is this node connected to ANY instance"), not a per-process one, so that a node attached to another instance is not falsely marked `lost`. Standalone the two answers are identical, since everything this instance is connected to is everything there is.
 - `IsListening`/`ConnectedCount` are advisory-only readiness signals: `app.go` stashes the `*ControlServer` on the module and surfaces them via `ReadinessStatus` on `GET /api/ready`. They never gate the process's `ok`/HTTP status — that stays db + cache only — so a dead control-channel listener alone won't flip the process to unhealthy; it's visibility for an operator/monitor, not a liveness gate.

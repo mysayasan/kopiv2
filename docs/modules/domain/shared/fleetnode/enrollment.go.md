@@ -13,7 +13,7 @@ in behavior. `mymatasan` keeps compiling unchanged via a same-named alias in
 
 ### Constructor
 
-`NewEnrollmentManager(svc IPairingService, mtlsPort int, renewBefore time.Duration, logf func(string,...any))` — defaults: `mtlsPort` → `49532`, `renewBefore` → `48h`.
+`NewEnrollmentManager(svc IPairingService, mtlsPort int, renewBefore time.Duration, logf func(string,...any))` — defaults: `mtlsPort` → `pairing.DefaultMTLSPort` (`49532`, `infra/pairing/packet.go.md`), `renewBefore` → `48h`.
 
 ### Methods
 
@@ -50,7 +50,7 @@ Routes served:
 
 ## Notes
 
-- The listener binds on all interfaces at the configured `mtlsPort` (default 49532) so the control plane can reach it regardless of which network interface the probe arrives on.
+- The listener binds on all interfaces at the configured `mtlsPort` (default `pairing.DefaultMTLSPort`, `49532`) so the control plane can reach it regardless of which network interface the probe arrives on.
 - `EnrollmentManager` is started as a goroutine inside the monitor lifecycle context (gated by `pairing.enabled`) — in `mymatasan`'s `apps/mymatasan/app/wire_fleet.go`, and identically in `myiotsan`'s `apps/myiotsan/app/wire_fleet.go` (see `docs/modules/apps/myiotsan/app/wire_fleet.go.md`).
 - The adopt handler passes `enrollmentManager.Kick` as the `onAdopted` callback to `NewPairingPublicApi` so enrollment begins immediately after the adopt call returns.
 - The enrollment HTTP client intentionally uses `InsecureSkipVerify` only for the bootstrap `/api/nodes/enroll` call; the management listener it starts is full mTLS.

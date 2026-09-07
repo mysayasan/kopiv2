@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mysayasan/kopiv2/infra/fleetca"
+	"github.com/mysayasan/kopiv2/infra/pairing"
 )
 
 // EnrollmentManager runs the node side of the mTLS hardening: after adoption it
@@ -41,7 +42,7 @@ type EnrollmentManager struct {
 // is full mTLS.
 func NewEnrollmentManager(svc IPairingService, mtlsPort int, renewBefore time.Duration, logf func(string, ...any)) *EnrollmentManager {
 	if mtlsPort <= 0 {
-		mtlsPort = 49532
+		mtlsPort = pairing.DefaultMTLSPort
 	}
 	if renewBefore <= 0 {
 		renewBefore = 48 * time.Hour

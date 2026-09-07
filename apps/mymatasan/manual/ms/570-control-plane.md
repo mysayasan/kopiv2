@@ -45,6 +45,17 @@ Jabat tangan dua langkah ini disengajakan: kunci menyatakan *armada mana anda te
 menyatakan *dan saya bersetuju sekarang*. Tiada satu pun sahaja mencukupi untuk mengambil sesuatu
 nod.
 
+```seq
+title : Mengambil nod ini, langkah demi langkah
+actor node : Perkakas ini
+actor parent : Satah kawalan
+parent -> node : kuiri penemuan, ditandatangani dengan kunci armada
+node --> parent : menjawab hanya jika kunci sepadan
+parent -> node : mengambilnya, menggunakan kod tuntutan yang anda jana
+parent --> node : sijil dikeluarkan oleh CA armada
+node -> parent : denyutan dan arahan mulai sekarang
+```
+
 ## Satu induk sahaja {#single-parent}
 
 Nod yang bergandingan **dikunci kepada satu satah kawalan** dan berhenti menjawab dugaan penemuan
@@ -89,3 +100,11 @@ dikeluarkan pihak berkuasa armada itu sendiri.
 
 Nod mendail keluar kepada induk dan bukan sebaliknya, jadi nod di sebalik NAT berfungsi tanpa
 pemajuan port masuk — dan itu biasanya faktor penentu bagi tapak jauh.
+
+```spec
+title : Apa yang didengar oleh nod bergandingan, dan ke mana ia mendail keluar
+row discovery `49531/udp` : Penemuan multicast pada rangkaian tempatan. Hanya satah kawalan yang memegang kunci armada sama dapat melihat nod ini.
+row mtls `49532/tcp` : Nod ini mendengar. Satah kawalan mendail masuk untuk melepaskannya dan untuk memeriksa ia masih hidup.
+row control `49533/tcp` : Nod ini mendail keluar dan mengekalkan saluran terbuka untuk arahan — sebab itu nod di sebalik NAT tidak perlu pemajuan port masuk.
+row media `49534/tcp` : Nod ini mendail keluar untuk menyampaikan video langsung, diasingkan supaya ia tidak pernah bersaing dengan arahan.
+```

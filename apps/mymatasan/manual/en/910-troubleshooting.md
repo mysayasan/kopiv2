@@ -51,6 +51,33 @@ the **AI runtime and model** present; and only then, is **delivery** configured.
 The most common single answer is the first: recording was turned on, and no rule was ever created.
 Recording produces footage, not alerts.
 
+```flow
+title : Check in this order — the first "no" is your answer
+step  none : No alerts are arriving
+ask   rule : Is there a rule on this camera?
+end   norule : Create one. Recording produces footage, not alerts.
+ask   armed : Is it enabled, and inside its schedule?
+end   disarmed : Enable it, or widen the schedule
+ask   online => camera-health : Is the camera online?
+end   offline : Fix the camera first
+ask   ai : Is the AI runtime and a model present?
+end   noai : Install the runtime and a model
+ask   deliver => notification-destinations : Is a destination configured?
+end   nodeliver : Add a destination
+ok    good : Alerts should arrive
+none -> rule
+rule -> norule : no
+rule -> armed : yes
+armed -> disarmed : no
+armed -> online : yes
+online -> offline : no
+online -> ai : yes
+ai -> noai : no
+ai -> deliver : yes
+deliver -> nodeliver : no
+deliver -> good : yes
+```
+
 ## I get far too many alerts {#too-many}
 
 Almost always geometry rather than sensitivity:

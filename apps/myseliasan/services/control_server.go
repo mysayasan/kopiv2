@@ -13,11 +13,12 @@ import (
 	"time"
 
 	"github.com/mysayasan/kopiv2/infra/control"
+	"github.com/mysayasan/kopiv2/infra/pairing"
 )
 
 // defaultControlPort is the parent's control-channel listener port (mirrors the
 // node-side mTLS management port convention). Distinct from the node's 49532.
-const defaultControlPort = 49533
+const defaultControlPort = pairing.DefaultControlPort
 
 // controlRequestTimeout bounds how long a tunneled command waits for the node's
 // response before giving up (used when the caller's context has no deadline).

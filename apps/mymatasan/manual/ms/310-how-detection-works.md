@@ -30,6 +30,23 @@ menjadi mudah:
 - **Ia memberi amaran pada perkara yang salah** → peraturan, hampir selalu: zon terlalu luas atau
   ambang terlalu rendah.
 
+```flow
+title : Model menghasilkan fakta; peraturan menerapkan pertimbangan
+step  frame : Satu bingkai daripada strim pengesanan
+step  models : Setiap model aktif melihatnya
+step  labels : Label mentah, kotak dan keyakinan
+step  classes => object-classes : Dipetakan kepada kelas objek yang anda namakan
+ask   rule : Adakah peraturan menilainya berbaloi jadi amaran?
+end   quiet : Tiada apa-apa berlaku
+ok    alert : Amaran
+frame -> models
+models -> labels
+labels -> classes
+classes -> rule
+rule -> quiet : tidak
+rule -> alert : ya
+```
+
 ## Model {#models}
 
 **Model asas (stok)** sentiasa hidup. Ia mengenali kelas harian yang umum — orang, kenderaan,

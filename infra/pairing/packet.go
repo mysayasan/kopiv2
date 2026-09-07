@@ -32,6 +32,19 @@ const (
 	// scoped, so it stays on the local network and does not route off-subnet.
 	DefaultMulticastAddr = "239.255.90.21:49531"
 
+	// The fleet's four ports, gathered here because they are one scheme and were previously
+	// four unexported literals in four packages — which is exactly how a manual, a firewall
+	// note and the software drift apart. The manual's ```spec table asserts against these
+	// (see manualcheck.SpecValues), so a reader's port list cannot quietly stop being true.
+	//
+	// Note the directions differ, and it matters to anyone writing a firewall rule:
+	// DefaultMTLSPort is the NODE listening and the parent dialling IN; Control and Media are
+	// the node dialling OUT, which is what lets a node behind NAT work with no inbound rule.
+	DefaultDiscoveryPort = 49531
+	DefaultMTLSPort      = 49532
+	DefaultControlPort   = 49533
+	DefaultMediaPort     = 49534
+
 	// DefaultReplayWindow bounds how stale a probe/announce timestamp may be before
 	// it is rejected. Combined with the per-nonce cache this blunts replay attacks.
 	DefaultReplayWindow = 30 * time.Second
