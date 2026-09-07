@@ -62,7 +62,7 @@ step  open : Anda membuka halaman sesebuah nod
 ask   reach : Adakah satah kawalan ini membenarkan anda mencapai nod itu?
 end   noreach : Ditolak di sini
 step  tunnel : Satah kawalan menerowong halaman itu kepada anda
-ask   grant => users-and-roles#node-access : Adakah pemberian anda pada nod itu membenarkan tindakan itu?
+ask   grant => users-and-roles#node-access : Adakah pemberian anda pada nod itu membenarkannya?
 end   refused : Ditolak oleh nod — dan tiada apa-apa dihantar
 ok    done : Nod melakukannya
 open -> reach

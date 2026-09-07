@@ -31,6 +31,19 @@ Jabat tangan dua langkah ini disengajakan. Kunci menyatakan *armada mana anda te
 menyatakan *dan saya izinkan sekarang*. Tiada satu pun mencukupi bersendirian, jadi kunci yang
 dicuri tidak boleh menyerap peranti orang lain secara senyap.
 
+```seq
+title : Jabat tangan dua langkah, dan mengapa satu langkah tidak memadai
+actor plane : Satah kawalan ini
+actor you : Anda
+actor node : Peranti yang diambil
+plane -> you : Kunci armada — armada mana peranti ini sertai
+you -> node : Tampal kunci armada
+node -> you : Kod tuntutan pendek — saya setuju, sekarang
+you -> plane : Tampal kod tuntutan
+plane -> node : Ambil, kemukakan kunci armada
+node --> plane : Diterima — satah kawalan ini, tiada yang lain
+```
+
 ## 3. Ambil {#adopt}
 
 Kembali di sini, **Discover** mengimbas rangkaian tempatan untuk nod yang belum berpasangan dan

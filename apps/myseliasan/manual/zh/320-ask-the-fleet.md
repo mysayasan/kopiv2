@@ -29,6 +29,17 @@ order: 320
 助手被要求把两者分开：手册描述的是软件的一般工作方式，绝不能被当作对你这套安装环境的观察来陈述。
 「录像保留 14 天」是一句关于产品的话，不是关于你磁盘的话。
 
+```arch
+title : 答案从哪里来，以及什么绝不会离开你的网络
+box agent : 这个助手，就运行在这里
+store tables : 这个控制平面自己的表——节点、事件、统计、摘要发现
+store manuals => using-this-manual : 内置手册：这一本，以及 MyMataSan 的那本
+box model => language-model : 一个语言模型——仅当你启用了它
+agent -> tables : 关于你的机队
+agent -> manuals : 关于产品
+agent --> model
+```
+
 ## 来源 {#sources}
 
 当答案引用了手册时，它所用到的章节会显示在答案下方。

@@ -79,6 +79,32 @@ peraturan menunggu 5 saat.
 **Cooldown (seconds)** — berapa lama peraturan berdiam selepas menyala, supaya satu insiden menjadi
 satu amaran dan bukan seratus. Ia kekal walaupun selepas mula semula.
 
+```flow
+title : Bagaimana peraturan memutuskan — dan mengapa ia menunggu sebelum menyala
+step ev : Satu peristiwa tiba daripada sesebuah nod
+ask req : Adakah ia padan dengan sesuatu yang peraturan ini PERLUKAN?
+end ignore : Bukan urusan peraturan ini
+ask all : Adakah semua peristiwa yang diperlukan kini sudah tiba, dalam tetingkap itu?
+step wait : Terus menunggu — tetingkap masih terbuka
+step arm : SEDIAKAN, dan tunggu habis kelewatan ihsan
+ask absent : Adakah apa-apa yang dilarang peraturan itu tiba semasa menunggu?
+end disarm : Dilucutkan — itu kemasukan yang dibenarkan, bukan insiden
+ask cool : Adakah peraturan itu masih dalam tempoh penyejukannya?
+end quiet : Kekal senyap — satu insiden, satu amaran
+alert fire : Nyalakan, dan mulakan tempoh penyejukan
+ev -> req
+req -> ignore : tidak
+req -> all : ya
+all -> wait : tidak
+wait -> ev
+all -> arm : ya
+arm -> absent
+absent -> disarm : ya
+absent -> cool : tidak
+cool -> quiet : ya
+cool -> fire : tidak
+```
+
 ## Siapa yang boleh mengubahnya {#permissions}
 
 Peraturan armada **ditulis oleh superadmin sahaja**. Peranan lain yang boleh sampai ke halaman ini

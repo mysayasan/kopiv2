@@ -71,6 +71,24 @@ GET 权限**。
 
 实际后果是：如果有人看不到某个页面，请去授予对应能力，而不要去找什么显示开关，因为并不存在。
 
+```flow
+title : 导航栏和 API 依据的是同一份规则清单
+step grant : 你给某个角色授予一项功能
+step rules : 它变成该角色身上的一份规则清单
+step rail : 导航栏由这些规则构建
+step call : 打开页面会调用 API
+ask allow : 同一份规则是否允许这次调用？
+ok shown : 页面打开，带着它的数据
+end refused : 被拒绝——这也正是导航栏从不提供它的原因
+grant -> rules
+rules -> rail : 构建菜单
+rules -> call : 决定答案
+rail -> call : 你点击的是给你看到的东西
+call -> allow
+allow -> shown : 是
+allow -> refused : 否
+```
+
 ## 节点访问是另一个问题 {#node-access}
 
 矩阵决定的是某人在**这个控制平面上**能做什么。它不决定某人在**某个节点上**能做什么。

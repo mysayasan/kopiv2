@@ -17,6 +17,17 @@ tetap berjalan di sana, dan sesebuah tapak terus berfungsi seperti biasa jika sa
 dimatikan. Apa yang anda peroleh ialah satu tempat untuk melihat keseluruhan estet, dan satu tempat
 untuk menguruskannya.
 
+```arch
+title : Apa itu satah kawalan, dan dengan apa ia bercakap
+ext browser : Pelayar anda
+box plane : Satah kawalan ini — satu skrin untuk seluruh estet
+ext node => adopting-nodes : Peranti yang diambil, melakukan tugasnya sendiri di tapaknya sendiri
+store footage : Rakaman, pada peranti yang merakamnya
+browser -> plane
+node -> plane : nod yang mendail keluar
+node -> footage : simpan videonya sendiri
+```
+
 ## Tiada jalan keluar ke internet {#air-gap}
 
 MySeliaSan dibina untuk berjalan **tanpa sebarang sambungan keluar**. Peta membawa jubinnya sendiri,

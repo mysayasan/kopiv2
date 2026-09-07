@@ -67,6 +67,32 @@ order: 140
 **Cooldown (seconds)**——规则触发后保持安静多久，好让一起事件只产生一条告警而不是一百条。它在重启后
 依然有效。
 
+```flow
+title : 规则如何判定——以及它为什么先等一等再触发
+step ev : 某个节点送来一条事件
+ask req : 它是否匹配本规则「必须发生」的某一项？
+end ignore : 与本规则无关
+ask all : 所有必需事件现在是否都已在时间窗内到齐？
+step wait : 继续等——时间窗还开着
+step arm : 进入待发状态，并等完宽限延迟
+ask absent : 在这段等待里，是否到来了规则所禁止的事件？
+end disarm : 已解除——那是一次获授权的进入，不是事件
+ask cool : 规则是否仍处在冷却期内？
+end quiet : 保持安静——一次事件，一条告警
+alert fire : 触发，并开始冷却
+ev -> req
+req -> ignore : 否
+req -> all : 是
+all -> wait : 否
+wait -> ev
+all -> arm : 是
+arm -> absent
+absent -> disarm : 是
+absent -> cool : 否
+cool -> quiet : 是
+cool -> fire : 否
+```
+
 ## 谁可以修改 {#permissions}
 
 机队规则**只能由超级管理员编写**。其他能进入该页面的角色可以查看但不能修改——这些规则决定了整个机队

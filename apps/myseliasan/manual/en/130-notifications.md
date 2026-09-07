@@ -51,6 +51,15 @@ The control plane keeps the event rows. The **footage** stays on the node that r
 division is deliberate — video is large and belongs where it was captured — and it is why a
 released or wiped node takes its clips with it while its event history remains here.
 
+```arch
+title : Where an event lives, and where its footage stays
+ext node => managing-nodes : The node that saw it
+box feed : The feed here — and the event row it keeps, which outlives the node being released
+store clips : The clip, kept on the node that recorded it, and gone with it
+node -> feed : pushes the event
+node -> clips : keeps the video
+```
+
 ## Keeping it worth reading {#noise}
 
 A feed nobody reads is worse than no feed, and the usual cause is a single noisy source.

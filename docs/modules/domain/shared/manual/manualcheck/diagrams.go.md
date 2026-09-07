@@ -78,19 +78,24 @@ shipping none.
   missing/unexpected node-or-edge list rather than two opaque hashes — the translator
   reading the failure is the person least equipped to work out what "the fingerprints
   differ" means.
-- `mymatasan`'s manual now ships three figures using this grammar: two `` ```flow `` (the
+- `mymatasan`'s manual now ships four figures using this grammar: two `` ```flow `` (the
   detection chain in `310-how-detection-works.md`, the "no alerts" checklist in
   `910-troubleshooting.md`) and one `` ```seq `` (the adoption handshake) plus the one
   `` ```spec `` (the fleet port table) in `570-control-plane.md`, byte-identical in
   structure across `en`/`ms`/`zh`/`ar`. `Diagrams` reports "checked 4 figures across 4
   languages" for that app's suite.
-- `myseliasan`'s manual ships three figures too: a `` ```flow `` of the two-permission split
-  in `150-node-pages.md` (`{#authorization}` — control plane decides *reach*, the node
-  decides *do*, and a node refusal means nothing was sent), a `` ```flow `` in
-  `160-failover.md` (`{#takeover}`) showing a staged camera is not a camera until you take
-  over, and the one `` ```spec `` (the same four fleet ports, described from the control
-  plane's side) in `110-adopting-nodes.md` (`{#ports}`), byte-identical in structure across
-  `en`/`ms`/`zh`/`ar`. `Diagrams` reports "checked 3 figures across 4 languages" for that
-  app's suite. Both apps' `SpecValues` calls assert the **same** `pairing.Default*Port`
-  constants, so the two manuals' port tables cannot drift from each other either.
+- `myseliasan`'s manual now ships ten figures: five `` ```flow `` (the must-change/no-role
+  gates after sign-in in `20-first-sign-in.md`, the two-permission split in
+  `150-node-pages.md` (`{#authorization}` — control plane decides *reach*, the node decides
+  *do*, and a node refusal means nothing was sent), the match-through-fire wait loop in
+  `140-fleet-rules.md`, the staged-camera takeover in `160-failover.md` (`{#takeover}`), and
+  the nav-rail/API split in `510-users-and-roles.md`), three `` ```arch `` (what the control
+  plane talks to in `10-welcome.md`, the event-row-stays-here/clip-stays-on-the-node split in
+  `130-notifications.md`, and where an answer comes from in `320-ask-the-fleet.md`), one
+  `` ```seq `` (the fleet-key and claim-code handshake in `110-adopting-nodes.md`), and the
+  one `` ```spec `` (the same four fleet ports, described from the control plane's side) in
+  that same article (`{#ports}`), byte-identical in structure across `en`/`ms`/`zh`/`ar`.
+  `Diagrams` reports "checked 10 figures across 4 languages" for that app's suite. Both
+  apps' `SpecValues` calls assert the **same** `pairing.Default*Port` constants, so the two
+  manuals' port tables cannot drift from each other either.
 - Author-facing guide: `docs/MANUAL_DIAGRAMS.md`.
