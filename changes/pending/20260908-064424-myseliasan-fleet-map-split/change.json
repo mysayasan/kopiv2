@@ -1,0 +1,6 @@
+{
+  "type": "refactor",
+  "scope": "myseliasan",
+  "summary": "Split the fleet map's single 1,568-line component file (fleet_map.js) into four sibling modules under components/map/: basemap_style.js (the offline Protomaps vector-tile cartography - land/water/roads/borders + place labels), markers.js (site/node pin styling by kind and worst owning-node status, plus the colour/easing helpers the critical beacon uses), popups.js (the floating device card and the frame that anchors it to a pin without clipping off the viewport), and basemap_ui.js (the offline-basemap download banner and setup dialog). fleet_map.js drops to about 1,095 lines and keeps only the workspace state, the OpenLayers boot/interactions, the rail, and the per-frame-animated beacon ring. This is pure code motion for Phase 0 of the planned fleet-map rework (which will later replace the rail with a two-tree digital twin) - no props, API, strings, or CSS changed, and no user-visible behavior changed.",
+  "compatibility": "No compatibility impact. Internal file reorganization only; all exports are re-imported by fleet_map.js exactly as before. Verified via go build/test, `make web APP=myseliasan`, and a live CDP-driven bench (map canvas paints, all three marker shapes render, rail counts unchanged, basemap banner renders, editor and floor-plan drill-down still open, zero console errors)."
+}

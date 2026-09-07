@@ -1,15 +1,20 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
-import { useT, Ico, Tabs } from '@shared';
+import { useT, Ico } from '@shared';
 import { api, apiBase } from '../lib/helpers';
 import { nodeTone, nodeToneKey, TONES } from '../lib/fleet_status';
 import { BuildingFloorView, CameraWindow, MediaWindow } from './node_floor_view';
 import { AssetWizard } from './asset_wizard';
 import { BuildingEditorDialog } from './building_editor_dialog';
 import { KIND_BUILDING, KIND_OUTDOOR, KIND_POINT, KIND_ORDER, normKind, hasDrawablePlan, siteGlyph } from './site_kinds';
-import { nodeKindOf } from './layout';
+// The map's own pieces, lifted out of this file so the workspace below is state and composition
+// rather than 1,600 lines of cartography, canvas styling and floating cards.
+import { basemapStyle } from './map/basemap_style';
+import { SEV_COLOR, PULSE_PERIOD, hexToRgba, easeOutCubic, pinStyle, siteStyle } from './map/markers';
+import { NodeCameraPopup, MapPopupFrame, eventSnapshotSrc, recordingStreamSrc, SEV_RANK } from './map/popups';
+import { BasemapDownloadBanner, BasemapSetupDialog } from './map/basemap_ui';
 
-// OpenLayers, driven directly through refs (no React wrapper — see the note in Phase 0).
+// OpenLayers, driven directly through refs (no React wrapper - see the note in Phase 0).
 import Map from 'ol/Map.js';
 import View from 'ol/View.js';
 import VectorTileLayer from 'ol/layer/VectorTile.js';
@@ -21,7 +26,7 @@ import Point from 'ol/geom/Point.js';
 import Translate from 'ol/interaction/Translate.js';
 import { fromLonLat, toLonLat } from 'ol/proj.js';
 import { getCenter } from 'ol/extent.js';
-import { Fill, Stroke, Style, Circle as CircleStyle, RegularShape, Text } from 'ol/style.js';
+import { Fill, Stroke, Style, Circle as CircleStyle } from 'ol/style.js';
 import { getVectorContext } from 'ol/render.js';
 import { PMTilesVectorSource } from 'ol-pmtiles';
 import 'ol/ol.css';
@@ -30,461 +35,6 @@ import '../styles/fleet-map.css';
 const DEFAULT_CENTER = [109.45, 4.15];
 const DEFAULT_ZOOM = 6;
 
-// Same-origin control-plane URLs for a node event's annotated snapshot and its recorded clip.
-// Both route through myseliasan's node proxy / recording-stream, so the browser never contacts
-// the node directly (mirrors the Notifications page).
-const eventSnapshotSrc = (nodeId, alertId) =>
-  `${apiBase()}/api/nodes/${encodeURIComponent(nodeId)}/proxy/api/vision/alerts/${alertId}/snapshot?annotated=1`;
-const recordingStreamSrc = (nodeId, segId) =>
-  `${apiBase()}/api/nodes/${encodeURIComponent(nodeId)}/recording-stream/${segId}`;
-// A node event carries reviewable footage when it's a mymatasan AI detection (alert_event + refId).
-const eventHasFootage = (e) => e && e.refType === 'alert_event' && Number(e.refId) > 0;
-
-// Basemap cartography — plain OL styles keyed on the Protomaps layer name (see Phase 0).
-const BASE_STYLES = {
-  earth: new Style({ fill: new Fill({ color: '#f3f1ec' }) }),
-  landcover: new Style({ fill: new Fill({ color: '#e6ece1' }) }),
-  landuse: new Style({ fill: new Fill({ color: '#e9ece4' }) }),
-  water: new Style({ fill: new Fill({ color: '#b9d7e6' }) }),
-  buildings: new Style({ fill: new Fill({ color: '#e2ded6' }) }),
-  roads: new Style({ stroke: new Stroke({ color: '#ffffff', width: 1.2 }) }),
-};
-// Admin borders: a firmer, near-solid line for country outlines and the old faint dashes for
-// internal (state/region) boundaries — so the eye can tell a national border from a state line.
-const COUNTRY_BORDER = new Style({ stroke: new Stroke({ color: '#a9a294', width: 1.4 }) });
-const REGION_BORDER = new Style({ stroke: new Stroke({ color: '#c3bdb3', width: 1, lineDash: [3, 3] }) });
-
-// Label styles. Each is a reused singleton whose text we set per feature before returning it —
-// the standard OpenLayers idiom (the renderer reads the text synchronously), which avoids
-// allocating a Style/Text per feature per frame. A white halo keeps every label legible over
-// land, water, or roads. `declutter: true` on the layer drops labels that would overlap.
-const halo = (w) => new Stroke({ color: 'rgba(255,255,255,0.9)', width: w });
-const COUNTRY_LABEL = new Style({ text: new Text({ font: '700 12px system-ui, sans-serif', fill: new Fill({ color: '#3f3d38' }), stroke: halo(3), overflow: true }) });
-const REGION_LABEL = new Style({ text: new Text({ font: '600 11px system-ui, sans-serif', fill: new Fill({ color: '#6b6a63' }), stroke: halo(2.5), overflow: true }) });
-const CITY_LABEL = new Style({
-  image: new CircleStyle({ radius: 2.6, fill: new Fill({ color: '#5b5a54' }), stroke: new Stroke({ color: '#ffffff', width: 1 }) }),
-  text: new Text({ font: '500 11px system-ui, sans-serif', fill: new Fill({ color: '#33322e' }), stroke: halo(2.5), offsetY: -10 }),
-});
-const WATER_LABEL = new Style({ text: new Text({ font: 'italic 400 11px system-ui, sans-serif', fill: new Fill({ color: '#3d6b85' }), stroke: halo(2), overflow: true }) });
-const ROAD_LABEL = new Style({ text: new Text({ font: '500 10px system-ui, sans-serif', fill: new Fill({ color: '#5a5852' }), stroke: halo(2.5), placement: 'line', maxAngle: 0.6 }) });
-
-// Web-Mercator resolution → approximate tile zoom, so the style function can gate labels by zoom
-// (the style function only receives a resolution, not the view zoom).
-const R0 = 156543.03392804097;
-const zoomForResolution = (res) => Math.log2(R0 / res);
-// Prefer the English name, falling back to the native name the tile carries.
-const placeLabel = (f) => f.get('name:en') || f.get('name') || '';
-
-// basemapStyle paints one basemap vector-tile feature. Fills/lines come from the layer name;
-// the `places`, `water`, and `roads` layers additionally carry names, which we render as text so
-// the map reads like a real map (countries, states, cities) instead of blank shapes.
-function basemapStyle(feature, resolution) {
-  const layer = feature.get('layer');
-  const zoom = zoomForResolution(resolution);
-
-  if (layer === 'boundaries') {
-    return feature.get('kind') === 'country' ? COUNTRY_BORDER : REGION_BORDER;
-  }
-
-  if (layer === 'places') {
-    const label = placeLabel(feature);
-    if (!label) return null;
-    // Each place point carries the zoom at which it should first appear; honour it so we don't
-    // splatter every village across a zoomed-out view (declutter then thins whatever remains).
-    const minZoom = feature.get('min_zoom');
-    if (typeof minZoom === 'number' && zoom + 0.4 < minZoom) return null;
-    const kind = feature.get('kind');
-    if (kind === 'country') { COUNTRY_LABEL.getText().setText(label.toUpperCase()); return COUNTRY_LABEL; }
-    if (kind === 'region') { REGION_LABEL.getText().setText(label.toUpperCase()); return REGION_LABEL; }
-    if (kind === 'locality') {
-      // Bump the biggest cities up a size so a capital reads before a small town.
-      const big = (feature.get('population_rank') || 0) >= 11;
-      const txt = CITY_LABEL.getText();
-      txt.setFont(big ? '600 12px system-ui, sans-serif' : '500 11px system-ui, sans-serif');
-      txt.setText(label);
-      return CITY_LABEL;
-    }
-    return null; // neighbourhoods, etc. — left off to keep the map calm
-  }
-
-  if (layer === 'water') {
-    const fill = BASE_STYLES.water;
-    const label = placeLabel(feature);
-    if (label && zoom >= 5) { WATER_LABEL.getText().setText(label); return [fill, WATER_LABEL]; }
-    return fill;
-  }
-
-  if (layer === 'roads') {
-    const base = BASE_STYLES.roads;
-    const kind = feature.get('kind');
-    const label = feature.get('name:en') || feature.get('name') || feature.get('ref');
-    if (label && zoom >= 11 && (kind === 'highway' || kind === 'major_road')) {
-      ROAD_LABEL.getText().setText(label);
-      return [base, ROAD_LABEL];
-    }
-    return base;
-  }
-
-  return BASE_STYLES[layer] || null;
-}
-
-// Severity → badge colour (canvas, so concrete hex).
-const SEV_COLOR = { critical: '#ef4444', warning: '#f59e0b', info: '#3b82f6' };
-
-// hexToRgba turns a #rrggbb tone colour into an rgba() string at the given alpha, so the beacon
-// ring can fade out as it expands.
-function hexToRgba(hex, alpha) {
-  const h = hex.replace('#', '');
-  const r = parseInt(h.slice(0, 2), 16);
-  const g = parseInt(h.slice(2, 4), 16);
-  const b = parseInt(h.slice(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
-// easeOutCubic makes each ring shoot out quickly then ease as it fades — a more natural, modern
-// pulse than a linear expansion.
-const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
-
-// Beacon timing: one ring is born, expands, and fades every PULSE_PERIOD ms; a second ring runs
-// half a period behind so a wave is always in flight (continuous, not a blip).
-const PULSE_PERIOD = 1800;
-
-// pinStyle renders a placed node. A single node shows a tone-coloured pin and an optional
-// notification count badge (top-right). The critical "beacon" ring is NOT drawn here — it is
-// animated every frame in the layer's prerender handler (see boot) so it stays perfectly smooth.
-// A cluster of several shows a neutral disc with the count and the worst tone.
-function pinStyle(clusterFeature) {
-  const members = clusterFeature.get('features') || [];
-  const hover = clusterFeature.get('hover');
-  if (members.length === 1) {
-    const f = members[0];
-    const tone = f.get('tone') || TONES.idle;
-    const notif = f.get('notif'); // { count, sev } | undefined
-    const styles = [];
-    if (hover) styles.push(new Style({ image: new CircleStyle({ radius: 15, fill: new Fill({ color: hexToRgba(HOVER, 0.16) }) }) }));
-    // Main pin.
-    styles.push(new Style({ image: new CircleStyle({ radius: hover ? 9 : 8, fill: new Fill({ color: tone.color }), stroke: new Stroke({ color: hover ? HOVER : '#ffffff', width: hover ? 3 : 2 }) }) }));
-    // Notification count badge (top-right; OL displacement y is up-positive).
-    if (notif && notif.count > 0) {
-      styles.push(new Style({ image: new CircleStyle({ radius: 7, fill: new Fill({ color: SEV_COLOR[notif.sev] || '#ef4444' }), stroke: new Stroke({ color: '#ffffff', width: 1.5 }), displacement: [10, 10] }) }));
-      styles.push(new Style({ text: new Text({ text: notif.count > 99 ? '99+' : String(notif.count), font: '700 9px system-ui, sans-serif', fill: new Fill({ color: '#ffffff' }), offsetX: 10, offsetY: -10 }) }));
-    }
-    return styles;
-  }
-  const order = ['critical', 'warning', 'online', 'idle'];
-  let worst = 'idle';
-  let totalNotif = 0;
-  for (const m of members) {
-    const k = m.get('toneKey') || 'idle';
-    if (order.indexOf(k) < order.indexOf(worst)) worst = k;
-    const n = m.get('notif');
-    if (n) totalNotif += n.count;
-  }
-  const tone = TONES[worst];
-  const styles = [];
-  if (hover) styles.push(new Style({ image: new CircleStyle({ radius: 18, fill: new Fill({ color: hexToRgba(HOVER, 0.16) }) }) }));
-  styles.push(new Style({
-    image: new CircleStyle({ radius: hover ? 14 : 13, fill: new Fill({ color: 'rgba(255,255,255,0.92)' }), stroke: new Stroke({ color: hover ? HOVER : tone.ring, width: 3 }) }),
-    text: new Text({ text: String(members.length), font: '600 12px system-ui, sans-serif', fill: new Fill({ color: '#334155' }) }),
-  }));
-  if (totalNotif > 0) {
-    styles.push(new Style({ image: new CircleStyle({ radius: 7, fill: new Fill({ color: '#ef4444' }), stroke: new Stroke({ color: '#ffffff', width: 1.5 }), displacement: [13, 13] }) }));
-    styles.push(new Style({ text: new Text({ text: totalNotif > 99 ? '99+' : String(totalNotif), font: '700 9px system-ui, sans-serif', fill: new Fill({ color: '#ffffff' }), offsetX: 13, offsetY: -13 }) }));
-  }
-  return styles;
-}
-
-// BUILDING_GLYPH_FONT prefers the platform colour-emoji font so a chosen asset icon renders in
-// colour on the OL canvas (Windows/Chrome/macOS all ship one).
-const BUILDING_GLYPH_FONT = '15px "Segoe UI Emoji", "Noto Color Emoji", "Apple Color Emoji", system-ui, sans-serif';
-const HOVER = '#2f6bd6'; // accent used for the hover/selection highlight ring + halo
-
-// markerShape draws a site marker in the SHAPE of its kind: a disc for a building, a square for an
-// outdoor area, a diamond for a point asset. Zoomed out past the point where the name label is
-// legible, the silhouette is the only thing left to tell a park from an office block — so the shape
-// carries the kind, and the glyph inside carries the specifics.
-//
-// The radii are tuned so the three read as the same visual weight: a square of radius r covers more
-// area than a disc of radius r, and a diamond covers less, hence the multipliers.
-function markerShape(kind, radius, fill, stroke) {
-  const opts = { fill, stroke };
-  if (kind === KIND_OUTDOOR) return new RegularShape({ ...opts, points: 4, angle: Math.PI / 4, radius: radius * 1.06 });
-  if (kind === KIND_POINT) return new RegularShape({ ...opts, points: 4, angle: 0, radius: radius * 1.3 });
-  return new CircleStyle({ ...opts, radius });
-}
-
-// siteStyle renders a placed site: the operator's chosen glyph on a white marker ringed in the worst
-// owning-node tone (so status still reads at a glance), shaped by the site's kind, the name below,
-// and a camera-count badge.
-function siteStyle(feature) {
-  const tone = feature.get('tone') || TONES.idle;
-  const cams = feature.get('cameras') || 0;
-  const kind = normKind(feature.get('kind'));
-  const icon = feature.get('icon');
-  const hover = feature.get('hover');
-  const styles = [];
-  // Hover halo + accent ring — a clear "this is clickable" affordance for the canvas marker.
-  if (hover) styles.push(new Style({ image: markerShape(kind, 19, new Fill({ color: hexToRgba(HOVER, 0.16) }), undefined) }));
-  styles.push(new Style({ image: markerShape(kind, hover ? 15 : 14, new Fill({ color: '#ffffff' }), new Stroke({ color: hover ? HOVER : tone.ring, width: hover ? 4 : 3 })) }));
-  styles.push(new Style({ text: new Text({ text: icon, font: BUILDING_GLYPH_FONT }) }));
-  styles.push(new Style({ text: new Text({ text: feature.get('name') || '', offsetY: 24, font: '600 11px system-ui, sans-serif', fill: new Fill({ color: '#1f2937' }), stroke: new Stroke({ color: 'rgba(255,255,255,0.85)', width: 3 }) }) }));
-  // Camera badge (bottom-right): "online/total" when live health shows some are down (amber/red),
-  // otherwise just the total. Surfaces a camera that dropped while its node stayed up.
-  const total = feature.get('camTotal') != null ? feature.get('camTotal') : cams;
-  if (total > 0) {
-    const known = feature.get('camKnown') || 0;
-    const online = feature.get('camOnline') || 0;
-    const down = known > 0 && online < total; // we have readings and some aren't online
-    const badgeColor = !down ? tone.color : (online === 0 ? '#ef4444' : '#f59e0b');
-    const label = down ? `${online}/${total}` : (total > 99 ? '99+' : String(total));
-    styles.push(new Style({ image: new CircleStyle({ radius: down ? 9 : 8, fill: new Fill({ color: badgeColor }), stroke: new Stroke({ color: '#ffffff', width: 1.5 }), displacement: [12, -12] }) }));
-    styles.push(new Style({ text: new Text({ text: label, font: '700 9px system-ui, sans-serif', fill: new Fill({ color: '#ffffff' }), offsetX: 12, offsetY: 12 }) }));
-  }
-  // Unread-notification badge (top-right, severity coloured) — sum of THIS building's camera alerts.
-  const notif = feature.get('notif');
-  if (notif && notif.count > 0) {
-    styles.push(new Style({ image: new CircleStyle({ radius: 8, fill: new Fill({ color: SEV_COLOR[notif.sev] || '#ef4444' }), stroke: new Stroke({ color: '#ffffff', width: 1.5 }), displacement: [12, 12] }) }));
-    styles.push(new Style({ text: new Text({ text: notif.count > 99 ? '99+' : String(notif.count), font: '700 9px system-ui, sans-serif', fill: new Fill({ color: '#ffffff' }), offsetX: 12, offsetY: -12 }) }));
-  }
-  return styles;
-}
-
-const SEV_RANK = { critical: 3, warning: 2, info: 1 };
-// Compact relative time ("5m", "3h", "2d") for the event list.
-function shortAgo(sec) {
-  if (!sec) return '';
-  const d = Math.max(0, Math.floor(Date.now() / 1000) - sec);
-  if (d < 60) return `${d}s`;
-  if (d < 3600) return `${Math.floor(d / 60)}m`;
-  if (d < 86400) return `${Math.floor(d / 3600)}h`;
-  return `${Math.floor(d / 86400)}d`;
-}
-
-// NodeCameraPopup summarises a placed node as a compact, tabbed status card: a status-coloured
-// header (identity + state, glanceable at a glance), a meta strip with at-a-glance counts and the
-// Open-node action, then Events / Cameras as TABS — so only one clean, single-scroll list shows at
-// a time instead of two competing stacked lists. Events are worst-first; cameras are searchable
-// once there are many. Everything is fetched live and the card never grows past the viewport.
-function NodeCameraPopup({ node, nowSec, onOpenNode, onPlay, onOpenMedia, onLocate, onAck, onClose }) {
-  const t = useT();
-  const [cams, setCams] = useState({ loading: true, list: [], reachable: true });
-  const [events, setEvents] = useState({ loading: true, list: [] });
-  const [camQuery, setCamQuery] = useState('');
-  const [tab, setTab] = useState('events');
-
-  // Acknowledge an event straight from the popup: mark it read (optimistically), propagate the
-  // ack to the source AI alert on the node when it's a detection, and let the map refresh its pin
-  // badges. Mirrors the Notifications page's acknowledge, minus the list re-fetch.
-  const ackEvent = useCallback((e) => {
-    setEvents((cur) => ({ ...cur, list: cur.list.map((n) => (n.id === e.id ? { ...n, isRead: true } : n)) }));
-    if (eventHasFootage(e)) {
-      api(`/api/nodes/${encodeURIComponent(node.nodeId)}/proxy/api/vision/alerts/${e.refId}/ack`, { method: 'POST', noRedirect: true }).catch(() => {});
-    }
-    api(`/api/notifications/${e.id}/read`, { method: 'POST', noRedirect: true }).catch(() => {});
-    if (onAck) onAck();
-  }, [node.nodeId, onAck]);
-
-  useEffect(() => {
-    // Only a camera node serves /api/cameras. Asking a sensor hub or a door controller was a
-    // guaranteed 404 down the tunnel on every popup open — wasted round-trip, noisy node log.
-    if (nodeKindOf(node) !== 'camera') {
-      setCams({ loading: false, list: [], reachable: true });
-      return undefined;
-    }
-    let live = true;
-    setCams({ loading: true, list: [], reachable: true });
-    api(`/api/nodes/${encodeURIComponent(node.nodeId)}/proxy/api/cameras?limit=200`, { noRedirect: true })
-      .then((r) => {
-        if (!live) return;
-        const list = r.ok ? (Array.isArray(r.body) ? r.body : r.body?.items || []) : [];
-        setCams({ loading: false, list, reachable: r.ok });
-      })
-      .catch(() => { if (live) setCams({ loading: false, list: [], reachable: false }); });
-    return () => { live = false; };
-    // eslint-disable-next-line
-  }, [node.nodeId]);
-
-  // The node's recent events, ordered MOST CRITICAL FIRST (then newest).
-  useEffect(() => {
-    let live = true;
-    setEvents({ loading: true, list: [] });
-    api(`/api/notifications?nodeId=${encodeURIComponent(node.nodeId)}&limit=30`, { noRedirect: true })
-      .then((r) => {
-        if (!live) return;
-        const rows = Array.isArray(r.body?.items) ? r.body.items : (Array.isArray(r.body) ? r.body : []);
-        rows.sort((a, b) => {
-          const s = (SEV_RANK[(b.severity || '').toLowerCase()] || 0) - (SEV_RANK[(a.severity || '').toLowerCase()] || 0);
-          return s !== 0 ? s : (b.createdAt || 0) - (a.createdAt || 0);
-        });
-        setEvents({ loading: false, list: rows });
-      })
-      .catch(() => { if (live) setEvents({ loading: false, list: [] }); });
-    return () => { live = false; };
-  }, [node.nodeId]);
-
-  const toneKey = nodeToneKey(node, nowSec);
-  const tone = nodeTone(node, nowSec);
-  const pillClass = toneKey === 'online' ? 'online' : toneKey === 'critical' ? 'offline' : toneKey === 'warning' ? 'warn' : '';
-  const isCamera = nodeKindOf(node) === 'camera';
-  const unread = events.list.filter((e) => !e.isRead).length;
-  const onlineCams = cams.list.filter((c) => (c.healthStatus || '').toLowerCase() === 'online').length;
-
-  const tabs = [{ id: 'events', label: (<>{t('map.tabEvents')}{unread > 0 ? <span className="mp-tab-count danger">{unread}</span> : null}</>), icon: 'bell' }];
-  if (isCamera) tabs.push({ id: 'cameras', label: (<>{t('map.cameras')}{cams.list.length > 0 ? <span className="mp-tab-count">{cams.list.length}</span> : null}</>), icon: 'video' });
-  const activeTab = (tab === 'cameras' && !isCamera) ? 'events' : tab;
-
-  const renderEvents = () => {
-    if (events.loading) return <div className="mp-empty">{t('common.loading')}</div>;
-    if (events.list.length === 0) return <div className="mp-empty"><Ico n="bell" sz={22} /><span>{t('map.noEvents')}</span></div>;
-    return events.list.map((e) => {
-      const title = e.title || e.body || t('map.event');
-      const footage = eventHasFootage(e);
-      const main = (
-        <>
-          <span className={`sev-dot sev-${(e.severity || 'info').toLowerCase()}`} />
-          <span className="mp-event-title" title={e.body || e.title}>{title}</span>
-          {footage ? <span className="mp-event-cam" aria-hidden="true"><Ico n="camera" sz={12} /></span> : null}
-        </>
-      );
-      return (
-        <div key={e.id} className={`mp-event${e.isRead ? ' read' : ''}`}>
-          {footage ? (
-            <button
-              type="button"
-              className="mp-event-main has-footage"
-              title={t('map.openFootage')}
-              onClick={(ev) => onOpenMedia && onOpenMedia({ nodeId: node.nodeId, alertId: Number(e.refId), name: title }, ev.clientX, ev.clientY)}
-            >
-              {main}
-            </button>
-          ) : (
-            <span className="mp-event-main">{main}</span>
-          )}
-          <span className="mp-event-time">{shortAgo(e.createdAt)}</span>
-          {onLocate && Number(e.cameraId) > 0 ? (
-            <button type="button" className="mp-event-locate" title={t('map.locateOnPlan')} aria-label={t('map.locateOnPlan')} onClick={() => onLocate({ nodeId: node.nodeId, cameraId: e.cameraId, name: title })}>
-              <Ico n="map-pin" sz={13} />
-            </button>
-          ) : null}
-          {!e.isRead ? (
-            <button type="button" className="mp-event-ack" title={t('map.ack')} aria-label={t('map.ack')} onClick={() => ackEvent(e)}>
-              <Ico n="acknowledge" sz={13} />
-            </button>
-          ) : null}
-        </div>
-      );
-    });
-  };
-
-  const renderCameras = () => {
-    if (cams.loading) return <div className="mp-empty">{t('common.loading')}</div>;
-    if (!cams.reachable) return <div className="mp-empty"><Ico n="video" sz={22} /><span>{t('map.camsOffline')}</span></div>;
-    if (cams.list.length === 0) return <div className="mp-empty"><Ico n="video" sz={22} /><span>{t('map.noCams')}</span></div>;
-    const q = camQuery.trim().toLowerCase();
-    const shown = q ? cams.list.filter((c) => (c.name || `${c.id}`).toLowerCase().includes(q)) : cams.list;
-    return (
-      <>
-        {/* Sticky search once there are many cameras, so hundreds stay navigable — it stays put
-            while the list below scrolls. */}
-        {cams.list.length > 8 ? (
-          <div className="mp-camsearch">
-            <Ico n="search" sz={13} />
-            <input
-              type="text"
-              value={camQuery}
-              onChange={(e) => setCamQuery(e.target.value)}
-              placeholder={t('map.searchCams')}
-              aria-label={t('map.searchCams')}
-            />
-          </div>
-        ) : null}
-        {shown.length === 0 ? <div className="mp-empty"><span>{t('map.noCamMatch')}</span></div> : shown.map((c) => (
-          <button key={c.id} type="button" className="mp-cam" onClick={(e) => onPlay && onPlay({ nodeId: node.nodeId, cameraId: c.id, name: c.name || t('nodes.cameraN', { id: c.id }), ptzSupported: !!c.ptzSupported }, e.clientX, e.clientY)}>
-            <span className={`cam-dot ${((c.healthStatus || '').toLowerCase() === 'online') ? 'on' : 'off'}`} />
-            <span className="mp-cam-name">{c.name || t('nodes.cameraN', { id: c.id })}</span>
-            <Ico n="play" sz={12} />
-          </button>
-        ))}
-      </>
-    );
-  };
-
-  return (
-    <div className="mp-card" role="dialog" aria-label={node.name || node.nodeId}>
-      {/* The whole identity block is the "open node" affordance — clicking the node's name/icon
-          opens its management pages (a chevron hints at it on hover). No separate action icon. */}
-      <div className="mp-head">
-        <button
-          type="button"
-          className="mp-id"
-          onClick={() => onOpenNode && onOpenNode(node.nodeId)}
-          disabled={!onOpenNode}
-          title={onOpenNode ? t('map.openNode') : undefined}
-        >
-          <span className="mp-avatar" style={{ background: tone.color }}><Ico n={isCamera ? 'video' : 'cpu'} sz={15} /></span>
-          <span className="mp-title" title={node.name || node.nodeId}>{node.name || node.nodeId}</span>
-          {onOpenNode ? <span className="mp-id-go" aria-hidden="true"><Ico n="chev-right" sz={15} /></span> : null}
-        </button>
-        <button type="button" className="icon-button mp-close" onClick={onClose} aria-label={t('nset.close')}><Ico n="x" sz={14} /></button>
-      </div>
-
-      <div className="mp-meta">
-        <span className={`status-pill ${pillClass}`}>{t(`map.legend.${toneKey}`)}</span>
-        <span className="mp-meta-spacer" />
-        {isCamera && cams.list.length > 0 ? (
-          <span className="mp-stat" title={t('map.cameras')}><Ico n="video" sz={12} /> {onlineCams}/{cams.list.length}</span>
-        ) : null}
-        {unread > 0 ? <span className="mp-stat danger" title={t('map.events')}><Ico n="bell" sz={12} /> {unread}</span> : null}
-      </div>
-
-      {tabs.length > 1 ? (
-        <Tabs tabs={tabs} active={activeTab} onChange={setTab} ariaLabel={t('map.sections')} className="mp-tabs" />
-      ) : (
-        <div className="mp-solo-head"><Ico n="bell" sz={13} /> {t('map.events')} {unread > 0 ? <span className="mp-tab-count danger">{unread}</span> : null}</div>
-      )}
-
-      <div className="mp-body">
-        {activeTab === 'cameras' ? renderCameras() : renderEvents()}
-      </div>
-    </div>
-  );
-}
-NodeCameraPopup.propTypes = { node: PropTypes.object, nowSec: PropTypes.number, onOpenNode: PropTypes.func, onPlay: PropTypes.func, onOpenMedia: PropTypes.func, onLocate: PropTypes.func, onAck: PropTypes.func, onClose: PropTypes.func };
-
-// MapPopupFrame positions the node popup relative to the pin's VIEWPORT coordinates (x, y) and
-// keeps it fully on screen: centred over the pin and floated above it, but dropped below when the
-// header would clip the top edge, and clamped horizontally + vertically so it never spills out —
-// however tall the popup grows. It re-clamps whenever the popup's own size changes (its camera /
-// event lists load in asynchronously), so a node near any edge always shows its full header.
-function MapPopupFrame({ x, y, children }) {
-  const ref = useRef(null);
-  const [style, setStyle] = useState({ left: 0, top: 0, visibility: 'hidden' });
-
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return undefined;
-    const place = () => {
-      const r = el.getBoundingClientRect();
-      const M = 10; // viewport margin
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
-      const w = r.width;
-      const h = r.height;
-      const left = Math.max(M, Math.min(x - w / 2, vw - w - M));
-      let top = y - h - 14; // preferred: above the pin
-      if (top < M) top = y + 16; // not enough room above → drop below the pin
-      if (top + h > vh - M) top = Math.max(M, vh - h - M); // still overflowing → clamp
-      setStyle({ left, top, visibility: 'visible' });
-    };
-    place();
-    let ro;
-    if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(place); ro.observe(el); }
-    return () => { if (ro) ro.disconnect(); };
-  }, [x, y]);
-
-  return <div className="map-popup-anchor" ref={ref} style={style}>{children}</div>;
-}
-MapPopupFrame.propTypes = { x: PropTypes.number, y: PropTypes.number, children: PropTypes.node };
 
 // FleetMap is the geographic fleet view. Nodes appear as status pins over the offline basemap.
 // PLACING a node is click-first (the discoverable path): pick a node in the side list, then
@@ -505,7 +55,6 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   const [downloading, setDownloading] = useState(false);
   const [bmConfig, setBmConfig] = useState({ hasTool: false, envManaged: false, source: '' }); // download setup state
   const [setupOpen, setSetupOpen] = useState(false);
-  const sourceInputRef = useRef(null);
   const basemapLayersRef = useRef({}); // region name -> VectorTileLayer
   const regionsRef = useRef([]); // live [{ name, bounds }] for the once-bound moveend handler
 
@@ -1458,19 +1007,13 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
             onDrop={onDrop}
           />
           {outside || downloading ? (
-            <div className="fleet-map-download">
-              <span><Ico n="globe" sz={14} /> {t('map.noDataHere')}</span>
-              {canDownload ? (
-                <button type="button" onClick={downloadRegion} disabled={downloading}>
-                  {downloading ? <><Ico n="reload" sz={13} /> {t('map.downloading')}</> : <><Ico n="download" sz={13} /> {t('map.downloadRegion')}</>}
-                </button>
-              ) : (
-                <>
-                  <span className="fleet-map-download-note">{t('map.downloadNotConfigured')}</span>
-                  {!bmConfig.envManaged ? <button type="button" onClick={() => setSetupOpen(true)}><Ico n="sliders" sz={13} /> {t('map.setUp')}</button> : null}
-                </>
-              )}
-            </div>
+            <BasemapDownloadBanner
+              canDownload={canDownload}
+              downloading={downloading}
+              envManaged={bmConfig.envManaged}
+              onDownload={downloadRegion}
+              onSetUp={() => setSetupOpen(true)}
+            />
           ) : null}
           {popup ? (
             <MapPopupFrame x={popup.x} y={popup.y}>
@@ -1496,23 +1039,7 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
       {attribution ? <div className="fleet-map-attribution">{attribution}</div> : null}
 
       {setupOpen ? (
-        <div className="fd-overlay" role="dialog" aria-label={t('map.basemapSetup')}>
-          <div className="site-dialog">
-            <div className="site-dialog-title"><Ico n="globe" sz={16} /> {t('map.basemapSetup')}</div>
-            <p className="settings-hint" style={{ margin: 0 }}>{t('map.basemapSetupHint')}</p>
-            <label className="site-dialog-field">
-              <span>{t('map.sourceUrl')}</span>
-              <input ref={sourceInputRef} type="text" defaultValue={bmConfig.source || ''} placeholder="https://build.protomaps.com/20260719.pmtiles" />
-            </label>
-            <div className={`bm-tool-status ${bmConfig.hasTool ? 'ok' : 'bad'}`}>
-              <Ico n={bmConfig.hasTool ? 'check-ok' : 'warning'} sz={13} /> {bmConfig.hasTool ? t('map.toolInstalled') : t('map.toolMissing')}
-            </div>
-            <div className="site-dialog-actions">
-              <button type="button" className="quiet" onClick={() => setSetupOpen(false)}>{t('map.cancel')}</button>
-              <button type="button" onClick={() => saveSource((sourceInputRef.current && sourceInputRef.current.value.trim()) || '')}>{t('fd.save')}</button>
-            </div>
-          </div>
-        </div>
+        <BasemapSetupDialog config={bmConfig} onSave={saveSource} onCancel={() => setSetupOpen(false)} />
       ) : null}
 
       {wizardOpen ? (

@@ -269,6 +269,18 @@ eventually supersede this section's `map_page.js`/`fleet_map.js`/`fleet-map.css`
 these files yet: `App.js` still lazy-loads the shipped `map_page`, so none of the behavior
 described above has changed and the new components are not reachable from the UI.
 
+Separately, `fleet_map.js` itself was cut from ~1,570 lines down to ~1,100 as **Phase 0** of that
+same rework — a pure internal refactor, zero behavior change. Four pieces were lifted into their
+own sibling modules, all four *actually imported* by `fleet_map.js` (unlike the still-inert
+scaffolding above): `map/basemap_style.js` (the offline Protomaps vector-tile cartography —
+land/water/roads/borders + place labels), `map/markers.js` (site/node pin styling by kind and
+worst owning-node status, plus the colour/easing helpers the critical beacon uses), `map/popups.js`
+(the floating device card and the frame that anchors it to a pin without clipping off the
+viewport), and `map/basemap_ui.js` (the offline-basemap download banner and setup dialog).
+`fleet_map.js` keeps the workspace state, the OpenLayers boot/interactions, the rail, and the
+beacon ring itself (animated per-frame in the layer's prerender handler, so it stays with the
+map's own render loop rather than the static style modules).
+
 ## Fleet rules — cross-domain correlation
 
 **This is the reason the suite has a fourth app (`myiotsan`) — and the fifth (`mypintusan`)
