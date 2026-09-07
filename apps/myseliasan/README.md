@@ -90,19 +90,32 @@ created, positioned and authored entirely from it:
   with every camera inside, from any node** (`BuildingFloorView`, see below); a point asset's
   editor has no area tabs to switch between (it owns exactly one, unnamed), but the plan itself,
   the camera palette and the drill-down are otherwise identical to a building's.
-- **Site-centric rail**: the side rail lists **every site**, grouped by kind (buildings, outdoor
-  areas, point assets — a stable order so the headings don't jump around) — placed and unplaced —
-  each with a status dot (worst among the nodes that answer for it) and camera count. A building
-  or outdoor row has an expand caret that lazily lists its **floors/areas** (1st floor, Kitchen,
-  Carporch…, `GET /api/sites/{id}/floors`, fetched once per expand and invalidated whenever the
-  building editor changes its areas) — clicking a floor row jumps straight into the building editor
-  on that specific area (not just the first one). A placed row flies the map to it on click; an
-  unplaced one enters placing mode the same way it always did. A point asset's row has an **edit**
-  (pencil) button too, opening the same `BuildingEditorDialog` as any other kind — it has no walls
-  to draw, but it has its one implicit area to drop cameras onto and aim. Nodes not yet assigned to any site appear in a separate **"Appliances"** section below
-  the site list, each row offering a site-selector dropdown (`PUT /api/nodes/{id}/building`) —
-  assigning one is now the *only* way an appliance is represented on the map, since it stops
-  needing a pin of its own the moment it belongs somewhere.
+- **Twin-tree rail** (`map/twin_tree.js`): the side rail is **two trees**, not a flat list, because
+  one fact the old flat rail couldn't express is that a single `mymatasan` recorder's cameras can
+  live in *different* places — so a node is an **occupant** of a place, never its container.
+  **"Everywhere"** is the digital twin — place ▸ area ▸ camera — with kind shown as a small **glyph**
+  on the row rather than a group heading, and the owning recorder shown beside each camera as a
+  **dim tag**, never as a parent; a placement with no camera (the appliance's own map pin) renders
+  as a leaf tagged "the appliance". A point asset's single implicit area is not shown as its own
+  level — it's unnamed by the operator — so its cameras hang straight off the place. The root row
+  carries a **"{placed} / {total} placed"** counter (a trailing **+** whenever some appliance can't
+  be reached, since the total is then only a lower bound) — the progress bar for the whole
+  authoring job. **"Not placed yet"** is the tray, and the *only* branch where a node is a parent,
+  because "which recorder is it on" is how an operator finds a camera that still needs a home: it
+  lists each node's cameras holding no pin, plus any node whose own box pin is missing ("location
+  not set"). An unreachable node reports **"cameras unknown"**, never "0 unplaced" — folding those
+  together would tell an operator the job is finished when it isn't. Expanding a place lazily fetches
+  its areas *with* their placements in one call (`GET /api/sites/{id}/floorplans`, not `/floors`
+  plus a second round-trip per area); a fleet-wide `GET /api/placements` index is what lets the tray
+  subtract "already pinned" from each node's live camera list, and the per-node camera fetch over
+  the tunnel now covers **every** adopted node, not only nodes at placed sites, so an unplaced
+  node's cameras can still show up in the tray. One search box filters both trees and keeps the
+  ancestors of a match. Indentation uses logical CSS properties, so the tree nests from the right
+  in Arabic. **Gap**: the old rail's per-node building-selector dropdown (`PUT
+  /api/nodes/{id}/building`) is gone with the flat rail it lived in, and nothing in the UI writes
+  `ManagedNode.SiteId` today — a node still colours into its place if `SiteId` was set earlier, but
+  there is currently no screen to set or change it. That returns in a later phase as the node's own
+  **box pin**, meant to become the sole writer of `SiteId`.
 - **Adding an asset**: a **`+ Add`** button in the rail opens a wizard (`asset_wizard.js`,
   replacing the old building-only `building_wizard.js`) whose first question is **what is being
   added** — building / outdoor area / point asset — because the kind decides everything after: a
@@ -710,6 +723,8 @@ The CA private key (`pairing.caKey`), the control plane's own parent leaf privat
 ## Frontend
 
 The UI is a React/webpack SPA under `apps/myseliasan/views/react-webpack/`, built into `apps/myseliasan/static/` (content-hashed bundles), mirroring `mymatasan`'s frontend architecture. Myseliasan-only styling lives in `styles/app.css` and the shared RBAC-standard rail in `styles/rbac-standard.css`. Build with `npm install && npm run build` in that directory.
+
+**After moving code between modules, run `npm run lint:undef`** (`eslint.undef.config.mjs`, a deliberately tiny config with only the `no-undef` rule). Webpack compiles a reference to an identifier that was never imported or declared without a word of complaint — a runtime `ReferenceError`, not a build error — so a file split can ship with a broken branch that a green `make web` and a passing bench never reach; this is exactly how `markerShape` (`fleet_map.js`) and `useCallback`/`nodeKindOf`/`nodeToneKey` (`components/map/popups.js`) went missing across the fleet-map file split.
 
 The shell uses the standardized dark icon side-nav (`SideNav` from `components/layout.js`). The **Workspace** group holds **Dashboard**, an **AI Insight** nav item (the fleet digest + ask-the-fleet chat, see "AI Agent" above — only rendered when the caller's role can `GET /api/agent`), and a **Map** nav item (the fleet map — geographic view with in-place building creation/authoring, see "Fleet Map" above; its OpenLayers-based components are lazy-loaded on first open). Below that sit top-level **Live Views**, **Objects**, and **Teach** nav items positioned above a bespoke **Nodes tree**: an expandable branch listing adopted nodes (root item → fleet page/node dashboard, child items → each node's own camera sub-tree, lazily loaded over the tunnel on first expand). Selecting a node opens its `NodeDashboard`; selecting a camera under it opens that camera's full page (Live View/Detection/Recordings/Settings). A single click on a node row now both navigates **and** expands its camera sub-tree (matching the root Nodes row); the caret or a double-click collapses/toggles it. Each camera row shows a liveness dot (green online / red offline / grey unknown) driven by the node-reported camera health, mirroring mymatasan's own camera nav. Admin pages (Users, Roles, Audit Log) appear under the **Administration** group — the former separate RBAC permission-matrix page is now part of the **Roles** page (see "Node management" above), which includes a central **Node Access** matrix where a superadmin assigns per-role node access (**Viewer** / **Operator** / **Admin**). A **System** group holds the badged **Notifications** nav item (see "Notifications" above), a **Reports** nav item (see "Reports" above), an ungated **Help** nav item (every role, including a pending-clearance viewer — see "Built-in user manual" above), and the superadmin-only **Settings** page (see "Settings" above). The side-nav's internal list area now scrolls independently of the fixed brand/account chrome (`--nav-scroll` tokens in `styles/rbac-standard.css`), matching mymatasan. A **pin/auto-hide toggle** in the brand slot (`nav-pin-toggle`, ported from mymatasan's own rail) lets the rail collapse to a 68px hover-expanding icon strip instead of always sitting in the grid flow; the choice is persisted to `localStorage` (`myseliasan_nav_pinned`) and applied via a `nav-autohide` class on `.app-shell`. It only takes effect at `min-width: 1081px` — mymatasan's rail stacks at `<=860px` but this app's stacks at `<=1080px`, and auto-hide is neutralized below that breakpoint since a fixed hover-strip makes no sense in a stacked layout.
 

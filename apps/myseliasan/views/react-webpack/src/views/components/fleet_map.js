@@ -6,13 +6,14 @@ import { nodeTone, nodeToneKey, TONES } from '../lib/fleet_status';
 import { BuildingFloorView, CameraWindow, MediaWindow } from './node_floor_view';
 import { AssetWizard } from './asset_wizard';
 import { BuildingEditorDialog } from './building_editor_dialog';
-import { KIND_BUILDING, KIND_OUTDOOR, KIND_POINT, KIND_ORDER, normKind, hasDrawablePlan, siteGlyph } from './site_kinds';
+import { normKind, siteGlyph } from './site_kinds';
 // The map's own pieces, lifted out of this file so the workspace below is state and composition
 // rather than 1,600 lines of cartography, canvas styling and floating cards.
 import { basemapStyle } from './map/basemap_style';
-import { SEV_COLOR, PULSE_PERIOD, hexToRgba, easeOutCubic, pinStyle, siteStyle } from './map/markers';
+import { SEV_COLOR, PULSE_PERIOD, hexToRgba, easeOutCubic, markerShape, pinStyle, siteStyle } from './map/markers';
 import { NodeCameraPopup, MapPopupFrame, eventSnapshotSrc, recordingStreamSrc, SEV_RANK } from './map/popups';
 import { BasemapDownloadBanner, BasemapSetupDialog } from './map/basemap_ui';
+import { TwinTree } from './map/twin_tree';
 
 // OpenLayers, driven directly through refs (no React wrapper - see the note in Phase 0).
 import Map from 'ol/Map.js';
@@ -31,6 +32,7 @@ import { getVectorContext } from 'ol/render.js';
 import { PMTilesVectorSource } from 'ol-pmtiles';
 import 'ol/ol.css';
 import '../styles/fleet-map.css';
+import '../styles/twin-tree.css';
 
 const DEFAULT_CENTER = [109.45, 4.15];
 const DEFAULT_ZOOM = 6;
@@ -149,6 +151,9 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   const [notifByNode, setNotifByNode] = useState({});
   const [notifByCam, setNotifByCam] = useState({}); // "nodeId::cameraId" -> { count, sev } — building attribution
   const [camHealth, setCamHealth] = useState({}); // "nodeId::cameraId" -> health string ('online'|'offline'|…)
+  // nodeId -> { loading, error, cams }. `error` is load-bearing: an unreachable node's cameras are
+  // UNKNOWN, and the tree must never render that as "nothing left to place".
+  const [camsByNode, setCamsByNode] = useState({});
   const pinLayerRef = useRef(null);
   const notifReloadRef = useRef(null); // the notif-tally loader, so an ack can refresh pin badges now
   // Buildings (sites) are the OTHER thing on the map — a building is where cameras physically live,
@@ -159,8 +164,16 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   const [showLayers] = useState({ buildings: true, nodes: false });
   // Which building rows in the rail are expanded, and the lazily-loaded floors/areas inside each
   // (id -> { loading, error, list }). A building's children are its floor plans (1st floor, kitchen…).
-  const [expandedSites, setExpandedSites] = useState({});
-  const [floorsBySite, setFloorsBySite] = useState({});
+  // The tree's open branches, as one set of keys ("places", "tray", "site:3", "area:11") rather
+  // than a map per level - a tree has one expansion state, whatever the depth of the row.
+  const [expanded, setExpanded] = useState(() => new Set(['places', 'tray']));
+  // Per-site areas WITH their placements, so expanding a place yields its areas and the cameras
+  // pinned in them in one request rather than a second round-trip per area.
+  const [plansBySite, setPlansBySite] = useState({});
+  // Fleet-wide "what already holds a pin", so the tray can subtract it from each node's live
+  // camera list. It is the placement index the editor palette already uses.
+  const [placedKeys, setPlacedKeys] = useState(() => new Set());
+  const [treeQuery, setTreeQuery] = useState('');
   // Adding a building is a three-beat flow owned here: the wizard collects name/glyph/areas, the
   // map takes the drop point, then the editor opens on the building just created. editorSite is
   // also the re-entry point for an EXISTING building (from the rail or the drill-down).
@@ -232,27 +245,52 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
     return () => { live = false; clearInterval(iv); };
   }, []);
 
-  // Live camera health for the cameras in PLACED buildings, so a building marker can show
-  // "online / total" — a camera that drops while its NODE is still up is otherwise invisible on
-  // the map (the building tone only tracks node status). Refetched whenever the overview changes
-  // (~30s); one proxy call per owning node, skipped when there are no placed buildings.
+  // Every adopted node's live camera list, over the tunnel. It answers two questions at once:
+  //   marker health - "online / total" on a place's badge, so a camera that drops while its NODE
+  //                   is still up is not invisible (a place's tone only tracks node status);
+  //   the tray      - which of a recorder's cameras hold no pin yet.
+  // It covers the WHOLE fleet rather than only placed sites, because the tray's whole job is the
+  // cameras that are nowhere yet - and those live on nodes that may sit at no place at all.
+  //
+  // A node that cannot be reached is recorded as `error`, never as an empty list. "We could not
+  // ask" and "there is nothing left to place" are different answers, and collapsing them would
+  // quietly tell an operator the job is finished.
   useEffect(() => {
     let live = true;
-    const nodeIds = Array.from(new Set(sites.filter((s) => s.site && s.site.mapPlaced).flatMap((s) => resolvedNodeIds(s))));
-    if (nodeIds.length === 0) { setCamHealth({}); return undefined; }
-    Promise.all(nodeIds.map((nid) => api(`/api/nodes/${encodeURIComponent(nid)}/proxy/api/cameras?limit=200`, { noRedirect: true })
-      .then((r) => ({ nid, list: r.ok ? (Array.isArray(r.body) ? r.body : (r.body?.items || [])) : [] }))
-      .catch(() => ({ nid, list: [] }))))
+    const ids = nodes.map((n) => n && n.nodeId).filter(Boolean);
+    if (ids.length === 0) { setCamHealth({}); setCamsByNode({}); return undefined; }
+    setCamsByNode((m) => {
+      const next = { ...m };
+      ids.forEach((nid) => { if (!next[nid]) next[nid] = { loading: true, cams: [] }; });
+      return next;
+    });
+    Promise.all(ids.map((nid) => api(`/api/nodes/${encodeURIComponent(nid)}/proxy/api/cameras?limit=200`, { noRedirect: true })
+      .then((r) => ({ nid, ok: !!r.ok, list: r.ok ? (Array.isArray(r.body) ? r.body : (r.body?.items || [])) : [] }))
+      .catch(() => ({ nid, ok: false, list: [] }))))
       .then((results) => {
         if (!live) return;
-        const m = {};
-        results.forEach(({ nid, list }) => {
-          list.forEach((c) => { m[`${nid}::${c.id}`] = (c.healthStatus || '').toLowerCase(); });
+        const health = {};
+        const byNode = {};
+        results.forEach(({ nid, ok, list }) => {
+          byNode[nid] = ok ? { loading: false, cams: list } : { loading: false, error: true, cams: [] };
+          if (ok) list.forEach((c) => { health[`${nid}::${c.id}`] = (c.healthStatus || '').toLowerCase(); });
         });
-        setCamHealth(m);
+        setCamHealth(health);
+        setCamsByNode(byNode);
       });
     return () => { live = false; };
-  }, [sites, resolvedNodeIds]);
+  }, [nodes]);
+
+  // Fleet-wide placement index: every camera (and appliance) that already holds a pin. The tray
+  // subtracts it from each node's camera list. Refreshed alongside the site overview so placing
+  // something in the editor removes it from the tray without a reload.
+  const reloadPlaced = useCallback(() => api('/api/placements', { noRedirect: true })
+    .then((r) => {
+      const rows = r.ok && Array.isArray(r.body) ? r.body : [];
+      setPlacedKeys(new Set(rows.map((p) => `${p.nodeId}::${p.cameraId || ''}`)));
+    })
+    .catch(() => {}), []);
+  useEffect(() => { reloadPlaced(); }, [reloadPlaced, sites]);
 
   // A site's cameras are the ones PLACED there — for every kind, including a point asset, which
   // now owns an implicit area to pin them to.
@@ -353,14 +391,14 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   // see and click, not an inferred list borrowed from whichever appliance was assigned to it.
   // focusFloorId opens the drill-down on a SPECIFIC area (clicked in the rail), rather than the
   // default first plan — otherwise clicking one area could land you on the other.
-  const openBuilding = useCallback(async (site, px, focusFloorId) => {
+  const openBuilding = useCallback(async (site, px, focusFloorId, focusCameraId) => {
     let plans = [];
     try {
       const res = await api(`/api/sites/${site.id}/floorplans`);
       plans = res.ok && Array.isArray(res.body) ? res.body.filter((p) => p && p.floor) : [];
     } catch (_) { /* open empty */ }
     setPopup(null);
-    setDrill({ kind: 'site', site, floorplans: plans, focusFloorId });
+    setDrill({ kind: 'site', site, floorplans: plans, focusFloorId, focusCameraId });
   }, []);
   const openBuildingRef = useRef(openBuilding);
   openBuildingRef.current = openBuilding;
@@ -402,20 +440,6 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
     (nodesBySiteId[s.id] || []).forEach((n) => { if (ids.indexOf(n.nodeId) < 0) ids.push(n.nodeId); });
     return ids;
   }, [nodesBySiteId]);
-  // A site's rail status = the worst status among the nodes that answer for it.
-  const siteToneKey = (row) => {
-    const order = ['critical', 'warning', 'online', 'idle'];
-    let worst = 'idle';
-    resolvedNodeIds(row).forEach((nid) => { const k = nodeToneKey(nodesById[nid], nowSec); if (order.indexOf(k) < order.indexOf(worst)) worst = k; });
-    return worst;
-  };
-  // Sites split by kind for the rail, each group in the wizard's order so the headings are stable.
-  const sitesByKind = useMemo(() => {
-    const g = { [KIND_BUILDING]: [], [KIND_OUTDOOR]: [], [KIND_POINT]: [] };
-    sites.forEach((row) => { if (row.site) g[normKind(row.site.kind)].push(row); });
-    return g;
-  }, [sites]);
-
   const persistPosition = useCallback(async (nodeId, lon, lat) => {
     try {
       const res = await api(`/api/nodes/${nodeId}/position`, { method: 'PUT', body: JSON.stringify({ lat, lon, placed: true }) });
@@ -480,47 +504,68 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   }, []);
   const openEditorRef = useRef(openEditor);
   openEditorRef.current = openEditor;
+
+  // --- what the tree's rows do -----------------------------------------------------------------
+  // Deliberately the SAME verbs the flat rail had, so this phase changes the shape of the rail and
+  // nothing about what clicking things does. A place that is on the map flies to it; one that is
+  // not enters placing mode, because "drop me somewhere" is the only thing left to do with it.
+  const openSiteFromTree = useCallback((row) => {
+    const s = row.site;
+    if (s.mapPlaced) { flyToSite(s); return; }
+    setPlacing((cur) => (cur && cur.kind === 'site' && cur.id === s.id
+      ? null
+      : { kind: 'site', id: s.id, name: s.name, siteKind: normKind(s.kind) }));
+  }, [flyToSite]);
+
+  // A camera leaf opens the plan it is pinned to, with that camera highlighted - the tree found
+  // it, so the map should land on it rather than on the area in general.
+  const openCameraFromTree = useCallback((site, floor, placement) => {
+    openBuilding(site, null, floor.id, placement.cameraId);
+  }, [openBuilding]);
+
+  // An appliance row opens its device card. The popup anchors to viewport coordinates, so the
+  // click's own position is what keeps the card next to the row it came from.
+  const selectNodeFromTree = useCallback((node, x, y) => {
+    if (!node || !node.nodeId) return;
+    setDrill(null);
+    setPopup({ node, x: Math.round(x || 0), y: Math.round(y || 0) });
+  }, []);
   // The OL click handler is bound once, so it reads the live site list through a ref to resolve
   // the id it just placed into the full row the editor needs.
   const sitesRef = useRef(sites);
   sitesRef.current = sites;
 
-  // Assign a node to the building it resides in (siteId), or clear it (siteId 0). Assigning takes
-  // the node off the map (a building-resident node has no own pin); clearing returns it to the
-  // "needs a home" list. The building's own marker then represents the node.
-  const assignBuilding = useCallback(async (nodeId, siteId) => {
+  // Lazily fetch a place's areas WITH their placements the first time its branch opens. One call
+  // (/floorplans, not /floors) because the tree's leaves are the cameras pinned in each area, so
+  // fetching areas alone would only mean a second request per area a moment later.
+  const loadSitePlans = useCallback(async (siteId) => {
+    setPlansBySite((m) => ({ ...m, [siteId]: { ...(m[siteId] || { list: [] }), loading: true } }));
     try {
-      const res = await api(`/api/nodes/${nodeId}/building`, { method: 'PUT', body: JSON.stringify({ siteId }) });
-      if (!res.ok) throw new Error('save failed');
-      setPopup(null);
-      if (reloadNodes) reloadNodes();
+      const res = await api(`/api/sites/${siteId}/floorplans`, { noRedirect: true });
+      const list = res.ok && Array.isArray(res.body)
+        ? res.body.filter((p) => p && p.floor).sort((a, b) => (a.floor.ordinal || 0) - (b.floor.ordinal || 0))
+        : [];
+      setPlansBySite((m) => ({ ...m, [siteId]: { loading: false, list } }));
     } catch (_) {
-      if (onToast) onToast(t('map.saveFailed'), 'error');
-      if (reloadNodes) reloadNodes();
-    }
-  }, [reloadNodes, onToast, t]);
-
-  // Lazily fetch a building's floors/areas the first time its rail row is expanded.
-  const loadSiteFloors = useCallback(async (siteId) => {
-    setFloorsBySite((m) => ({ ...m, [siteId]: { ...(m[siteId] || {}), loading: true } }));
-    try {
-      const res = await api(`/api/sites/${siteId}/floors`, { noRedirect: true });
-      const list = res.ok && Array.isArray(res.body) ? res.body.slice().sort((a, b) => (a.ordinal || 0) - (b.ordinal || 0)) : [];
-      setFloorsBySite((m) => ({ ...m, [siteId]: { loading: false, list } }));
-    } catch (_) {
-      setFloorsBySite((m) => ({ ...m, [siteId]: { loading: false, error: true, list: [] } }));
+      setPlansBySite((m) => ({ ...m, [siteId]: { loading: false, error: true, list: [] } }));
     }
   }, []);
-  const toggleSite = useCallback((siteId) => {
-    setExpandedSites((e) => ({ ...e, [siteId]: !e[siteId] }));
-  }, []);
-  // Fetch floors for any expanded building we don't have them for. Driven off state (rather than the
-  // click) so an editor change that drops the cache re-loads the row that is still open.
-  useEffect(() => {
-    Object.keys(expandedSites).forEach((id) => {
-      if (expandedSites[id] && !floorsBySite[id]) loadSiteFloors(Number(id));
+  const toggleBranch = useCallback((key) => {
+    setExpanded((cur) => {
+      const next = new Set(cur);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
     });
-  }, [expandedSites, floorsBySite, loadSiteFloors]);
+  }, []);
+  // Load the areas of any open place we don't have yet. Driven off state rather than the click, so
+  // an editor change that drops the cache re-loads the branch that is still open.
+  useEffect(() => {
+    expanded.forEach((key) => {
+      if (key.indexOf('site:') !== 0) return;
+      const id = Number(key.slice(5));
+      if (id && !plansBySite[id]) loadSitePlans(id);
+    });
+  }, [expanded, plansBySite, loadSitePlans]);
 
   // Build the map once.
   useEffect(() => {
@@ -853,83 +898,6 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
     setPlacing(null);
   }
 
-  // A node rail row: status + name + a building selector. On a buildings-centric map a node is only
-  // ever assigned to a building (which then represents it on the map) — there is no standalone place.
-  const renderNodeRow = (n) => (
-    <li key={n.nodeId} className="fleet-map-rail-noderow">
-      <span className="rail-dot" style={{ background: nodeTone(n, nowSec).color }} />
-      <span className="rail-name" title={n.name || n.nodeId}>{n.name || n.nodeId}</span>
-      <select
-        className="rail-building-select"
-        value={n.siteId ? String(n.siteId) : ''}
-        onChange={(e) => assignBuilding(n.nodeId, Number(e.target.value) || 0)}
-        title={t('map.residesIn')}
-        aria-label={t('map.residesIn')}
-      >
-        <option value="">{t('map.noBuilding')}</option>
-        {allSites.map((s) => <option key={s.id} value={s.id}>{`${siteGlyph(s)} ${s.name}`}</option>)}
-      </select>
-    </li>
-  );
-
-  // One rail row per site. A building or outdoor area expands to the plans inside it; a point asset
-  // has none, so its caret is replaced by a spacer and its pencil renames the marker instead of
-  // opening an editor.
-  const renderSiteRow = (row) => {
-    const s = row.site;
-    const kind = normKind(s.kind);
-    const onMap = !!s.mapPlaced;
-    const worst = siteToneKey(row);
-    // A point asset expands to nothing: its single area is implicit and unnamed to the operator.
-    const expandable = hasDrawablePlan(kind);
-    const isOpen = expandable && !!expandedSites[s.id];
-    const fl = floorsBySite[s.id];
-    const placingThis = placing && placing.kind === 'site' && placing.id === s.id;
-    const camCount = row.cameras || resolvedCamKeys(row).length;
-    return (
-      <li key={`site-${s.id}`} className="fleet-map-rail-bldgwrap">
-        <div className="fleet-map-rail-siterow">
-          {expandable ? (
-            <button type="button" className="rail-expand" onClick={() => toggleSite(s.id)} aria-label={t('map.showFloors')} aria-expanded={isOpen}><Ico n={isOpen ? 'chev-down' : 'chev-right'} sz={12} /></button>
-          ) : <span className="rail-expand-spacer" />}
-          <button
-            type="button"
-            className={`fleet-map-rail-node${placingThis ? ' active' : ''}`}
-            draggable={!onMap}
-            onDragStart={!onMap ? (e) => { e.dataTransfer.setData('text/site-id', String(s.id)); e.dataTransfer.effectAllowed = 'move'; setPlacing(null); } : undefined}
-            onClick={() => (onMap ? flyToSite(s) : setPlacing(placingThis ? null : { kind: 'site', id: s.id, name: s.name, siteKind: kind }))}
-            title={onMap ? t('map.flyTo') : t('map.placeHint')}
-          >
-            <span className="rail-dot" style={{ background: TONES[worst].color }} />
-            <span className="rail-emoji" aria-hidden="true">{siteGlyph(s)}</span>
-            <span className="rail-name">{s.name}</span>
-            {camCount ? <span className="rail-count" title={t('map.cameras')}>{camCount}<Ico n="video" sz={11} /></span> : null}
-            {placingThis ? <Ico n="map-pin" sz={14} /> : (!onMap ? <span className="rail-toplace" title={t('map.notOnMap')} aria-label={t('map.notOnMap')}><Ico n="map-pin" sz={12} /></span> : null)}
-          </button>
-          <button type="button" className="rail-edit-btn" onClick={() => openEditor(s)} title={expandable ? t('bld.editAreas') : t('map.editAsset')} aria-label={expandable ? t('bld.editAreas') : t('map.editAsset')}>
-            <Ico n="edit-2" sz={13} />
-          </button>
-        </div>
-        {isOpen ? (
-          <ul className="fleet-map-rail-sublist">
-            {!fl || fl.loading ? (
-              <li className="rail-subfloor muted">{t('common.loading')}</li>
-            ) : !fl.list.length ? (
-              <li className="rail-subfloor muted">{t('map.noAreasYet')}</li>
-            ) : fl.list.map((f) => (
-              <li key={f.id} className="rail-subfloor">
-                <button type="button" className="rail-floor-btn" onClick={() => openBuilding(s, null, f.id)} title={f.name}>
-                  <Ico n="layers" sz={11} />
-                  <span className="rail-name">{f.name}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-      </li>
-    );
-  };
-
   return (
     <section className="settings-panel span-two fleet-map-panel">
       <header>
@@ -949,47 +917,27 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
       {state === 'nobasemap' ? <p className="settings-hint">{t('map.noBasemap')}</p> : null}
 
       <div className="fleet-map-body">
-        <aside className="fleet-map-rail">
-          <div className="fleet-map-rail-head">
-            <span>{t('map.assets')} <span className="count-badge">{sites.length}</span></span>
-            <button type="button" className="rail-addbuilding" onClick={() => setWizardOpen(true)} disabled={busy} title={t('map.addAsset')}>
-              <Ico n="plus" sz={13} /> {t('map.addAsset')}
-            </button>
-          </div>
-          {/* One scroll region for the whole rail body — see .fleet-map-rail-scroll. */}
-          <div className="fleet-map-rail-scroll">
-          {sites.length === 0 && nodesToPlace.length === 0 ? (
-            <div className="fleet-map-rail-empty"><Ico n="building" sz={22} /><span>{t('map.noAssetsYet')}</span></div>
-          ) : (
-            <>
-              {/* Assets grouped by what they ARE — buildings, outdoor areas, point assets — so a
-                  junction doesn't sit in a list headed "Buildings". A group with nothing in it is
-                  simply absent. Placed assets fly-to on click; unplaced ones enter placing mode. */}
-              {KIND_ORDER.map((k) => (sitesByKind[k].length === 0 ? null : (
-                <div key={`grp-${k}`} className="fleet-map-rail-kindgroup">
-                  <div className="fleet-map-rail-group">
-                    <Ico n={k === KIND_BUILDING ? 'building' : (k === KIND_OUTDOOR ? 'grid2' : 'map-pin')} sz={12} />
-                    {t(`bld.kindPlural.${k}`)} <span className="count-badge">{sitesByKind[k].length}</span>
-                  </div>
-                  <ul className="fleet-map-rail-list">
-                    {sitesByKind[k].map((row) => renderSiteRow(row))}
-                  </ul>
-                </div>
-              )))}
-              {/* Appliances not yet at any asset — assign each to one. */}
-              {nodesToPlace.length > 0 ? (
-                <>
-                  <div className="fleet-map-rail-group"><Ico n="cpu" sz={12} /> {t('map.nodesToPlace')} <span className="count-badge">{nodesToPlace.length}</span></div>
-                  <div className="fleet-map-rail-hint">{t('map.assignHint')}</div>
-                  <ul className="fleet-map-rail-list">
-                    {nodesToPlace.map((n) => renderNodeRow(n))}
-                  </ul>
-                </>
-              ) : null}
-            </>
-          )}
-          </div>
-        </aside>
+        <TwinTree
+          sites={sites}
+          nodes={nodes}
+          nodesById={nodesById}
+          nowSec={nowSec}
+          plansBySite={plansBySite}
+          camsByNode={camsByNode}
+          placedKeys={placedKeys}
+          expanded={expanded}
+          onToggle={toggleBranch}
+          query={treeQuery}
+          onQuery={setTreeQuery}
+          placing={placing}
+          onAddSite={() => setWizardOpen(true)}
+          onOpenSite={openSiteFromTree}
+          onOpenArea={(site, floorId) => openBuilding(site, null, floorId)}
+          onOpenCamera={openCameraFromTree}
+          onEditSite={openEditor}
+          onSelectNode={selectNodeFromTree}
+          onPlayCamera={playCamera}
+        />
 
         <div className="fleet-map-stage">
           {placing ? (
@@ -1051,8 +999,8 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
           site={editorSite}
           nodes={nodes}
           onToast={onToast}
-          onClose={() => { const id = editorSite.id; setEditorSite(null); setFloorsBySite((m) => { const c = { ...m }; delete c[id]; return c; }); if (siteReloadRef.current) siteReloadRef.current(); }}
-          onChanged={() => { setFloorsBySite((m) => { const c = { ...m }; delete c[editorSite.id]; return c; }); if (siteReloadRef.current) siteReloadRef.current(); }}
+          onClose={() => { const id = editorSite.id; setEditorSite(null); setPlansBySite((m) => { const c = { ...m }; delete c[id]; return c; }); if (siteReloadRef.current) siteReloadRef.current(); }}
+          onChanged={() => { setPlansBySite((m) => { const c = { ...m }; delete c[editorSite.id]; return c; }); if (siteReloadRef.current) siteReloadRef.current(); }}
         />
       ) : null}
 

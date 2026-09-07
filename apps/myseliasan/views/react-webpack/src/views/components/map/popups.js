@@ -1,8 +1,9 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
 import { useT, Ico, Tabs } from '@shared';
 import { api, apiBase } from '../../lib/helpers';
-import { nodeTone } from '../../lib/fleet_status';
+import { nodeTone, nodeToneKey } from '../../lib/fleet_status';
+import { nodeKindOf } from '../layout';
 
 // The floating cards the map opens over itself: a node's device card (status, cameras, events)
 // and the frame that anchors any of them to a pin without letting it clip off the viewport.
