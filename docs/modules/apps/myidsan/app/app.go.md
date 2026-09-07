@@ -126,6 +126,13 @@ Implements the `myidsan` app module for the shared runtime host.
   registered right after, so a request against the closed DB pool gets a clean `503`
   instead of a raw `500` once a reset starts. Hidden unless `bootstrap.allowReset` is
   true, which myidsan ships **false**.
+- Mounts the **built-in user manual** via `apis.NewManualApi(api)` (see
+  `apis/manual.go.md`, `apps/myidsan/manual/manual.go.md`) right after `apis.NewSystemApi`,
+  on the bare router with **no auth middleware** — deliberately, since the sign-in screen and
+  the first-run wizard are exactly where the manual is needed and neither has a session yet.
+  Seeds a `Public` endpoint row (`Title: "User Manual"`, `Path: "/api/manual"`) alongside the
+  other pre-session rows (`/api/auth`, `/api/callback`, `/api/file-storage/download`) in
+  `Seeders`. This is myidsan's first manual — previously it shipped none at all.
 - Wires up **WebAuthn / FIDO2 security keys** as a second factor kind alongside TOTP (a user
   may hold either or both; the login gate accepts whichever is presented): resolves
   `deps.Config.WebAuthn.Effective()` and builds `services.NewWebAuthnService` over a

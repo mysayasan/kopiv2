@@ -16,6 +16,7 @@ import {
   setCookie
 } from '../lib/api'
 import { Ico, DataTable as ClientDataTable, ToastStack, SideNav, LangProvider, LanguageDropdown, AppFooter, BrandLogo, normalizeLang, useT } from '@shared'
+import { ManualProvider, ManualLibrary, HelpButton, useManual } from '@shared/Manual'
 import { enBundle, loadLocaleDict } from './i18n'
 import SetupWizard from './components/setup'
 import { SettingsPage } from './components/settings'
@@ -40,6 +41,22 @@ const dashboardSection = {
   code: 'DA',
   icon: 'monitor',
   paths: []
+}
+
+// manualSection is the Help entry. It is declared here rather than in routeCatalog because it
+// must NOT be matrix-gated: /api/manual is Public, and the reader most in need of it is the one
+// whose role reveals almost nothing — a viewer who cannot find out why their menu is short is
+// exactly who the manual is written for. buildVisibleSections appends it unconditionally.
+const manualSection = {
+  id: 'manual',
+  label: 'Help',
+  group: 'System',
+  order: 999,
+  tone: 'steel',
+  code: 'HE',
+  icon: 'book',
+  paths: [],
+  summary: 'The built-in manual: signing in, connecting apps, second factors, backup and restore.'
 }
 
 const routeCatalog = [
@@ -72,7 +89,9 @@ const routeCatalog = [
   { id: 'profile', label: 'Profile', group: 'Account', order: 5, tone: 'green', code: 'ME', icon: 'user', paths: [], summary: 'Your account: change your password and manage two-factor authentication.', chipOnly: true }
 ]
 
-const routeCatalogById = routeCatalog.reduce((acc, section) => {
+// Includes manualSection: this map is what activeKnown consults, so leaving Help out of it would
+// bounce the reader straight back to the dashboard the moment they clicked it.
+const routeCatalogById = [...routeCatalog, manualSection].reduce((acc, section) => {
   acc[section.id] = section
   return acc
 }, {})
@@ -230,10 +249,16 @@ function LoginBrand({ subtitle }) {
 // screen was the one screen in the product where someone who needs the high-contrast palette,
 // or cannot read English, had no way to say so. On an IDENTITY PROVIDER that is the screen most
 // likely to be the first thing a stranger to the product ever sees.
-function AuthControls({ lang, onLangChange, theme, onThemeChange }) {
-  if (!onLangChange && !onThemeChange) return null
+// `help` is a rendered <LoginHelpLink>, not a slug pair. Passing the element means each screen
+// names its own article and anchor as literal JSX attributes, which is the shape the build guard
+// can actually read — see manualcheck.UIReferences. It is per-screen rather than fixed because
+// the four pre-session screens raise four different questions, and landing all of them on the
+// front of the book would answer none of them.
+function AuthControls({ lang, onLangChange, theme, onThemeChange, help }) {
+  if (!onLangChange && !onThemeChange && !help) return null
   return (
     <div className="auth-controls">
+      {help || null}
       {onLangChange ? <LanguageDropdown lang={lang} onLang={onLangChange} /> : null}
       {onThemeChange ? <ThemeDropdown theme={theme} onThemeChange={onThemeChange} /> : null}
     </div>
@@ -267,15 +292,66 @@ function AccountCard({ roleLabel, onLogout, onOpenProfile }) {
   )
 }
 
-// WorkspaceHeader is the slim top strip of the main workspace: language switcher +
-// theme picker, top-right. Primary navigation and the account/logout block live in
-// the side rail. Standardized with mymatasan's shell.
-function WorkspaceHeader({ lang, onLangChange, theme, onThemeChange }) {
+// TAB_HELP maps each workspace section onto the manual article that explains it, so the header's
+// "?" lands on the relevant page rather than the front of the book. Anything not listed falls back
+// to the welcome article, which is the right answer for "where am I".
+//
+// The values are article SLUGS (the manual's stable ids), not titles — they survive a rename and
+// are identical in every language. A test scans this file and fails if one stops resolving; see
+// apps/myidsan/manual/manual_test.go.
+const TAB_HELP = {
+  dashboard: ['welcome', 'layout'],
+  users: ['users-roles-groups', 'pending'],
+  groups: ['users-roles-groups', 'groups'],
+  roles: ['users-roles-groups', 'matrix'],
+  rbac: ['users-roles-groups', 'matrix'],
+  endpoints: ['users-roles-groups', 'endpoints'],
+  apps: ['connecting-an-app', 'form'],
+  directory: ['directory', 'form'],
+  resetRequests: ['second-factor', 'password-recovery'],
+  profile: ['second-factor', 'enrol'],
+  audit: ['audit-log', 'reading'],
+  backup: ['backup-restore', 'export'],
+  settings: ['first-sign-in', 'lockout'],
+  manual: ['welcome', '']
+};
+
+// WorkspaceHeader is the slim top strip of the main workspace: contextual help on the left,
+// language switcher + theme picker top-right. Primary navigation and the account/logout block
+// live in the side rail. Standardized with mymatasan's shell.
+function WorkspaceHeader({ lang, onLangChange, theme, onThemeChange, active }) {
+  const t = useT()
+  const manual = useManual()
+  const [slug, anchor] = TAB_HELP[active] || ['welcome', '']
   return (
     <div className="workspace-header">
+      <button
+        type="button"
+        className="workspace-help"
+        onClick={() => manual.openHelp(slug, anchor)}
+        title={t('help.forThisPage')}
+        aria-label={t('help.forThisPage')}
+      >
+        <Ico n="help" sz={16} />
+      </button>
       <LanguageDropdown lang={lang} onLang={onLangChange} />
       <ThemeDropdown theme={theme} onThemeChange={onThemeChange} />
     </div>
+  )
+}
+
+// LoginHelpLink is the manual link on the pre-session screens. The manual is served publicly for
+// exactly this: the questions somebody has while staring at a sign-in screen — where the bootstrap
+// password is, why their account has no role, why they are being made to enrol — are the ones they
+// cannot sign in to answer.
+function LoginHelpLink({ slug, anchor }) {
+  const t = useT()
+  const manual = useManual()
+  return (
+    <button type="button" className="login-help" onClick={() => manual.openHelp(slug, anchor)}>
+      <Ico n="help" sz={15} />
+      <span>{t('help.link')}</span>
+    </button>
   )
 }
 
@@ -533,7 +609,7 @@ function AppInner({ lang, onLangChange }) {
         footer={null}
       />
       <main className="main-workspace">
-        <WorkspaceHeader lang={lang} onLangChange={onLangChange} theme={theme} onThemeChange={changeTheme} />
+        <WorkspaceHeader lang={lang} onLangChange={onLangChange} theme={theme} onThemeChange={changeTheme} active={active} />
         {handoffPending && (
           <div className="handoff-banner" role="alert">
             <span className="handoff-banner-text">{t('handoff.text')}</span>
@@ -554,6 +630,9 @@ function AppInner({ lang, onLangChange }) {
         {active === 'audit' && sectionAllowedById('audit', accessList, isSuperadmin) && <AuditPage onToast={pushToast} />}
         {active === 'backup' && sectionAllowedById('backup', accessList, isSuperadmin) && <BackupPage onToast={pushToast} />}
         {active === 'settings' && sectionAllowedById('settings', accessList, isSuperadmin) && <SettingsPage isSuperadmin={isSuperadmin} onToast={pushToast} />}
+        {/* Ungated on purpose: the manual carries no API path to be granted against, and the
+            reader whose menu shows almost nothing is exactly the one who needs to read why. */}
+        {active === 'manual' && <div className="manual-workspace"><ManualLibrary /></div>}
         <AppFooter appName="MyIDSan" apiBase={apiBase} />
       </main>
     </div>
@@ -655,7 +734,7 @@ function EnrollMfaScreen({ onDone, onLogout, lang, onLangChange, theme, onThemeC
 
   return (
     <div className="auth-layout">
-      <AuthControls lang={lang} onLangChange={onLangChange} theme={theme} onThemeChange={onThemeChange} />
+      <AuthControls lang={lang} onLangChange={onLangChange} theme={theme} onThemeChange={onThemeChange} help={<LoginHelpLink slug="second-factor" anchor="enrol" />} />
       <section className="auth-panel">
         <div className="brand-block auth-brand">
           <BrandLogo wordmark="myidsan" />
@@ -736,7 +815,7 @@ function ChangePasswordScreen({ onDone, onLogout, lang, onLangChange, theme, onT
 
   return (
     <div className="auth-layout">
-      <AuthControls lang={lang} onLangChange={onLangChange} theme={theme} onThemeChange={onThemeChange} />
+      <AuthControls lang={lang} onLangChange={onLangChange} theme={theme} onThemeChange={onThemeChange} help={<LoginHelpLink slug="first-sign-in" anchor="bootstrap" />} />
       <section className="auth-panel">
         <LoginBrand subtitle={t('cpw.subtitle')} />
         <div className="message warning">{t('cpw.securityNote')}</div>
@@ -774,7 +853,7 @@ function PendingClearanceScreen({ email, onRefresh, onLogout, lang, onLangChange
   }
   return (
     <div className="auth-layout">
-      <AuthControls lang={lang} onLangChange={onLangChange} theme={theme} onThemeChange={onThemeChange} />
+      <AuthControls lang={lang} onLangChange={onLangChange} theme={theme} onThemeChange={onThemeChange} help={<LoginHelpLink slug="users-roles-groups" anchor="pending" />} />
       <section className="auth-panel">
         <LoginBrand subtitle={t('pend.subtitle')} />
         <div className="message warning">{t('pend.hint', { email: email ? ` (${email})` : '' })}</div>
@@ -957,7 +1036,7 @@ function AuthScreen({ onAuthed, sessionError, lang, onLangChange, theme, onTheme
 
   return (
     <div className="auth-layout">
-      <AuthControls lang={lang} onLangChange={onLangChange} theme={theme} onThemeChange={onThemeChange} />
+      <AuthControls lang={lang} onLangChange={onLangChange} theme={theme} onThemeChange={onThemeChange} help={<LoginHelpLink slug="first-sign-in" anchor="bootstrap" />} />
       <section className="auth-panel">
         <LoginBrand subtitle={t('auth.subAdmin')} />
         {mfa && !mfa.method ? (
@@ -2235,6 +2314,7 @@ function AppDetail({ accessList, app, apps = [], onCreated, onSaved, onDeleted }
           <hr className="detail-divider" />
           <div className="detail-heading">
             <h3>{t('app.ssoClient')}</h3>
+            <HelpButton slug="connecting-an-app" anchor="secret" />
             <span className="step-badge">{t('app.stepOf', { n: 2 })}</span>
             <span className={config ? 'status-pill on' : 'status-pill off'}>{config ? t('app.ssoConfigured') : t('app.noSsoClient')}</span>
             <InfoTip text={t('app.ssoLede')} />
@@ -2292,6 +2372,7 @@ function AppDetail({ accessList, app, apps = [], onCreated, onSaved, onDeleted }
           <div className="sso-uris">
             <div className="detail-heading">
               <h3>{t('app.redirectUris')}</h3>
+              <HelpButton slug="connecting-an-app" anchor="form" />
               <span className="step-badge">{t('app.stepOf', { n: 3 })}</span>
               <InfoTip text={t('app.redirectLede')} />
             </div>
@@ -2338,6 +2419,7 @@ function AppDetail({ accessList, app, apps = [], onCreated, onSaved, onDeleted }
           <div className="handoff-block">
             <div className="detail-heading">
               <h3>{t('app.sectionConnect')}</h3>
+              <HelpButton slug="connecting-an-app" anchor="flow" />
               <span className="step-badge">{t('app.stepOf', { n: 4 })}</span>
               <InfoTip text={t('app.connectLede')} />
             </div>
@@ -4957,7 +5039,9 @@ function buildVisibleSections(accessList, isSuperadmin = false) {
     return orderDiff || String(a.label).localeCompare(String(b.label))
   })
 
-  return [dashboardSection, ...allowed]
+  // Help is appended rather than filtered in: it carries no API path to be granted, and a role
+  // that can see nothing else must still be able to read why.
+  return [dashboardSection, ...allowed, manualSection]
 }
 
 function groupNavSections(visibleSections) {
@@ -5131,7 +5215,12 @@ function App() {
   }
   return (
     <LangProvider lang={lang} messages={appMessages}>
-      <AppInner lang={lang} onLangChange={changeLang} />
+      {/* Outside AppInner deliberately: the manual has to be readable from the sign-in screen,
+          the forced password change, the enrolment screen and the pending-clearance screen —
+          every one of which renders instead of the workspace. */}
+      <ManualProvider apiBase={apiBase} lang={lang} appName="MyIDSan">
+        <AppInner lang={lang} onLangChange={changeLang} />
+      </ManualProvider>
     </LangProvider>
   )
 }

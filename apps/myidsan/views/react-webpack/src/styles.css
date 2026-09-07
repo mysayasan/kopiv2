@@ -3284,3 +3284,80 @@ button .btn-icon {
     justify-content: flex-end;
   }
 }
+
+/* --------------------------------------------------------------------------------------
+   Manual / contextual help
+   -------------------------------------------------------------------------------------- */
+
+/* Help link on the pre-session screens (sign-in, forced password change, enrolment, pending
+   clearance). Quiet by default — it must not compete with the sign-in button — but always
+   present, because the manual is served publicly precisely so it can be reached from here. */
+.login-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.login-help:hover {
+  background: var(--row-active);
+  color: var(--blue);
+}
+
+/* The workspace strip's "?" sits at the far left, opposite the language and theme pickers:
+   a round icon button with no chrome until hover. `margin-inline-end: auto` is what pushes
+   the other two to the far side, and it mirrors correctly in Arabic. */
+.workspace-header .workspace-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-inline-end: auto;
+  padding: 4px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+}
+
+.workspace-header .workspace-help:hover {
+  background: var(--row-active);
+  color: var(--blue);
+}
+
+/* The manual page owns its own three-column layout (contents + article + outline) and wants the
+   full height of the workspace column, so it is a flex child that may grow and — crucially —
+   may shrink below its content height: without min-height:0 the sticky contents rail cannot
+   scroll and the page grows a second scrollbar instead. */
+.manual-workspace {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Contextual "?" buttons. The shared module already gives .manual-help-btn its shape; what it
+   cannot know is the surrounding layout, so only the placement is set here. In .detail-heading
+   the parent's 10px gap does the spacing, which is why no margin is added there. */
+.detail-heading > .manual-help-btn:hover,
+.brand-block > .manual-help-btn:hover {
+  background: var(--row-active);
+}
+
+/* The wizard's brand block was an unstyled div, so the "?" stacked underneath the wordmark on a
+   line of its own. Make it the row it always looked like, and push the "?" to the far end —
+   which mirrors correctly under Arabic, where `margin-inline-start` becomes the right. */
+.setup-panel .brand-block {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.setup-panel .brand-block > .manual-help-btn {
+  margin-inline-start: auto;
+}

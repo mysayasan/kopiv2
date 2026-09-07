@@ -790,4 +790,9 @@ export default {
   "settings.system.offline": "غير متصل",
   "settings.system.restart": "إعادة تشغيل الخادم",
   "settings.system.restartDesc": "يطبّق الإعدادات المحفوظة. يحتفظ كل مستخدم مسجَّل الدخول بجلسته، لكن الطلبات الجارية تُفقَد — وأثناء تعطُّل هذا الخادم، لا يستطيع أي تطبيق في الحزمة تسجيل دخول أي أحد.",
+  // Built-in manual: nav entry, dashboard card, and the two help affordances.
+  "nav.manual": "المساعدة",
+  "sum.manual": "الدليل المدمج: تسجيل الدخول، وربط التطبيقات، والعامل الثاني، والنسخ الاحتياطي والاستعادة.",
+  "help.link": "المساعدة",
+  "help.forThisPage": "مساعدة لهذه الصفحة",
 };

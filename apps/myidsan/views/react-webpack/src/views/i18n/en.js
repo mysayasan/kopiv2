@@ -809,4 +809,9 @@ export default {
   'settings.system.offline': 'Offline',
   'settings.system.restart': 'Restart the server',
   'settings.system.restartDesc': 'Applies saved settings. Every signed-in user keeps their session, but in-flight requests are dropped — and while this server is down, no app in the suite can sign anyone in.',
+  // Built-in manual: nav entry, dashboard card, and the two help affordances.
+  'nav.manual': 'Help',
+  'sum.manual': 'The built-in manual: signing in, connecting apps, second factors, backup and restore.',
+  'help.link': 'Help',
+  'help.forThisPage': 'Help for this page',
 };

@@ -36,10 +36,21 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// The three lifetimes an integrator has to know, and the only place they are stated.
+//
+// Exported so the manual's reference table can be asserted against them rather than repeating
+// them as prose — see apps/myidsan/manual/manual_test.go. A relying app is configured against
+// these numbers by somebody who cannot read this file, and a confidently wrong lifetime in the
+// manual is worse than none at all: it sends them looking for the fault in their own code.
 const (
-	defaultAuthCodeTTLSeconds    = 300
-	defaultAccessTokenTTLSeconds = 900
-	defaultFederatedSessionTTL   = 259200
+	// DefaultAuthCodeTTLSeconds bounds a one-time authorization code. It only has to survive the
+	// redirect back and the app's immediate exchange, so it is short by design.
+	DefaultAuthCodeTTLSeconds = 300
+	// DefaultAccessTokenTTLSeconds bounds the token handed to the relying app.
+	DefaultAccessTokenTTLSeconds = 900
+	// DefaultFederatedSessionTTLSeconds is how long the sign-in itself lasts here, so a person
+	// moving between apps is not asked for a password again. Three days.
+	DefaultFederatedSessionTTLSeconds = 259200
 )
 
 type federatedAuthApi struct {
@@ -169,9 +180,9 @@ func NewFederatedAuthApi(
 		store:            store,
 		mfa:              challenger,
 		reset:            resetService,
-		authCodeTTL:      secondsDuration(configInt(cfg, "authCode"), defaultAuthCodeTTLSeconds),
-		accessTokenTTL:   secondsDuration(configInt(cfg, "accessToken"), defaultAccessTokenTTLSeconds),
-		defaultSessionTL: secondsDuration(configInt(cfg, "session"), defaultFederatedSessionTTL),
+		authCodeTTL:      secondsDuration(configInt(cfg, "authCode"), DefaultAuthCodeTTLSeconds),
+		accessTokenTTL:   secondsDuration(configInt(cfg, "accessToken"), DefaultAccessTokenTTLSeconds),
+		defaultSessionTL: secondsDuration(configInt(cfg, "session"), DefaultFederatedSessionTTLSeconds),
 		metrics:          metrics,
 		sessions:         sessions,
 		audit:            audit,

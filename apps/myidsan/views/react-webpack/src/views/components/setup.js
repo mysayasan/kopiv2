@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { apiRequest, resultOf } from '../../lib/api'
 import { useT, DeploymentPanel } from '@shared'
+import { HelpButton } from '@shared/Manual'
 
 // The shared components speak the fetch contract — a resolved {ok, body, message} and a
 // JSON STRING body — while myidsan's apiRequest throws on failure and stringifies
@@ -39,6 +40,24 @@ function deploymentOperatorSteps(t) {
 // from the regular admin pages). Completion is a single server-side flag
 // (POST /api/setup/complete), mirroring mymatasan's wizard contract.
 const STEP_KEYS = ['welcome', 'app', 'signin', 'scale', 'admin', 'done']
+
+// STEP_HELP is the wizard's contextual help, one entry per step in STEP_KEYS order. Each step
+// asks a different question, so each points at the article that answers THAT one rather than at
+// a single "setup" page that would answer none of them.
+//
+// Each entry names its article and heading anchor as string literals on purpose: that is the
+// shape the build guard reads, so a renamed article or a dropped `{#anchor}` fails the test
+// instead of quietly opening the wrong page. See manualcheck.UIReferences — and note that it
+// scans the raw source, so an EXAMPLE of the pattern written in a comment here would be picked
+// up as a real reference and fail. It has been.
+const STEP_HELP = [
+  { help: ['welcome', 'does'] },
+  { help: ['connecting-an-app', 'form'] },
+  { help: ['directory', 'form'] },
+  { help: ['sessions-and-step-up', 'where'] },
+  { help: ['users-roles-groups', 'handover'] },
+  { help: ['welcome', 'next'] }
+];
 
 function randomSecret() {
   const raw = new Uint8Array(24)
@@ -107,6 +126,7 @@ export default function SetupWizard({ isSuperadmin, onDone, onToast }) {
   }, [])
 
   const step = STEP_KEYS[stepIndex]
+  const stepHelp = (STEP_HELP[stepIndex] || STEP_HELP[0]).help
   const next = () => { setError(''); setStepIndex(index => Math.min(index + 1, STEP_KEYS.length - 1)) }
   const back = () => { setError(''); setStepIndex(index => Math.max(index - 1, 0)) }
 
@@ -343,6 +363,9 @@ export default function SetupWizard({ isSuperadmin, onDone, onToast }) {
             <div className="brand-name">MyIDSan</div>
             <div className="brand-subtitle">{t('setup.subtitle')}</div>
           </div>
+          {/* The wizard is the other place, besides the sign-in screen, where a reader has a
+              question and no session to answer it with. The "?" follows the step. */}
+          <HelpButton slug={stepHelp[0]} anchor={stepHelp[1]} />
         </div>
 
         <div className="setup-progress">

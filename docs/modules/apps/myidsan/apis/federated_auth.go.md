@@ -257,6 +257,20 @@ now exercised through `login.BuildRegistry`) and `TestLoginPageHasNoExternalRefe
 - Kerberos does not gate on MFA either — same rationale as the SPA login path (upstream IdP owns factor policy, see `docs/MYIDSAN_MFA_PLAN.md` §5).
 - The self-service password-reset flow never issues a session and never distinguishes "unknown account" from "account matched, email sent/admin notified" in any response — see "Account Recovery (Forgot Password)" above.
 
+## Default lifetime constants
+
+`defaultAuthCodeTTLSeconds` (300), `defaultAccessTokenTTLSeconds` (900) and
+`defaultFederatedSessionTTL` (259200, renamed `DefaultFederatedSessionTTLSeconds`) — the
+authorization code's, the access token's, and the federated session's fallback lifetimes when
+`config.json` sets no override — are now exported as `DefaultAuthCodeTTLSeconds`,
+`DefaultAccessTokenTTLSeconds`, `DefaultFederatedSessionTTLSeconds`. The construction logic in
+`NewFederatedAuthApi` (`secondsDuration(configInt(cfg, ...), DefaultXxxSeconds)`) is unchanged;
+only the identifiers' visibility changed. They are exported so
+`apps/myidsan/manual/manual_test.go`'s `TestManualSpecValues` can assert the "Connecting an app"
+article's three lifetime numbers against the values the server actually falls back to, via
+`manualcheck.SpecValues` (`domain/shared/manual/manualcheck/diagrams.go.md`) — see
+`apps/myidsan/manual/manual_test.go.md`.
+
 ## The federation trail
 
 **What was missing, and it was the whole of the interesting half.** The trail recorded that an

@@ -3,6 +3,13 @@ import config from 'config'
 const unsafeMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 export const STEP_UP_REQUIRED = 'step_up_required'
 
+// The two 401s that do NOT mean the session is gone. The access middleware answers every
+// protected endpoint with one of these while an account still owes a forced password change
+// or a second-factor enrolment (domain/utils/middlewares/access_rbac.go) — the session is
+// perfectly valid, the user simply has a step to complete first, and /api/access-rbac/me
+// reports which one so the SPA can route to the right screen.
+const SESSION_INTACT_401 = new Set(['password_change_required', 'mfa_enrollment_required'])
+
 export const apiBase = (config && config.apiUrl ? config.apiUrl : '').replace(/\/$/, '')
 
 export const ACCESS_TIERS = [
@@ -111,7 +118,14 @@ export async function apiRequest(path, options = {}) {
     //
     // 403 is deliberately NOT included: that is "you are signed in and may not do this",
     // which belongs inline on the page — and it is how the step-up sentinel above arrives.
-    if (response.status === 401) {
+    //
+    // The exception is SESSION_INTACT_401: a bootstrap superadmin has must-change set, so
+    // EVERY protected endpoint answers 401 password_change_required until they set a password.
+    // Treating that as a lost session logged them straight back out — sign-in succeeded, the
+    // change-password screen rendered, and the handoff probe firing beside it wiped the
+    // session before they could type. On a fresh install the very first sign-in could not be
+    // completed at all, and the loop looked like a wrong password.
+    if (response.status === 401 && !SESSION_INTACT_401.has(message)) {
       notifySessionLost()
     }
     throw err
