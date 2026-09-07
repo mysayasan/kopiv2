@@ -129,6 +129,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-09-07 — myseliasan 1.86.1 (141cb92)
+
+### Changed
+
+- **myseliasan**: myseliasan's built-in manual gains seven more drawn figures, in all four languages (en/ms/zh/ar), structure byte-identical and only labels translated. Until now only 3 of the manual's 24 articles carried a figure, and none of them was an article a reader opens first, so the diagram feature read as unshipped and a user reported seeing no charts at all. 'Welcome' (the article Help opens on) now opens with an arch figure of what the control plane is and what it talks to; 'First sign-in' gets a flow of local vs identity-server sign-in and the must-change/no-role gates that follow it; 'Adopting a node' gets a seq figure of the two-step fleet-key + claim-code handshake alongside its existing port-table spec; 'Notifications' gets an arch figure showing the event row is kept by the control plane while the clip stays on the node; 'Fleet rules' gets a flow of match through window, ARM, grace, absence, cooldown and fire, including the wait loop; 'Ask the fleet' gets an arch figure showing answers come from the control plane's own tables plus the built-in manuals, with the language model optional and nothing leaving the network; 'Users and roles' gets a flow showing the nav rail and the API answer from the same list of rules. Also shortens a Malay label in the already-shipped 150-node-pages figure that the renderer was silently truncating with an ellipsis. The manual now carries 10 figures (9 drawn + 1 spec table) across its 24 articles, up from 3, and the build guard's `Diagrams` subtest reports checking 10 figures across 4 languages for this app.
 ## 2026-09-07 — myidsan 1.52.0 (8c9c3ba)
 
 ### Added
