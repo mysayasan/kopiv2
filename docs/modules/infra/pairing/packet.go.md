@@ -22,7 +22,18 @@ Defines the on-wire packet types, HMAC-SHA256 signing helpers, and exported asse
 | `ProbeType` | `"mymatasan.pairing.discover"` | Type tag on the wire to reject strays before any crypto. |
 | `AnnounceType` | `"mymatasan.pairing.announce"` | Type tag on the wire. |
 | `DefaultMulticastAddr` | `"239.255.90.21:49531"` | Administratively-scoped IPv4 multicast; stays on the local subnet. |
+| `DefaultDiscoveryPort` | `49531` | The UDP port inside `DefaultMulticastAddr`, named separately so it can be asserted on its own (e.g. against the manual's port table). |
+| `DefaultMTLSPort` | `49532` | The node's mTLS management listener. The node listens; the control plane dials in. Was an unexported `49532` literal in `fleetnode.NewEnrollmentManager`; now sourced from here. |
+| `DefaultControlPort` | `49533` | The parent's control-channel listener. The node dials out and holds the connection open, which is what lets a node behind NAT work with no inbound rule. Was an unexported literal in `myseliasan/services/control_server.go`; now sourced from here. |
+| `DefaultMediaPort` | `49534` | The parent's media-relay listener. Also node-dialed-out, kept separate from the control port so video never competes with commands. Was an unexported literal in `mymatasan/services/media_channel.go`; now sourced from here. |
 | `DefaultReplayWindow` | `30s` | Maximum packet age before a probe or announce is rejected as stale. |
+
+These four constants gather the fleet's whole port scheme into one place. No call site's default
+behaviour changed — each rewired site still falls back to the same numeric value it always did,
+now via the constant rather than a private literal — but the constants exist so something other
+than tribal knowledge can name them: `apps/mymatasan/manual/manual_test.go`'s
+`TestManualSpecValues` asserts the `control-plane` manual article's `` ```spec `` port table
+against exactly these four (see `docs/MANUAL_DIAGRAMS.md`).
 
 ## Trust Model
 

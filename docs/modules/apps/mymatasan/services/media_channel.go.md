@@ -2,13 +2,13 @@
 
 ## Purpose
 
-Implements the node side of the camera media relay: once paired and enrolled, dials the control plane's media listener (`pairing.mediaPort`, default 49534) over fleet mTLS, and on the parent's request subscribes a local camera's RTSP stream and pumps its RTP up the channel so `myseliasan` can re-broadcast it to browsers over WebRTC.
+Implements the node side of the camera media relay: once paired and enrolled, dials the control plane's media listener (`pairing.mediaPort`, default `infra/pairing.DefaultMediaPort` = 49534) over fleet mTLS, and on the parent's request subscribes a local camera's RTSP stream and pumps its RTP up the channel so `myseliasan` can re-broadcast it to browsers over WebRTC.
 
 ## Type: `MediaChannelManager`
 
 ### Constructor
 
-`NewMediaChannelManager(svc IPairingService, mediaPort int, version string, subscriber MediaSubscriber, resolve MediaSourceResolver, logf)` — `mediaPort <= 0` defaults to `49534`. A nil `subscriber`/`resolve` still establishes the channel for liveness but answers `FrameStart` with an error frame.
+`NewMediaChannelManager(svc IPairingService, mediaPort int, version string, subscriber MediaSubscriber, resolve MediaSourceResolver, logf)` — `mediaPort <= 0` defaults to `pairing.DefaultMediaPort` (`49534`, `infra/pairing/packet.go.md`; was a private `defaultMediaPort = 49534` literal in this file, now sourced from that shared constant). A nil `subscriber`/`resolve` still establishes the channel for liveness but answers `FrameStart` with an error frame.
 
 ### Interfaces Used
 

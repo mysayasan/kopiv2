@@ -11,12 +11,13 @@ import (
 
 	"github.com/mysayasan/kopiv2/infra/fleetca"
 	"github.com/mysayasan/kopiv2/infra/mediarelay"
+	"github.com/mysayasan/kopiv2/infra/pairing"
 	"github.com/mysayasan/kopiv2/infra/stream"
 	"github.com/pion/rtp"
 )
 
 const (
-	defaultMediaPort   = 49534
+	defaultMediaPort   = pairing.DefaultMediaPort
 	mediaMaxBackoff    = 30 * time.Second
 	mediaGateWait      = 5 * time.Second
 	mediaInitialBackff = time.Second

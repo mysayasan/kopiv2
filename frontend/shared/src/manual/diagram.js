@@ -301,17 +301,29 @@ function place(diagram, axis) {
     ? (diagram.edges.some((e) => e.label) ? 18 : 0) + (skips ? 40 : 0)
     : 0;
 
-  // One text budget for the whole figure keeps boxes on a shared grid; a diamond gets a wider
-  // one because only its middle band is usable.
-  const widest = Math.max(...diagram.nodes.map((n) => textWidth(n.label)), 90);
-  const boxW = Math.min(250, Math.max(150, Math.ceil(widest / 1.7)));
-  const askW = Math.round(boxW * 1.24);
+  // One text budget per SHAPE FAMILY keeps boxes on a shared grid. Rectangles and diamonds are
+  // sized separately because a diamond only offers text its middle band — roughly 60% of its
+  // width — so sizing both from one number either wastes space on the rectangles or truncates
+  // the diamonds. It truncated them: "Does a rule judge it worth an alert?" shipped as "Does a
+  // rule judge it…", which loses the question the figure exists to ask.
+  const widthOf = (pred, fallback) => {
+    const labels = diagram.nodes.filter(pred).map((n) => textWidth(n.label));
+    return labels.length ? Math.max(...labels) : fallback;
+  };
+  const isDiamond = (n) => n.shape === 'ask';
+  const boxW = Math.min(250, Math.max(150, Math.ceil(widthOf((n) => !isDiamond(n), 90) / 1.7)));
+  const askW = Math.min(300, Math.max(
+    Math.round(boxW * 1.24),
+    Math.ceil(widthOf(isDiamond, 90) / 1.55),
+  ));
 
   const boxes = new Map();
   for (const n of diagram.nodes) {
     const isAsk = n.shape === 'ask';
     const w = isAsk ? askW : boxW;
-    const lines = wrap(n.label, isAsk ? w * 0.56 : w - PAD * 2, isAsk ? 2 : 3);
+    // Three lines in a diamond, four in a box: the last resort before a label is truncated, and
+    // a taller shape is always better than a lost word.
+    const lines = wrap(n.label, isAsk ? w * 0.6 : w - PAD * 2, isAsk ? 3 : 4);
     const h = isAsk
       ? Math.max(72, lines.length * LINE_H + 46)
       : Math.max(40, lines.length * LINE_H + 18);
@@ -477,12 +489,30 @@ const SEQ_HEAD = 44;
 
 function drawSequence(diagram, rtl) {
   const actors = diagram.nodes;
-  const widest = Math.max(...actors.map((a) => textWidth(a.label)), 90);
-  const colW = Math.min(240, Math.max(130, Math.ceil(widest / 1.5) + PAD * 2));
   const messages = diagram.edges.filter((e) => actors.some((a) => a.id === e.from) && actors.some((a) => a.id === e.to));
 
+  // The columns are sized from the MESSAGES, not just the actor names.
+  //
+  // Sizing on the actors alone is the obvious reading and it is wrong: "This appliance" is two
+  // words while "adopts, using the claim code you generated" is eight, and in a sequence diagram
+  // that is the normal ratio, not an edge case. Doing it the obvious way truncated every message
+  // on the page to "adopts, using the claim code…" — which loses precisely the step the figure
+  // exists to show.
+  const widestActor = Math.max(...actors.map((a) => textWidth(a.label)), 90);
+  const widestMsg = Math.max(0, ...messages.map((e) => textWidth(e.label || '')));
+  const colW = Math.min(320, Math.max(
+    130,
+    Math.ceil(widestActor / 1.5) + PAD * 2,
+    Math.ceil(widestMsg / 2) + 40,
+  ));
+
+  // Rows are then sized from what the labels actually wrapped to, so a three-line message pushes
+  // the next arrow down instead of overprinting it.
+  const wrapped = messages.map((e) => (e.label ? wrap(e.label, colW - 16, 3) : []));
+  const rowH = Math.max(SEQ_ROW, ...wrapped.map((l) => l.length * LINE_H + 26));
+
   const width = PAD * 2 + colW * actors.length;
-  const height = SEQ_HEAD + PAD + SEQ_ROW * (messages.length + 0.5);
+  const height = SEQ_HEAD + PAD + rowH * (messages.length + 0.5);
   const mx = (x) => (rtl ? width - x : x);
   const centre = new Map(actors.map((a, i) => [a.id, PAD + colW * i + colW / 2]));
 
@@ -494,14 +524,14 @@ function drawSequence(diagram, rtl) {
   }
 
   messages.forEach((e, i) => {
-    const y = SEQ_HEAD + SEQ_ROW * (i + 0.7);
+    const y = SEQ_HEAD + rowH * (i + 0.7);
     const from = mx(centre.get(e.from));
     const to = mx(centre.get(e.to));
     const dir = Math.sign(to - from) || 1;
     svg += `<line class="mdia-edge${e.dashed ? ' mdia-dashed' : ''}" x1="${from.toFixed(1)}" y1="${y.toFixed(1)}"`
       + ` x2="${(to - dir * 5).toFixed(1)}" y2="${y.toFixed(1)}" marker-end="url(#mdia-arrow)" />`;
-    if (e.label) {
-      const lines = wrap(e.label, Math.abs(to - from) - 16, 2);
+    const lines = wrapped[i];
+    if (lines.length) {
       const top = y - 8 - (lines.length - 1) * LINE_H;
       svg += lines.map((l, n) => `<text class="mdia-msg" x="${((from + to) / 2).toFixed(1)}"`
         + ` y="${(top + n * LINE_H).toFixed(1)}">${esc(l)}</text>`).join('');

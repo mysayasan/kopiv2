@@ -29,6 +29,23 @@ easy:
 - **It alerts on the wrong things** → rule, almost always: too broad a zone or too low a
   threshold.
 
+```flow
+title : The model produces facts; the rule applies judgement
+step  frame : One frame from the detection stream
+step  models : Every active model looks at it
+step  labels : Raw labels, boxes and confidence
+step  classes => object-classes : Mapped onto the object classes you named
+ask   rule : Does a rule judge it worth an alert?
+end   quiet : Nothing happens
+ok    alert : Alert
+frame -> models
+models -> labels
+labels -> classes
+classes -> rule
+rule -> quiet : no
+rule -> alert : yes
+```
+
 ## Models {#models}
 
 The **stock (base) model** is always on. It recognises the general everyday classes — person,

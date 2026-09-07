@@ -53,6 +53,33 @@ dikonfigurasikan. Butiran dalam [Pemberitahuan](notifications#not-arriving).
 Jawapan tunggal paling biasa ialah yang pertama: rakaman dihidupkan, dan tiada peraturan pernah
 dicipta. Rakaman menghasilkan rakaman video, bukan amaran.
 
+```flow
+title : Periksa mengikut urutan ini — "tidak" yang pertama ialah jawapannya
+step  none : Tiada amaran sampai
+ask   rule : Adakah ada peraturan pada kamera ini?
+end   norule : Cipta satu. Rakaman menghasilkan rakaman video, bukan amaran.
+ask   armed : Adakah ia didayakan, dan dalam jadualnya?
+end   disarmed : Dayakan ia, atau luaskan jadual
+ask   online => camera-health : Adakah kamera dalam talian?
+end   offline : Betulkan kamera dahulu
+ask   ai : Adakah runtime AI dan model hadir?
+end   noai : Pasang runtime dan satu model
+ask   deliver => notification-destinations : Adakah destinasi dikonfigurasikan?
+end   nodeliver : Tambah satu destinasi
+ok    good : Amaran sepatutnya sampai
+none -> rule
+rule -> norule : tidak
+rule -> armed : ya
+armed -> disarmed : tidak
+armed -> online : ya
+online -> offline : tidak
+online -> ai : ya
+ai -> noai : tidak
+ai -> deliver : ya
+deliver -> nodeliver : tidak
+deliver -> good : ya
+```
+
 ## Saya dapat terlalu banyak amaran {#too-many}
 
 Hampir selalu geometri dan bukan kepekaan:

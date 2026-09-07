@@ -43,6 +43,17 @@ this node. Codes expire, and the page shows when.
 The two-step handshake is deliberate: the key says *which fleet you belong to*, the code says *and
 I am consenting right now*. Neither alone is enough to adopt a node.
 
+```seq
+title : Adopting this node, step by step
+actor node : This appliance
+actor parent : The control plane
+parent -> node : discovery probe, signed with the fleet key
+node --> parent : answers only if the key matches
+parent -> node : adopts, using the claim code you generated
+parent --> node : certificate issued by the fleet CA
+node -> parent : heartbeat and commands from now on
+```
+
 ## Single parent {#single-parent}
 
 A paired node is **locked to one control plane** and stops answering discovery probes altogether.
@@ -86,3 +97,11 @@ by the fleet's own authority.
 
 The node dials out to the parent rather than the reverse, so a node behind NAT works without
 inbound port forwarding — which is usually the deciding factor for a remote site.
+
+```spec
+title : What a paired node listens on, and what it dials out to
+row discovery `49531/udp` : Multicast discovery on the local network. Only a control plane holding the same fleet key can see this node.
+row mtls `49532/tcp` : This node listens. The control plane dials in to release it and to check it is alive.
+row control `49533/tcp` : This node dials out and keeps the channel open for commands — which is why a node behind NAT needs no inbound forwarding.
+row media `49534/tcp` : This node dials out to relay live video, kept separate so it never competes with commands.
+```
