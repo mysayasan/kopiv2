@@ -116,6 +116,33 @@ jobs:
             echo "MyIotSan ${{ inputs.tag }}" > "$NOTES"
           fi
 
+      # GORELEASER_CURRENT_TAG on the next step names a BARE `v<ver>` tag, which is deliberately
+      # NOT the tag this job checked out (myiotsan-v<ver>): GoReleaser OSS cannot derive a clean
+      # semver from a prefixed tag, so it is handed a plain one to template artifact names from.
+      #
+      # But GoReleaser still looks that tag up in git to read its contents, and `--skip=validate`
+      # does not skip that lookup. When the tag does not exist the release dies on the spot with
+      # "couldn't get tag contents: unexpected git tag output". This passed for a long time only
+      # by coincidence: mymatasan tags bare `v<ver>`, so whenever this app's version happened to
+      # match a mymatasan release the tag was already there. The first version that did not match
+      # broke it — myseliasan v1.86.1, myidsan v1.51.0, myiotsan v0.32.0 all failed this way.
+      #
+      # So create it here, LOCALLY, and never push it. Pushing is the thing that must not happen:
+      # a bare `v<ver>` tag lives in mymatasan's namespace, and a release under it can become the
+      # repo's "latest" — which mymatasan's in-app updater reads. See the header.
+      - name: Create the local semver tag GoReleaser reads
+        shell: bash
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          if git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then
+            echo "tag v${VERSION} already exists locally — leaving it alone"
+          else
+            git tag "v${VERSION}"
+            echo "created local-only tag v${VERSION} for GoReleaser (not pushed)"
+          fi
+
       # Builds archives/deb/rpm into dist/ and pushes the Docker images. Does NOT create the
       # GitHub Release — see the header.
       - name: Run GoReleaser
