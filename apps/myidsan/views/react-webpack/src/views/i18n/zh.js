@@ -790,4 +790,9 @@ export default {
   'settings.system.offline': '离线',
   'settings.system.restart': '重启服务器',
   'settings.system.restartDesc': '应用已保存的设置。每位已登录用户都会保留其会话，但进行中的请求会被丢弃——并且在此服务器停机期间，套件中没有任何应用可以让任何人登录。',
+  // Built-in manual: nav entry, dashboard card, and the two help affordances.
+  'nav.manual': '帮助',
+  'sum.manual': '内置手册：登录、接入应用、第二重验证、备份与恢复。',
+  'help.link': '帮助',
+  'help.forThisPage': '本页帮助',
 };

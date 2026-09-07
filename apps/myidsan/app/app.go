@@ -121,6 +121,10 @@ func (m *module) Seeders(seedStatements []string) []bootstrap.Seeder {
 		{AppCode: "myidsan", Title: "Federated Auth", Description: "cross-app authorization code login access", Path: "/api/auth", AccessTier: apiaccessenums.Public},
 		{AppCode: "myidsan", Title: "OAuth Callback", Description: "OAuth callback access", Path: "/api/callback", AccessTier: apiaccessenums.Public},
 		{AppCode: "myidsan", Title: "File Storage Download", Description: "public file download access", Path: "/api/file-storage/download", AccessTier: apiaccessenums.Public},
+		// Public deliberately. This is the app nobody can sign in to when it is misconfigured,
+		// and every question its sign-in screen raises is asked by somebody who is not
+		// authenticated yet. See apis.NewManualApi.
+		{AppCode: "myidsan", Title: "User Manual", Description: "the built-in manual; public so help works on the sign-in screen and in the first-run wizard", Path: "/api/manual", AccessTier: apiaccessenums.Public},
 		{AppCode: "myidsan", Title: "File Storage", Description: "identity file storage access", Path: "/api/file-storage", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
 		{AppCode: "myidsan", Title: "Logs", Description: "api log access", Path: "/api/log", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
 		{AppCode: "myidsan", Title: "Runtime Logs", Description: "runtime log access", Path: "/api/log-service", AccessTier: apiaccessenums.DevOnly, SeedRbac: true},
@@ -576,6 +580,10 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	api.Use(sharedapis.NewResetGate(systemResetService))
 
 	apis.NewSystemApi(api, *deps.Auth, deps.Access, deps.Restarter, systemResetService)
+
+	// The built-in manual. No auth middleware, deliberately — it has to be readable from the
+	// sign-in screen and the first-run wizard. See apis.NewManualApi.
+	apis.NewManualApi(api)
 	return nil, nil
 }
 

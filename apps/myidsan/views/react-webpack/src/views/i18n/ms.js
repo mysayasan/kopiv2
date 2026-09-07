@@ -790,4 +790,9 @@ export default {
   'settings.system.offline': 'Luar talian',
   'settings.system.restart': 'Mulakan semula pelayan',
   'settings.system.restartDesc': 'Menguatkuasakan tetapan yang disimpan. Setiap pengguna yang log masuk mengekalkan sesi mereka, tetapi permintaan yang sedang berjalan digugurkan — dan semasa pelayan ini tidak beroperasi, tiada aplikasi dalam suite dapat melog masuk sesiapa.',
+  // Built-in manual: nav entry, dashboard card, and the two help affordances.
+  'nav.manual': 'Bantuan',
+  'sum.manual': 'Manual terbina dalam: log masuk, menyambung aplikasi, faktor kedua, sandaran dan pemulihan.',
+  'help.link': 'Bantuan',
+  'help.forThisPage': 'Bantuan untuk halaman ini',
 };
