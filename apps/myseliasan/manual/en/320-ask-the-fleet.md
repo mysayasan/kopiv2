@@ -32,6 +32,17 @@ The assistant is told to keep the two apart: the manual describes how the softwa
 general, and must never be reported as an observation about your installation. "Recordings are kept
 for 14 days" is a sentence about the product, not about your disk.
 
+```arch
+title : Where an answer comes from, and what never leaves your network
+box agent : The assistant, running here
+store tables : This control plane's own tables — nodes, events, statistics, digest findings
+store manuals => using-this-manual : The built-in manuals: this one, and MyMataSan's
+box model => language-model : A language model — only if you enabled one
+agent -> tables : about YOUR fleet
+agent -> manuals : about the PRODUCT
+agent --> model
+```
+
 ## Sources {#sources}
 
 When an answer draws on the manual, the sections it used appear underneath it.

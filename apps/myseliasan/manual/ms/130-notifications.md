@@ -53,6 +53,15 @@ Satah kawalan menyimpan baris peristiwa. **Rakaman** kekal pada nod yang merakam
 disengajakan — video itu besar dan wajar berada di tempat ia dirakam — dan itulah sebabnya nod yang
 dilepaskan atau dipadam membawa klipnya pergi sementara sejarah peristiwanya kekal di sini.
 
+```arch
+title : Di mana peristiwa itu berada, dan di mana rakamannya kekal
+ext node => managing-nodes : Nod yang melihatnya
+box feed : Suapan di sini — dan baris peristiwa yang disimpannya, yang kekal walaupun nod dilepaskan
+store clips : Klip itu, disimpan pada nod yang merakamnya, dan hilang bersamanya
+node -> feed : tolak peristiwa
+node -> clips : simpan video
+```
+
 ## Mengekalkannya berbaloi dibaca {#noise}
 
 Suapan yang tiada siapa baca lebih buruk daripada tiada suapan, dan puncanya biasanya satu sumber

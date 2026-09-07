@@ -31,6 +31,19 @@ The two-step handshake is deliberate. The key says *which fleet you belong to*; 
 *and I consent right now*. Neither alone is enough, so a stolen key cannot silently absorb
 somebody else's appliance.
 
+```seq
+title : The two-step handshake, and why one step would not do
+actor plane : This control plane
+actor you : You
+actor node : The appliance being adopted
+plane -> you : A fleet key — which fleet this appliance joins
+you -> node : Paste the fleet key
+node -> you : A short-lived claim code — I consent, now
+you -> plane : Paste the claim code
+plane -> node : Adopt, presenting the fleet key
+node --> plane : Accepted — this control plane, and no other
+```
+
 ## 3. Adopt {#adopt}
 
 Back here, **Discover** scans the local network for unpaired nodes and lists what answers. Pick

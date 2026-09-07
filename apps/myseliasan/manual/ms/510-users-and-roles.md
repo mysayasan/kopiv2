@@ -86,6 +86,24 @@ di atas langkah sebenar — ia *ialah* langkah sebenar itu.
 Akibat praktikalnya: jika seseorang tidak nampak sesuatu halaman, berikan keupayaan itu dan bukan
 mencari tetapan paparan, kerana tetapan itu tidak wujud.
 
+```flow
+title : Bar sisi dan API menjawab daripada senarai peraturan yang sama
+step grant : Anda memberi sesuatu peranan satu ciri
+step rules : Ia menjadi satu senarai peraturan pada peranan itu
+step rail : Bar sisi dibina daripada peraturan tersebut
+step call : Membuka halaman memanggil API
+ask allow : Adakah peraturan YANG SAMA membenarkan panggilan ini?
+ok shown : Halaman terbuka, dengan datanya
+end refused : Ditolak — sebab itulah bar sisi tidak pernah menawarkannya
+grant -> rules
+rules -> rail : membina menu
+rules -> call : mengawal jawapan
+rail -> call : anda klik apa yang ditunjukkan kepada anda
+call -> allow
+allow -> shown : ya
+allow -> refused : tidak
+```
+
 ## Akses nod ialah soalan yang berasingan {#node-access}
 
 Matriks menentukan apa yang boleh dilakukan seseorang **pada satah kawalan ini**. Ia tidak

@@ -60,6 +60,29 @@ MySeliaSan 可以把身份验证交给 **MyIDSan**，这样人们就用自己已
 - **语言切换器**——英语、马来语、中文和阿拉伯语。阿拉伯语会镜像整个布局。
 - **帮助链接**，打开本手册。它在你登录之前就能用，而那正是你最可能需要它的时候。
 
+```flow
+title : 你会走哪条登录路径，以及之后还有什么可能拦住你
+step open : 你打开控制平面
+ask sso : 是否配置了身份服务器？
+step hop : 到 MyIDSan 登录，然后回到这里
+step local : 用本地账户登录
+ask must : 密码是否被标记为必须修改？
+step change : 先设置一个你自己的密码
+ask role => users-and-roles#pending : 有人给这个账户分配角色了吗？
+end pending => users-and-roles#pending : 等待放行——需要管理员分配一个
+ok work => workspace-tour : 工作区，只显示你的角色可以打开的内容
+open -> sso
+sso -> hop : 是
+sso -> local : 否
+hop -> must
+local -> must
+must -> change : 是
+must -> role : 否
+change -> role
+role -> pending : 否
+role -> work : 是
+```
+
 ## 登录失败时 {#troubleshooting}
 
 - **"你的账户没有角色"**——真实账户存在，但还没有人给它分配角色。这是有意为之：新用户从一无所有开始，

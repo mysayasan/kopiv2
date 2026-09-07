@@ -46,8 +46,14 @@ software.
   wiring; every new `HelpButton` call, `TAB_HELP` entry, or `SETUP_STEP_HELP` anchor list
   update is checked here, not by hand.
 - `TestManual`'s call into `manualcheck.Library` also runs the `Diagrams` subtest
-  (`domain/shared/manual/manualcheck/diagrams.go.md`) over this app's shipped figures — two
-  `` ```flow `` figures (the two-permission split in `150-node-pages.md`, the staged-camera
-  takeover in `160-failover.md`) alongside the `` ```spec `` fleet port table in
-  `110-adopting-nodes.md` that `TestManualSpecValues` checks the values of — reporting
-  "checked 3 figures across 4 languages".
+  (`domain/shared/manual/manualcheck/diagrams.go.md`) over this app's shipped figures — five
+  `` ```flow `` figures (the must-change/no-role gates after sign-in in
+  `20-first-sign-in.md`, the two-permission split in `150-node-pages.md`, the
+  match-through-fire wait loop in `140-fleet-rules.md`, the staged-camera takeover in
+  `160-failover.md`, and the nav-rail/API split in `510-users-and-roles.md`), three
+  `` ```arch `` figures (what the control plane talks to in `10-welcome.md`, the
+  event-row-stays-here/clip-stays-on-the-node split in `130-notifications.md`, and where an
+  answer comes from in `320-ask-the-fleet.md`), and one `` ```seq `` figure (the fleet-key
+  and claim-code handshake in `110-adopting-nodes.md`), alongside the `` ```spec `` fleet
+  port table in that same article that `TestManualSpecValues` checks the values of —
+  reporting "checked 10 figures across 4 languages".

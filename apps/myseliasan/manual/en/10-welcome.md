@@ -16,6 +16,17 @@ It does not replace them. Your footage still lives on the recorder that captured
 still runs there, and a site keeps working exactly as before if this control plane is switched
 off. What you gain is one place to see the whole estate, and one place to manage it from.
 
+```arch
+title : What the control plane is, and what it talks to
+ext browser : Your browser
+box plane : This control plane — one screen for the whole estate
+ext node => adopting-nodes : An adopted appliance, doing its own job at its own site
+store footage : The footage, on the appliance that recorded it
+browser -> plane
+node -> plane : the node dials out
+node -> footage : keeps its own video
+```
+
 ## No way out to the internet {#air-gap}
 
 MySeliaSan is built to run with **no outbound connection at all**. The map ships its own tiles,

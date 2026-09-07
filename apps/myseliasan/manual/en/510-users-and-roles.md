@@ -82,6 +82,24 @@ and hiding a menu is not a security measure applied on top of a real one — it 
 The practical consequence: if somebody cannot see a page, grant the capability rather than hunting
 for a display setting, because there isn't one.
 
+```flow
+title : The rail and the API answer from the same list of rules
+step grant : You grant a role a feature
+step rules : It becomes one list of rules on that role
+step rail : The rail is built from those rules
+step call : Opening a page calls the API
+ask allow : Do the SAME rules allow this call?
+ok shown : The page opens, with its data
+end refused : Refused — which is why the rail never offered it
+grant -> rules
+rules -> rail : builds the menu
+rules -> call : governs the answer
+rail -> call : you click what you were shown
+call -> allow
+allow -> shown : yes
+allow -> refused : no
+```
+
 ## Node access is a separate question {#node-access}
 
 The matrix decides what somebody may do **on this control plane**. It does not decide what they may

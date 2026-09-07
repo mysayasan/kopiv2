@@ -69,6 +69,29 @@ this browser:
 - The **help link**, which opens this manual. It works before you sign in, which is exactly when
   you are most likely to need it.
 
+```flow
+title : Which sign-in you get, and what can still hold you up afterwards
+step open : You open the control plane
+ask sso : Is an identity server configured?
+step hop : Sign in at MyIDSan, and come back here
+step local : Sign in with the local account
+ask must : Is the password marked must-change?
+step change : Set a password of your own first
+ask role => users-and-roles#pending : Has anyone given this account a role?
+end pending => users-and-roles#pending : Waiting for clearance — an administrator has to assign one
+ok work => workspace-tour : The workspace, showing only what your role may open
+open -> sso
+sso -> hop : yes
+sso -> local : no
+hop -> must
+local -> must
+must -> change : yes
+must -> role : no
+change -> role
+role -> pending : no
+role -> work : yes
+```
+
 ## When sign-in fails {#troubleshooting}
 
 - **"Your account has no role assigned"** — a real account exists but nobody has given it a role

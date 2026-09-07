@@ -73,6 +73,32 @@ all day, until somebody turned it off. Left at 0, the rule waits 5 seconds.
 **Cooldown (seconds)** — how long the rule stays quiet after firing, so one incident is one alert
 rather than a hundred. It survives a restart.
 
+```flow
+title : How a rule decides — and why it waits before it fires
+step ev : An event arrives from some node
+ask req : Does it match something this rule REQUIRES?
+end ignore : Not this rule's business
+ask all : Have all the required events now arrived, inside the window?
+step wait : Keep waiting — the window is still open
+step arm : ARM, and wait out the grace delay
+ask absent : Did anything the rule forbids arrive during that wait?
+end disarm : Disarmed — that was an authorised entry, not an incident
+ask cool : Is the rule still inside its cooldown?
+end quiet : Stay quiet — one incident, one alert
+alert fire : Fire, and start the cooldown
+ev -> req
+req -> ignore : no
+req -> all : yes
+all -> wait : no
+wait -> ev
+all -> arm : yes
+arm -> absent
+absent -> disarm : yes
+absent -> cool : no
+cool -> quiet : yes
+cool -> fire : no
+```
+
 ## Who can change them {#permissions}
 
 Fleet rules are **written by superadmins only**. Other roles that can reach the page read them but

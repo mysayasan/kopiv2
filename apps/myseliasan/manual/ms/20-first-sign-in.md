@@ -69,6 +69,29 @@ diingati pada pelayar ini:
 - **Pautan bantuan**, yang membuka manual ini. Ia berfungsi sebelum anda log masuk, iaitu waktu anda
   paling mungkin memerlukannya.
 
+```flow
+title : Log masuk yang mana anda dapat, dan apa yang masih boleh menahan anda selepas itu
+step open : Anda membuka satah kawalan
+ask sso : Adakah pelayan identiti dikonfigurasikan?
+step hop : Log masuk di MyIDSan, dan kembali ke sini
+step local : Log masuk dengan akaun tempatan
+ask must : Adakah kata laluan ditandakan mesti-tukar?
+step change : Tetapkan kata laluan anda sendiri dahulu
+ask role => users-and-roles#pending : Adakah sesiapa sudah memberi akaun ini peranan?
+end pending => users-and-roles#pending : Menunggu pelepasan — pentadbir perlu menetapkan satu
+ok work => workspace-tour : Ruang kerja, menunjukkan hanya apa yang peranan anda boleh buka
+open -> sso
+sso -> hop : ya
+sso -> local : tidak
+hop -> must
+local -> must
+must -> change : ya
+must -> role : tidak
+change -> role
+role -> pending : tidak
+role -> work : ya
+```
+
 ## Apabila log masuk gagal {#troubleshooting}
 
 - **"Akaun anda tiada peranan"** — akaun sebenar wujud tetapi tiada sesiapa memberikannya peranan

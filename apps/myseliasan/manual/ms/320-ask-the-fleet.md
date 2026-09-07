@@ -33,6 +33,17 @@ Pembantu ini diarahkan supaya mengasingkan kedua-duanya: manual menerangkan cara
 secara umum, dan ia tidak boleh sekali-kali dilaporkan sebagai pemerhatian tentang pemasangan anda.
 "Rakaman disimpan selama 14 hari" ialah ayat tentang produk, bukan tentang cakera anda.
 
+```arch
+title : Dari mana jawapan datang, dan apa yang tidak pernah meninggalkan rangkaian anda
+box agent : Pembantu itu, berjalan di sini
+store tables : Jadual satah kawalan ini sendiri — nod, peristiwa, statistik, penemuan ringkasan
+store manuals => using-this-manual : Manual terbina dalam: yang ini, dan milik MyMataSan
+box model => language-model : Model bahasa — hanya jika anda menghidupkannya
+agent -> tables : tentang ARMADA ANDA
+agent -> manuals : tentang PRODUK
+agent --> model
+```
+
 ## Sumber {#sources}
 
 Apabila jawapan bersandar pada manual, bahagian yang digunakannya muncul di bawah jawapan itu.
