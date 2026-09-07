@@ -784,6 +784,12 @@ The decisions worth a future maintainer NOT undoing:
    GoReleaser, `release: disable: true` in the yaml so GoReleaser never touches GitHub releases
    itself, `--skip=validate` (validation assumes an unprefixed tag), and a separate
    self-publish step that runs `gh release create myiotsan-v<ver> --latest=false` directly.
+   `--skip=validate` does **not** skip GoReleaser reading the `GORELEASER_CURRENT_TAG` tag's
+   contents from git — if that bare `v<ver>` tag doesn't exist yet, the run dies on the spot
+   (`couldn't get tag contents`). The workflow creates it **locally on the runner, never
+   pushed**, right before the GoReleaser step (idempotent — leaves an existing tag alone).
+   Pushing it is the one thing that must never happen: a bare `v<ver>` tag is mymatasan's own
+   namespace, and a release landing there could become the repo's "latest".
 3. **The shipped config carries NO default admin password.** `deploy/dist/myiotsan-config.json`
    ships `localAuth.password` empty; the app generates one per install and writes
    `INITIAL_ADMIN_LOGIN.txt`. A shipped default credential on an appliance that can switch relays
