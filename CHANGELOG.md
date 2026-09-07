@@ -127,6 +127,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-09-07 — myseliasan 1.86.0 (cbdc518)
+
+### Added
+
+- **myseliasan**: myseliasan's built-in manual ships its first three drawn figures using the diagram grammar, in all four languages (en/ms/zh/ar), structure byte-identical and only labels translated. 'Working inside a node' gets a flow figure of the two-permission split the article calls the part readers get wrong: this control plane decides whether you may reach a node, the node itself decides whether you may do the thing there, and a refusal from the node means nothing was sent - with a node link into 'Users and roles' node-access section. 'Failover' gets a flow figure showing a staged camera is not a camera until you take over - not created, not listed, not health-checked, not recorded - with a wait loop back to the 'has the recorder stopped?' decision. 'Adopting a node' gets a spec table naming the fleet's four ports (discovery/mTLS/control/media), where that section previously described them only in prose with no numbers. A new TestManualSpecValues test asserts those four values against the same infra/pairing.Default{Discovery,MTLS,Control,Media}Port constants mymatasan's own manual test already asserts against, so the two manuals' port tables cannot drift from each other, not just from the software. The build guard now reports checking 3 figures across 4 languages for myseliasan's suite.
 ## 2026-09-07 — mymatasan 1.151.0, myseliasan 1.85.0, core 1.114.0 (4961839)
 
 ### Added
