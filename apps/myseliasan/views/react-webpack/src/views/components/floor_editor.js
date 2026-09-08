@@ -684,13 +684,17 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
       // vertical offset is subtracted here and again when the move is persisted.
       const o = pv && pv.cams.get(p.id);
       const px = o ? o.x : p.x; const py = o ? o.y : p.y;
+      // The preview carries a turned HEADING as well as a moved position (a rotated selection turns
+      // its cameras with it), so the wedge has to read both from it - taking the position from the
+      // preview but the heading from the stored row leaves the cone pointing the old way mid-drag.
+      const hdg = o ? (o.heading || 0) : (p.heading || 0);
       const sx = px * ds; const sy = (h - py) * ds;
       const tone = nodeTone(nodesById[p.nodeId], nowSecRef.current) || TONES.idle;
       const isCam = !!p.cameraId;
       if (isCam && (p.fov || 0) > 0) {
         const half = (p.fov || 0) / 2; const N = 22;
         ctx.beginPath(); ctx.moveTo(sx, sy);
-        for (let i = 0; i <= N; i++) { const deg = (p.heading || 0) - half + (p.fov || 0) * (i / N); const a = (deg * Math.PI) / 180; ctx.lineTo(sx + rad * ds * Math.sin(a), sy - rad * ds * Math.cos(a)); }
+        for (let i = 0; i <= N; i++) { const deg = hdg - half + (p.fov || 0) * (i / N); const a = (deg * Math.PI) / 180; ctx.lineTo(sx + rad * ds * Math.sin(a), sy - rad * ds * Math.cos(a)); }
         ctx.closePath(); ctx.fillStyle = `${tone.color}28`; ctx.fill(); ctx.strokeStyle = `${tone.color}88`; ctx.lineWidth = 1; ctx.stroke();
       }
       const selected = isSel('cam', p.id);
@@ -707,7 +711,12 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
     // dragging. An accent line runs from the body out to each knob; the aim knob (round) points the
     // camera, the two edge knobs set the spread. A live readout shows the current heading/fov.
     if (cam) {
-      const H = camHandles(cam);
+      // Follow the drag preview, exactly as the marker and its wedge do. camHandles reads a
+      // placement's stored x/y/heading, so handing it the committed row while a drag is in flight
+      // left the aim knob, the edge knobs, the lines out to them and the heading readout sitting at
+      // the camera's OLD spot - the marker and its aiming furniture visibly coming apart.
+      const co = pv && pv.cams.get(cam.id);
+      const H = camHandles(co ? { ...cam, x: co.x, y: co.y, heading: co.heading } : cam);
       ctx.strokeStyle = '#2d6cdf'; ctx.lineWidth = 1;
       [H.aim, H.edgeL, H.edgeR].forEach((k) => { ctx.beginPath(); ctx.moveTo(H.sx, H.sy); ctx.lineTo(k.x, k.y); ctx.stroke(); });
       const knob = (k, r) => { ctx.beginPath(); ctx.arc(k.x, k.y, r, 0, Math.PI * 2); ctx.fillStyle = '#ffffff'; ctx.fill(); ctx.strokeStyle = '#2d6cdf'; ctx.lineWidth = 1.5; ctx.stroke(); };
