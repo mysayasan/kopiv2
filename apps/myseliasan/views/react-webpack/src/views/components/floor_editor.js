@@ -65,6 +65,32 @@ function placingCursor(iconName) {
   return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 12 12, crosshair`;
 }
 
+// The canvas cannot draw an SVG element, so each marker glyph is rasterised ONCE into an <img>
+// from the same shared icon set the tree, the read-only floor view and the placing cursor use.
+// Without this the editor drew bare coloured discs while every other surface drew the icon - the
+// same pin looking like two different things depending on which screen you were on, and what you
+// dropped never looking like what you carried.
+//
+// Keyed by name+colour and cached for the life of the page; a miss kicks off a load and asks for a
+// redraw when it arrives, so the first frame degrades to the plain disc rather than blocking.
+const markerIcons = new Map();
+function markerIcon(name, color, onReady) {
+  const key = `${name}|${color}`;
+  const hit = markerIcons.get(key);
+  if (hit) return hit.ok ? hit.img : null;
+  const inner = icoSvg[name] || '';
+  if (!inner) { markerIcons.set(key, { ok: false }); return null; }
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" `
+    + `stroke="${color}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+  const img = new Image();
+  const entry = { img, ok: false };
+  markerIcons.set(key, entry);
+  img.onload = () => { entry.ok = true; if (onReady) onReady(); };
+  img.onerror = () => { entry.ok = false; };
+  img.src = `data:image/svg+xml,${encodeURIComponent(svg)}`;
+  return null;
+}
+
 const TOOLSETS = {
   [KIND_BUILDING]: ['select', 'wall', 'room', 'round', 'door', 'window', 'stairs', 'platform', 'erase'],
   [KIND_OUTDOOR]: ['select', 'wall', 'room', 'round', 'door', 'parking', 'erase'],
@@ -735,13 +761,20 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
         ctx.closePath(); ctx.fillStyle = `${tone.color}28`; ctx.fill(); ctx.strokeStyle = `${tone.color}88`; ctx.lineWidth = 1; ctx.stroke();
       }
       const selected = isSel('cam', p.id);
-      ctx.beginPath(); ctx.arc(sx, sy, isCam ? 7 : 9, 0, Math.PI * 2);
+      // A touch larger than the old bare disc, so a legible glyph fits inside it.
+      const r = isCam ? 9 : 11;
+      ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2);
       ctx.fillStyle = tone.color; ctx.fill();
       ctx.lineWidth = selected ? 3 : 2; ctx.strokeStyle = selected ? '#2d6cdf' : '#fff'; ctx.stroke();
+      // The same glyph the tray, the cursor and the read-only view use, in white on the tone disc.
+      const glyph = isCam ? 'video' : (PLACING_ICON[nodeKindOf(nodesById[p.nodeId])] || 'cpu');
+      const gimg = markerIcon(glyph, '#ffffff', redraw);
+      if (gimg) { const gs = r * 1.15; ctx.drawImage(gimg, sx - gs / 2, sy - gs / 2, gs, gs); }
       const label = p.lastKnownName || (isCam ? `Cam ${p.cameraId}` : (nodesById[p.nodeId]?.name || p.nodeId));
       ctx.font = '600 11px system-ui, sans-serif'; ctx.textAlign = 'center';
-      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.strokeText(label, sx, sy - 13);
-      ctx.fillStyle = '#1f2937'; ctx.fillText(label, sx, sy - 13); ctx.textAlign = 'left';
+      const ly = sy - r - 5;
+      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.strokeText(label, sx, ly);
+      ctx.fillStyle = '#1f2937'; ctx.fillText(label, sx, ly); ctx.textAlign = 'left';
     });
 
     // Camera POV handles: draw over the selected camera's wedge so it can be aimed and widened by
