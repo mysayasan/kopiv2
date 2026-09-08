@@ -33,6 +33,7 @@
     "webpack": "^5.90.3",
     "webpack-cli": "^5.1.4",
     "webpack-dev-server": "^6.0.0",
-    "eslint": "^9.39.0"
+    "eslint": "^9.39.0",
+    "globals": "^15.0.0"
   }
 }

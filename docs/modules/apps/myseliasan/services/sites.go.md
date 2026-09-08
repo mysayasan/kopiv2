@@ -130,6 +130,26 @@ floor-plan images, and node/camera placements on those plans — the indoor half
   unplacing it first. A camera placement (non-empty `cameraId`) then gets a default `70`° `Fov` on
   drop so it has a visible coverage arc immediately; a node/sensor placement (`cameraId == ""`)
   gets `Fov: 0` (no arc).
+  - **The box pin is the sole writer of `ManagedNode.SiteId`.** A placement with an **empty
+    `CameraId`** is the appliance's own marker, and pinning it is what records where the box
+    lives: after the insert, `AddPlacement` (when a binder is wired — see `SetNodeSiteBinder`
+    below) resolves the floor's `SiteId` and calls the binder with it, which lands as
+    `INodeRegistry.UpdateNodeSite(ctx, nodeID, floor.SiteId, by)`. A **camera** placement never
+    touches `SiteId` — a recorder's cameras can be in several places, so none of them says where
+    its box sits. Binding is best-effort: the pin is already stored (it's the thing the map
+    draws), so a bind failure must not fail the placement. `DeletePlacement` reads the pin
+    **before** deleting it (`s.placements.GetById`) and, when it was a box pin (`CameraId ==
+    ""`), calls the binder with `siteID=0` afterwards to clear `SiteId` again — removing a box's
+    own pin is the operator saying it is no longer there, and the node record has to follow, or
+    the single-writer rule's whole point (no drift between the pin and the record) is undone the
+    moment someone unpins it. Covered by `services/box_pin_test.go` (a box pin binds, a camera
+    pin does not, unpinning clears, unpinning a camera does not, and placement still works with
+    no binder wired).
+  - `SetNodeSiteBinder(bind func(ctx, nodeID string, siteID, by int64) error)` injects the above
+    callback; `app.go` wires it to a closure over `registry.UpdateNodeSite`. Injected rather than
+    a direct dependency on `INodeRegistry` so the site service — and its tests — never need a
+    fleet. `nil` (the default, and every existing unit test) means placements are stored exactly
+    as before, just without the `SiteId` side effect.
   - `FindPlacementOf(ctx, nodeID, cameraID)` returns the pin a camera already holds plus its
     floor/site, or all-`nil` when unplaced. Uses `Get` with an explicit `NodeId`/`CameraId` filter
     (not `GetByForeign`, which hardcodes `limit=1`). A pin whose `FloorId` no longer resolves is

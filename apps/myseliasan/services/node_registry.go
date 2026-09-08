@@ -97,9 +97,17 @@ type INodeRegistry interface {
 	// marks it placed. Kept separate from UpdateMeta so frequent drag writes never race
 	// with a name/description edit. Passing placed=false clears the node off the map.
 	UpdatePosition(ctx context.Context, nodeID string, lat, lon float64, placed bool, updatedBy int64) (*entities.ManagedNode, error)
-	// UpdateNodeSite sets (or clears with siteID=0) the building an appliance resides in. Assigning
-	// a building also clears the node off the geo map (a building-resident node has no own pin).
+	// UpdateNodeSite sets (or clears with siteID=0) the place an appliance resides in. Landing
+	// somewhere also clears the node off the geo map (a resident node has no own pin) and retires
+	// any no-fixed-location waiver.
+	//
+	// Nothing in the UI calls this directly any more: pinning the appliance's own marker on a plan
+	// is what sets it, so "where the box is" has ONE writer instead of a dropdown and a pin that
+	// could disagree. See ISiteService.AddPlacement.
 	UpdateNodeSite(ctx context.Context, nodeID string, siteID int64, updatedBy int64) (*entities.ManagedNode, error)
+	// SetNoFixedLocation records that an appliance deliberately has no place on any plan (a colo
+	// recorder, a hosted hub), or withdraws that. Setting it clears SiteId. See the entity field.
+	SetNoFixedLocation(ctx context.Context, nodeID string, waived bool, updatedBy int64) (*entities.ManagedNode, error)
 	// SetAutoRenew turns a node's certificate auto-renew gate on or off. Off (the default
 	// for a newly adopted node) lets the cert lapse when it expires; on honours the node's
 	// automatic re-enrollment before expiry. No cert is issued here — this only decides
@@ -617,7 +625,7 @@ func (s *nodeRegistry) UpdatePosition(ctx context.Context, nodeID string, lat, l
 	return node, nil
 }
 
-// UpdateNodeSite sets or clears the building a node resides in. See INodeRegistry.
+// UpdateNodeSite sets or clears the place a node resides in. See INodeRegistry.
 func (s *nodeRegistry) UpdateNodeSite(ctx context.Context, nodeID string, siteID int64, updatedBy int64) (*entities.ManagedNode, error) {
 	node, err := s.nodes.GetByUnique(ctx, "", "node_id", nodeID)
 	if err != nil {
@@ -627,10 +635,37 @@ func (s *nodeRegistry) UpdateNodeSite(ctx context.Context, nodeID string, siteID
 		return nil, ErrNodeUnknown
 	}
 	node.SiteId = siteID
-	// A building-resident node is represented by its building, not its own pin, so assigning a
-	// building takes it off the geo map. Clearing the building leaves it off the map (it becomes a
-	// building-less node the operator can place standalone if they want).
+	// A resident node is represented by its place, not its own pin, so landing somewhere takes it
+	// off the geo map. Clearing leaves it off the map (a place-less node the operator can pin).
 	if siteID > 0 {
+		node.MapPlaced = false
+		// Being somewhere and being deliberately nowhere are mutually exclusive. Pinning the box
+		// answers the question the waiver was declining to answer, so it retires the waiver.
+		node.NoFixedLocation = false
+	}
+	node.UpdatedBy = updatedBy
+	node.UpdatedAt = time.Now().Unix()
+	if _, err := s.nodes.UpdateById(ctx, "", *node); err != nil {
+		return nil, err
+	}
+	return node, nil
+}
+
+// SetNoFixedLocation records (or withdraws) the operator's decision that an appliance has no place
+// on any plan. See INodeRegistry.
+func (s *nodeRegistry) SetNoFixedLocation(ctx context.Context, nodeID string, waived bool, updatedBy int64) (*entities.ManagedNode, error) {
+	node, err := s.nodes.GetByUnique(ctx, "", "node_id", nodeID)
+	if err != nil {
+		return nil, err
+	}
+	if node == nil {
+		return nil, ErrNodeUnknown
+	}
+	node.NoFixedLocation = waived
+	// Declaring an appliance placeless clears whatever place it was said to be in — otherwise the
+	// map would keep drawing it somewhere the operator has just said it is not.
+	if waived {
+		node.SiteId = 0
 		node.MapPlaced = false
 	}
 	node.UpdatedBy = updatedBy

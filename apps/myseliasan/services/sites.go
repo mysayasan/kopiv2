@@ -199,7 +199,17 @@ type ISiteService interface {
 	// EXCLUSIVE: a camera is in one physical place, so it holds at most one pin fleet-wide, and
 	// a second placement fails with *ErrAlreadyPlaced naming where the existing one is. Move it by
 	// unplacing it first.
+	//
+	// A placement with an EMPTY CameraId is the appliance itself, and pinning it is what records
+	// where the box lives: it sets the node's SiteId to the pin's site, and deleting it clears it
+	// again. That makes the pin the single writer of "where the box is" — there is no separate
+	// assignment that could disagree with it. A CAMERA placement never touches SiteId, because a
+	// recorder's cameras can be in several places and none of them says where its box sits.
 	AddPlacement(ctx context.Context, floorID int64, nodeID, cameraID, lastKnownName string, x, y float64, by int64) (*entities.NodePlacement, error)
+	// SetNodeSiteBinder injects how a box pin records the node's place. Optional: with no binder
+	// the placement is still stored, it just does not bind. Injected rather than depended on so
+	// the site service does not need the node registry (and its tests do not need a fleet).
+	SetNodeSiteBinder(bind func(ctx context.Context, nodeID string, siteID, by int64) error)
 	// FindPlacementOf returns the pin a camera already holds plus the floor/site it is on, or nils
 	// when it is unplaced. A pin on a floor that no longer exists is treated as unplaced (and
 	// cleaned up) — nothing renders it, so there would be no way to unplace it by hand.
@@ -219,6 +229,14 @@ type siteService struct {
 	placements dbsql.IGenericRepo[entities.NodePlacement]
 	cipher     *atrest.Cipher // may be nil (encryption disabled)
 	dir        string         // absolute directory for encrypted plan images
+	// bindNodeSite records where an appliance's box lives when its own marker is pinned or
+	// unpinned. nil until the app wires it (and in tests), in which case the pin is still stored.
+	bindNodeSite func(ctx context.Context, nodeID string, siteID, by int64) error
+}
+
+// SetNodeSiteBinder injects how a box pin records the node's place. See ISiteService.
+func (s *siteService) SetNodeSiteBinder(bind func(ctx context.Context, nodeID string, siteID, by int64) error) {
+	s.bindNodeSite = bind
 }
 
 // NewSiteService builds the sites/floors service. planDir is where encrypted plan images
@@ -409,6 +427,17 @@ func (s *siteService) AddPlacement(ctx context.Context, floorID int64, nodeID, c
 		return nil, err
 	}
 	row.Id = int64(id)
+	// The pin IS the record of where the box is, so binding happens here rather than in a separate
+	// call an operator could forget (or contradict). Only for the appliance's own marker: a camera
+	// pin says where that CAMERA is, and a recorder feeding three places has no single site.
+	//
+	// Best-effort: the pin is already stored and is the thing the map draws, so a failure to bind
+	// must not fail the placement and leave the operator with neither.
+	if cameraID == "" && s.bindNodeSite != nil {
+		if floor, ferr := s.floors.GetById(ctx, "", uint64(floorID)); ferr == nil && floor != nil {
+			_ = s.bindNodeSite(ctx, nodeID, floor.SiteId, by)
+		}
+	}
 	return &row, nil
 }
 
@@ -444,8 +473,21 @@ func (s *siteService) UpdatePlacement(ctx context.Context, id int64, x, y, headi
 }
 
 func (s *siteService) DeletePlacement(ctx context.Context, id int64) error {
-	_, err := s.placements.DeleteById(ctx, "", uint64(id))
-	return err
+	// Read the pin BEFORE deleting it: if it is an appliance's own marker, removing it is the
+	// operator saying the box is no longer there, and SiteId has to follow. Leaving it set would
+	// recreate exactly the drift the single-writer rule exists to remove — a node recorded as
+	// living somewhere it has no pin.
+	var boxOf string
+	if row, err := s.placements.GetById(ctx, "", uint64(id)); err == nil && row != nil && row.CameraId == "" {
+		boxOf = row.NodeId
+	}
+	if _, err := s.placements.DeleteById(ctx, "", uint64(id)); err != nil {
+		return err
+	}
+	if boxOf != "" && s.bindNodeSite != nil {
+		_ = s.bindNodeSite(ctx, boxOf, 0, 0)
+	}
+	return nil
 }
 
 func (s *siteService) ListSites(ctx context.Context) ([]*entities.Site, error) {

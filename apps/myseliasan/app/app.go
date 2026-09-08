@@ -342,6 +342,43 @@ func (m *module) Migrations() []bootstrap.Migration {
 			},
 		},
 		{
+			// "This appliance deliberately has no place on any plan" — a colo recorder, a hosted
+			// hub. Distinct from site_id being 0, which only means nobody has said yet; the map's
+			// "not placed yet" tray needs to tell a decision apart from an omission, or an
+			// off-site box sits in it for ever and operators learn to ignore the tray.
+			//
+			// Same NULL-safety as auto_renew: a bare ADD COLUMN leaves existing rows NULL and the
+			// entity's NoFixedLocation bool is non-pointer, so it cannot scan a NULL. Every
+			// existing node backfills to false — nobody has made that decision yet, which is
+			// exactly what false means. Idempotent.
+			ID:   "20260908-01-node-no-fixed-location",
+			Name: "add no_fixed_location (placement waiver) to managed_node",
+			Exec: func(ctx context.Context, tx *sql.Tx, engine string) error {
+				existing, err := tableColumns(ctx, tx, engine, "managed_node")
+				if err != nil {
+					return err
+				}
+				if len(existing) == 0 {
+					// No managed_node table yet; the auto-migrator creates it at the entity's
+					// current shape, this column included.
+					return nil
+				}
+				if !existing["no_fixed_location"] {
+					if _, err := tx.ExecContext(ctx, "ALTER TABLE managed_node ADD COLUMN no_fixed_location "+geoColumnType("BOOLEAN", engine)); err != nil {
+						return fmt.Errorf("add managed_node.no_fixed_location: %w", err)
+					}
+				}
+				falseLit := "0"
+				if engine == "postgres" {
+					falseLit = "false"
+				}
+				if _, err := tx.ExecContext(ctx, "UPDATE managed_node SET no_fixed_location = "+falseLit+" WHERE no_fixed_location IS NULL"); err != nil {
+					return fmt.Errorf("backfill managed_node.no_fixed_location NULLs: %w", err)
+				}
+				return nil
+			},
+		},
+		{
 			// 3D floor plans: a floor carries a painted grid (walls/floor cells) plus real-world
 			// scale, wall height and stacking elevation. Same NULL-safety as design/fov — grid is a
 			// string ('' default), the three float64 fields backfill to 0. Idempotent.
@@ -1171,6 +1208,13 @@ func (m *module) RegisterAppRoutes(api *mux.Router, deps apphost.Dependencies) (
 	} else if n > 0 {
 		deps.Logger.Infof("myseliasan.sites", "point-asset area backfill: repaired %d site(s)", n)
 	}
+	// Pinning an appliance's own marker on a plan is what records where its box lives, so the
+	// placement service needs a way to write it back to the node. Injected here rather than made a
+	// dependency, so the site service stays testable without a fleet.
+	siteService.SetNodeSiteBinder(func(ctx context.Context, nodeID string, siteID, by int64) error {
+		_, err := registry.UpdateNodeSite(ctx, nodeID, siteID, by)
+		return err
+	})
 	apis.NewSitesApi(api, *deps.Auth, controlSession, siteService)
 
 	// Availability (SLA) reporting over the recorded history. Mounted on the nodes API

@@ -174,6 +174,10 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   // camera list. It is the placement index the editor palette already uses.
   const [placedKeys, setPlacedKeys] = useState(() => new Set());
   const [treeQuery, setTreeQuery] = useState('');
+  // Which tree row a dragged camera is currently over, so exactly one row lights up.
+  const [dropTarget, setDropTarget] = useState(null);
+  // A camera dragged out of the tray, waiting for the editor to open on its new home.
+  const [editorPick, setEditorPick] = useState(null); // { pick, floorId }
   // Adding a building is a three-beat flow owned here: the wizard collects name/glyph/areas, the
   // map takes the drop point, then the editor opens on the building just created. editorSite is
   // also the re-entry point for an EXISTING building (from the rail or the drill-down).
@@ -291,6 +295,8 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
     })
     .catch(() => {}), []);
   useEffect(() => { reloadPlaced(); }, [reloadPlaced, sites]);
+  const reloadPlacedRef = useRef(reloadPlaced);
+  reloadPlacedRef.current = reloadPlaced;
 
   // A site's cameras are the ones PLACED there — for every kind, including a point asset, which
   // now owns an implicit area to pin them to.
@@ -522,6 +528,39 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   const openCameraFromTree = useCallback((site, floor, placement) => {
     openBuilding(site, null, floor.id, placement.cameraId);
   }, [openBuilding]);
+
+  // Placing a camera from the tray: open the place's editor already holding it, on the area it was
+  // dropped on. The editor is where a pin gets a POSITION and a direction, which a tree row cannot
+  // express - so the tree's job ends at "this camera belongs there", and the plan takes it from
+  // there with one click.
+  const placeCameraFromTray = useCallback((site, floorId, pick) => {
+    if (!site) {
+      // The button, not a drop: no target chosen yet. Say what to do rather than silently doing
+      // nothing - picking a place FOR the operator would be a guess about the physical world.
+      if (onToast) onToast(t('tree.pickAPlaceFirst', { name: pick.name }), 'info');
+      return;
+    }
+    setPopup(null);
+    setDrill(null);
+    setEditorPick({ pick, floorId: floorId || null });
+    setEditorSite(site);
+  }, [onToast, t]);
+
+  // The waiver: "this appliance has no place on any plan, on purpose". The only other way out of
+  // the tray, and the reason the tray can ever be empty for a fleet with an off-site recorder.
+  const waiveLocation = useCallback(async (node, waived) => {
+    try {
+      const res = await api(`/api/nodes/${encodeURIComponent(node.nodeId)}/no-fixed-location`, {
+        method: 'PUT', body: JSON.stringify({ noFixedLocation: waived }),
+      });
+      if (!res.ok) throw new Error('save failed');
+      if (reloadNodes) reloadNodes();
+      if (onToast) onToast(waived ? t('tree.markedNoFixedLocation', { name: node.name || node.nodeId }) : t('tree.locationExpectedAgain', { name: node.name || node.nodeId }), 'success');
+    } catch (_) {
+      if (onToast) onToast(t('map.saveFailed'), 'error');
+      if (reloadNodes) reloadNodes();
+    }
+  }, [reloadNodes, onToast, t]);
 
   // An appliance row opens its device card. The popup anchors to viewport coordinates, so the
   // click's own position is what keeps the card next to the row it came from.
@@ -937,6 +976,10 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
           onEditSite={openEditor}
           onSelectNode={selectNodeFromTree}
           onPlayCamera={playCamera}
+          onPlaceCamera={placeCameraFromTray}
+          onWaiveLocation={waiveLocation}
+          dropTarget={dropTarget}
+          onDropTarget={setDropTarget}
         />
 
         <div className="fleet-map-stage">
@@ -998,9 +1041,11 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
         <BuildingEditorDialog
           site={editorSite}
           nodes={nodes}
+          initialPick={editorPick ? editorPick.pick : undefined}
+          initialFloorId={editorPick && editorPick.floorId ? editorPick.floorId : undefined}
           onToast={onToast}
-          onClose={() => { const id = editorSite.id; setEditorSite(null); setPlansBySite((m) => { const c = { ...m }; delete c[id]; return c; }); if (siteReloadRef.current) siteReloadRef.current(); }}
-          onChanged={() => { setPlansBySite((m) => { const c = { ...m }; delete c[editorSite.id]; return c; }); if (siteReloadRef.current) siteReloadRef.current(); }}
+          onClose={() => { const id = editorSite.id; setEditorSite(null); setEditorPick(null); setPlansBySite((m) => { const c = { ...m }; delete c[id]; return c; }); if (siteReloadRef.current) siteReloadRef.current(); if (reloadNodes) reloadNodes(); }}
+          onChanged={() => { setPlansBySite((m) => { const c = { ...m }; delete c[editorSite.id]; return c; }); if (siteReloadRef.current) siteReloadRef.current(); if (reloadPlacedRef.current) reloadPlacedRef.current(); }}
         />
       ) : null}
 

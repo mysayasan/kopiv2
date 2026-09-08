@@ -52,6 +52,18 @@ func (f *fakePlacementRepo) Create(_ context.Context, _ string, m entities.NodeP
 	return uint64(cp.Id), nil
 }
 
+// GetById backs DeletePlacement's read-before-delete: it has to know whether the pin being removed
+// is an appliance's own marker, because unpinning the box is what clears the node's SiteId.
+func (f *fakePlacementRepo) GetById(_ context.Context, _ string, id uint64) (*entities.NodePlacement, error) {
+	for _, r := range f.rows {
+		if uint64(r.Id) == id {
+			cp := *r
+			return &cp, nil
+		}
+	}
+	return nil, errors.New("no result found")
+}
+
 func (f *fakePlacementRepo) DeleteById(_ context.Context, _ string, id uint64) (uint64, error) {
 	for i, r := range f.rows {
 		if uint64(r.Id) == id {

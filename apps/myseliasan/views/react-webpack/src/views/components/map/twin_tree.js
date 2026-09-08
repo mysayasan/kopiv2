@@ -45,9 +45,41 @@ export function TwinTree({
   plansBySite = {}, camsByNode = {}, placedKeys,
   expanded, onToggle, query, onQuery, placing,
   onAddSite, onOpenSite, onOpenArea, onOpenCamera, onEditSite, onSelectNode, onPlayCamera,
+  onPlaceCamera, onWaiveLocation, dropTarget, onDropTarget,
 }) {
   const t = useT();
   const isOpen = (key) => expanded.has(key);
+
+  // Dragging a camera out of the tray and onto a place is the whole verb: "this camera is there".
+  // The payload is the camera; the drop target decides which area it lands on.
+  const dragCamera = (e, payload) => {
+    e.dataTransfer.setData('text/tray-camera', JSON.stringify(payload));
+    e.dataTransfer.effectAllowed = 'copy';
+  };
+  const readCamera = (e) => {
+    try {
+      const raw = e.dataTransfer.getData('text/tray-camera');
+      return raw ? JSON.parse(raw) : null;
+    } catch (_) { return null; }
+  };
+  // A row only lights up for a drag it can actually accept, so "nothing happens" is never the
+  // answer to a drop the UI appeared to invite.
+  const dropProps = (key, onDrop) => ({
+    onDragOver: (e) => {
+      if (e.dataTransfer.types.indexOf('text/tray-camera') < 0) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      if (dropTarget !== key) onDropTarget(key);
+    },
+    onDragLeave: () => { if (dropTarget === key) onDropTarget(null); },
+    onDrop: (e) => {
+      const payload = readCamera(e);
+      onDropTarget(null);
+      if (!payload) return;
+      e.preventDefault();
+      onDrop(payload);
+    },
+  });
   const q = (query || '').trim().toLowerCase();
   const hit = (s) => !q || (s || '').toLowerCase().includes(q);
 
@@ -73,9 +105,13 @@ export function TwinTree({
     };
   }), [nodes, camsByNode, placedKeys]);
 
-  const trayRows = tray.filter((r) => r.unplaced.length > 0 || r.unknown || r.loading || r.boxUnplaced);
+  const trayRows = tray.filter((r) => r.unplaced.length > 0 || r.unknown || r.loading
+    || (r.boxUnplaced && !r.node.noFixedLocation));
   const shownTray = trayRows.filter((r) => !q || hit(nodeLabel(r.node)) || r.unplaced.some((c) => hit(c.name)));
   const unplacedTotal = tray.reduce((a, r) => a + r.unplaced.length, 0);
+  // An appliance counts as a loose end only while nobody has DECIDED about it: a waived box is
+  // answered, not outstanding.
+  const boxesToPin = tray.filter((r) => r.boxUnplaced && !r.node.noFixedLocation).length;
   const anyUnknown = tray.some((r) => r.unknown);
 
   // --- the Places root counter: the progress bar for the whole authoring job -------------------
@@ -154,7 +190,7 @@ export function TwinTree({
     const camCount = (fp.placements || []).filter((p) => p.cameraId).length;
     return (
       <div key={fp.floor.id} className="tt-branch">
-        <div className="tt-row">
+        <div className={`tt-row${dropTarget === key ? ' droptarget' : ''}`} {...dropProps(key, (payload) => onPlaceCamera(row.site, fp.floor.id, payload))}>
           <Caret open={open} onClick={() => onToggle(key)} label={t('tree.expand')} />
           <Ico n="grid2" sz={11} />
           <button type="button" className="tt-name dim" onClick={() => onOpenArea(row.site, fp.floor.id)} title={t('tree.openPlan')}>
@@ -182,7 +218,10 @@ export function TwinTree({
     const cams = (row.cameraKeys || []).length;
     return (
       <div key={s.id} className="tt-branch">
-        <div className={`tt-row${placingThis ? ' placing' : ''}`}>
+        <div
+          className={`tt-row${placingThis ? ' placing' : ''}${dropTarget === key ? ' droptarget' : ''}`}
+          {...dropProps(key, (payload) => onPlaceCamera(row.site, null, payload))}
+        >
           <Caret open={open} onClick={() => onToggle(key)} label={t('tree.expand')} />
           <Dot tone={siteTone(row)} />
           <span className="tt-glyph" aria-hidden="true">{siteGlyph(s)}</span>
@@ -237,7 +276,9 @@ export function TwinTree({
     const tone = nodeToneKey(r.node, nowSec);
     return (
       <div key={r.node.nodeId} className="tt-branch">
-        <div className="tt-row">
+        {/* tt-trayrow: a tray row's TAGS are its content - what is unknown, what is unpinned, what
+            has been waived - so they wrap onto a second line rather than truncating to stubs. */}
+        <div className="tt-row tt-trayrow">
           {r.unplaced.length > 0 ? <Caret open={open} onClick={() => onToggle(key)} label={t('tree.expand')} /> : <span className="tt-caret-gap" />}
           <Dot tone={tone} />
           <Ico n={KIND_ICON[nodeKindOf(r.node)] || 'cpu'} sz={11} />
@@ -246,26 +287,61 @@ export function TwinTree({
           {/* NEVER "0 unplaced" for a node we could not reach: that reads as done. */}
           {r.unknown ? <span className="tt-tag warn" title={t('tree.camerasUnknown')}>{t('tree.camerasUnknown')}</span> : null}
           {r.unplaced.length > 0 ? <span className="tt-chip todo">{t('tree.nUnplaced', { n: r.unplaced.length })}</span> : null}
-          {r.boxUnplaced ? <span className="tt-tag" title={t('tree.boxNotPlaced')}>{t('tree.boxNotPlaced')}</span> : null}
+          {r.boxUnplaced && !r.node.noFixedLocation ? <span className="tt-tag" title={t('tree.boxNotPlaced')}>{t('tree.boxNotPlaced')}</span> : null}
+          {r.node.noFixedLocation ? <span className="tt-tag" title={t('tree.noFixedLocationHint')}>{t('tree.noFixedLocation')}</span> : null}
+          {/* The exit from the tray for an appliance that genuinely has no place on any plan - a
+              colo recorder, a hosted hub. Without it the tray can never be emptied, and a tray
+              that can never be emptied is one operators stop reading. */}
+          {r.boxUnplaced ? (
+            <button
+              type="button"
+              className="tt-act"
+              onClick={() => onWaiveLocation(r.node, !r.node.noFixedLocation)}
+              title={r.node.noFixedLocation ? t('tree.undoNoFixedLocation') : t('tree.markNoFixedLocation')}
+              aria-label={r.node.noFixedLocation ? t('tree.undoNoFixedLocation') : t('tree.markNoFixedLocation')}
+            >
+              <Ico n={r.node.noFixedLocation ? 'undo' : 'check-ok'} sz={11} />
+            </button>
+          ) : null}
         </div>
         {open ? (
           <div className="tt-children">
-            {r.unplaced.map((c) => (
-              <div key={c.id} className="tt-row tt-leaf">
-                <span className="tt-caret-gap" />
-                <Ico n="video" sz={11} />
-                <span className="tt-name dim">{c.name || t('nodes.cameraN', { id: c.id })}</span>
-                <button
-                  type="button"
-                  className="tt-act"
-                  onClick={(e) => onPlayCamera({ nodeId: r.node.nodeId, cameraId: String(c.id), name: c.name || String(c.id) }, e.clientX, e.clientY)}
-                  title={t('tree.openLive')}
-                  aria-label={t('tree.openLive')}
+            {r.unplaced.map((c) => {
+              const payload = { nodeId: r.node.nodeId, cameraId: String(c.id), name: c.name || t('nodes.cameraN', { id: c.id }) };
+              return (
+                <div
+                  key={c.id}
+                  className="tt-row tt-leaf tt-draggable"
+                  draggable
+                  onDragStart={(e) => dragCamera(e, payload)}
+                  title={t('tree.dragToPlace')}
                 >
-                  <Ico n="play" sz={11} />
-                </button>
-              </div>
-            ))}
+                  <span className="tt-caret-gap" />
+                  <Ico n="video" sz={11} />
+                  <span className="tt-name dim">{payload.name}</span>
+                  {/* Dragging is the quick path; the button is the discoverable one, and the only
+                      one that works for anybody who cannot drag. */}
+                  <button
+                    type="button"
+                    className="tt-act"
+                    onClick={() => onPlaceCamera(null, null, payload)}
+                    title={t('tree.placeOnPlan')}
+                    aria-label={t('tree.placeOnPlan')}
+                  >
+                    <Ico n="map-pin" sz={11} />
+                  </button>
+                  <button
+                    type="button"
+                    className="tt-act"
+                    onClick={(e) => onPlayCamera(payload, e.clientX, e.clientY)}
+                    title={t('tree.openLive')}
+                    aria-label={t('tree.openLive')}
+                  >
+                    <Ico n="play" sz={11} />
+                  </button>
+                </div>
+              );
+            })}
           </div>
         ) : null}
       </div>
@@ -319,7 +395,10 @@ export function TwinTree({
           <Caret open={isOpen('tray')} onClick={() => onToggle('tray')} label={t('tree.expand')} />
           <Ico n="map-pin" sz={13} />
           <span className="tt-name">{t('tree.notPlacedYet')}</span>
-          {unplacedTotal > 0 ? <span className="tt-chip todo">{unplacedTotal}</span> : null}
+          {unplacedTotal > 0 ? <span className="tt-chip todo" title={t('tree.camerasToPlace')}>{unplacedTotal} <Ico n="video" sz={9} /></span> : null}
+          {/* Two loose ends, counted separately, because they are different jobs: cameras that are
+              not on any plan, and appliances whose own box has no pin. */}
+          {boxesToPin > 0 ? <span className="tt-chip todo" title={t('tree.boxesToPin')}>{boxesToPin} <Ico n="cpu" sz={9} /></span> : null}
           {anyUnknown ? <span className="tt-tag warn" title={t('tree.someUnreachable')}>{t('tree.someUnreachable')}</span> : null}
         </div>
         {isOpen('tray') ? (
@@ -343,4 +422,6 @@ TwinTree.propTypes = {
   placing: PropTypes.object,
   onAddSite: PropTypes.func, onOpenSite: PropTypes.func, onOpenArea: PropTypes.func, onOpenCamera: PropTypes.func,
   onEditSite: PropTypes.func, onSelectNode: PropTypes.func, onPlayCamera: PropTypes.func,
+  onPlaceCamera: PropTypes.func, onWaiveLocation: PropTypes.func,
+  dropTarget: PropTypes.string, onDropTarget: PropTypes.func,
 };

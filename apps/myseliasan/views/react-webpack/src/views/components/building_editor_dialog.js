@@ -37,7 +37,11 @@ function AreaTab({ floor, active, onOpen, onRename }) {
 }
 AreaTab.propTypes = { floor: PropTypes.object, active: PropTypes.bool, onOpen: PropTypes.func, onRename: PropTypes.func };
 
-export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onChanged }) {
+// initialPick / initialFloorId let a caller open the editor ALREADY holding something to place -
+// which is what dragging a camera out of the map's "not placed yet" tray onto an area does. The
+// operator's next click lands it; without this they would arrive at a plan and have to find the
+// same camera again in the palette they just dragged it from.
+export function BuildingEditorDialog({ site, nodes = [], initialPick, initialFloorId, onToast, onClose, onChanged }) {
   const t = useT();
   const changedRef = useRef(onChanged); changedRef.current = onChanged;
   const notifyChanged = () => { if (changedRef.current) changedRef.current(); };
@@ -50,7 +54,7 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
   const [expanded, setExpanded] = useState({});
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  const [placing, setPlacing] = useState(null); // { nodeId, cameraId, name }
+  const [placing, setPlacing] = useState(initialPick || null); // { nodeId, cameraId, name }
   const [placedIndex, setPlacedIndex] = useState({}); // "nodeId::cameraId" -> { siteName, floorName, floorId, … }
   const [editSite, setEditSite] = useState(false);
   const fileInputRef = useRef(null);
@@ -75,7 +79,8 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
       list.sort((a, b) => (a.ordinal - b.ordinal) || (a.id - b.id));
       setFloors(list);
       setActiveFloor((cur) => {
-        const want = selectId || (cur && cur.id);
+        // initialFloorId only steers the FIRST load - after that the operator's own tab choice wins.
+        const want = selectId || (cur && cur.id) || initialFloorId;
         return list.find((f) => f.id === want) || list[0] || null;
       });
       setLoaded(true);
@@ -83,7 +88,7 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
       return list;
     } catch (_) { setFloors([]); setActiveFloor(null); setLoaded(true); return []; }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [building.id]);
+  }, [building.id, initialFloorId]);
 
   const loadPlacements = useCallback(async (floorId) => {
     if (!floorId) { setPlacements([]); return; }
@@ -480,6 +485,8 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
 BuildingEditorDialog.propTypes = {
   site: PropTypes.object,
   nodes: PropTypes.array,
+  initialPick: PropTypes.object,
+  initialFloorId: PropTypes.number,
   onToast: PropTypes.func,
   onClose: PropTypes.func,
   onChanged: PropTypes.func,

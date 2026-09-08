@@ -111,11 +111,22 @@ created, positioned and authored entirely from it:
   the tunnel now covers **every** adopted node, not only nodes at placed sites, so an unplaced
   node's cameras can still show up in the tray. One search box filters both trees and keeps the
   ancestors of a match. Indentation uses logical CSS properties, so the tree nests from the right
-  in Arabic. **Gap**: the old rail's per-node building-selector dropdown (`PUT
-  /api/nodes/{id}/building`) is gone with the flat rail it lived in, and nothing in the UI writes
-  `ManagedNode.SiteId` today — a node still colours into its place if `SiteId` was set earlier, but
-  there is currently no screen to set or change it. That returns in a later phase as the node's own
-  **box pin**, meant to become the sole writer of `SiteId`.
+  in Arabic. **The box pin is now the sole writer of `ManagedNode.SiteId`**, closing the gap left
+  when the old rail's per-node building-selector dropdown (`PUT /api/nodes/{id}/building`, now
+  removed) went with the flat rail it lived in: pinning an appliance's **own** marker on a plan
+  (a placement with no camera) is what sets `SiteId`, and unpinning it clears `SiteId` again
+  (`ISiteService.AddPlacement`/`DeletePlacement`, `services/sites.go.md`). Each tray camera row is
+  **draggable** onto a place or an area row in the "Everywhere" tree (payload `"text/tray-camera"`;
+  a row only highlights for a drag it can accept), and dropping opens that place's editor with the
+  camera pre-picked and the right area already open (`BuildingEditorDialog`'s new `initialPick`/
+  `initialFloorId` props) — the operator's next click lands it. Every tray camera also has an
+  explicit **"Place on a plan"** button, the discoverable path that works without dragging. Tray
+  node rows gain a **no-fixed-location** toggle (`PUT /api/nodes/{id}/no-fixed-location`) for an
+  appliance that genuinely has no place on any plan — a colo recorder, a hosted hub — since
+  without it the tray could never be emptied for a fleet with one, and a tray that can never be
+  emptied is one operators learn to ignore; a waived appliance stops counting as an outstanding
+  box. The tray root now shows **two** counters side by side — cameras not on any plan, and
+  appliances whose own box has no pin — because they are different jobs.
 - **Adding an asset**: a **`+ Add`** button in the rail opens a wizard (`asset_wizard.js`,
   replacing the old building-only `building_wizard.js`) whose first question is **what is being
   added** — building / outdoor area / point asset — because the kind decides everything after: a
@@ -271,7 +282,9 @@ state), `PUT/DELETE /api/placements/{id}` (position, and/or
 `GET /api/node-floorplan/{nodeId}` (locate-on-plan drill-down),
 `GET /api/basemap/info`, `GET/PUT /api/basemap/config`, `POST /api/basemap/download`,
 `GET /api/basemap/tiles/{name}`, `PUT /api/nodes/{id}/position` (a node's own geographic
-coordinates), and `PUT /api/nodes/{id}/building` (assign/clear the site a node resides in).
+coordinates), and `PUT /api/nodes/{id}/no-fixed-location` (an operator's decision that an
+appliance has no place on any plan — the site a node resides in is set only by pinning its own
+marker, via `POST /api/floors/{id}/placements` above).
 See `docs/modules/apps/myseliasan/apis/{basemap,sites,nodes}.go.md`.
 
 **In-flight redesign (not wired in):** `components/map/` (`geo_map.js`, `inspector.js`,
