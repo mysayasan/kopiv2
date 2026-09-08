@@ -192,7 +192,9 @@ export function SiteDialog({ initialName, initialIcon, kind, busy, onSave, onDel
           {onDelete ? <button type="button" className="danger-text site-dialog-delete" onClick={onDelete} disabled={busy}>{t('map.deleteAsset')}</button> : null}
           <span className="site-dialog-spacer" />
           <button type="button" className="quiet" onClick={onCancel} disabled={busy}>{t('map.cancel')}</button>
-          <button type="button" onClick={() => onSave(name.trim(), icon)} disabled={!canSave}>{t('fd.save')}</button>
+          {/* Same borrowed-label bug as the basemap dialog had: this saves a name and a glyph,
+              not a plan. */}
+          <button type="button" onClick={() => onSave(name.trim(), icon)} disabled={!canSave}>{t('map.saveAsset')}</button>
         </div>
       </div>
     </div>

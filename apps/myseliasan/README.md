@@ -281,7 +281,11 @@ an operator (or `MYSELIASAN_BASEMAP_SOURCE`/`MYSELIASAN_PMTILES_BIN` env vars) c
 pmtiles source and the `pmtiles` tool is installed, the UI can **download a new region on
 demand** (`POST /api/basemap/download`, a bounding box + max zoom, capped at 25°×25°/zoom 14) —
 this is the one action in the whole app that deliberately reaches the internet, and it stays off
-by default so an air-gapped install is unaffected.
+by default so an air-gapped install is unaffected. This is a **two-step** UI flow, not one action:
+the "No map data for this area" banner's **Set up** dialog only saves the source URL; the banner
+then switches to a separate **Download this region** button that extracts whatever area is
+currently panned into view. If the `pmtiles` tool isn't installed, the banner says so instead of
+offering a download button that would always fail.
 
 Floor-plan images are **encrypted at rest** under `<dataDir>/floorplans`, using the same fleet
 cipher that protects the CA key and fleet PSK (see "Fleet secret encryption at rest" below) —

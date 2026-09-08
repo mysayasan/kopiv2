@@ -1048,6 +1048,7 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
               canDownload={canDownload}
               downloading={downloading}
               envManaged={bmConfig.envManaged}
+              hasTool={bmConfig.hasTool}
               onDownload={downloadRegion}
               onSetUp={() => setSetupOpen(true)}
             />

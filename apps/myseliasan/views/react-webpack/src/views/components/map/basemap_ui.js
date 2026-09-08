@@ -15,15 +15,21 @@ import { useT, Ico } from '@shared';
 // BasemapDownloadBanner appears when the view has been panned outside every downloaded region.
 // It offers the download when the server can do one, and says why not when it cannot — "no data
 // here" with no explanation reads as a bug rather than a setup step.
-export function BasemapDownloadBanner({ canDownload, downloading, envManaged, onDownload, onSetUp }) {
+export function BasemapDownloadBanner({ canDownload, downloading, envManaged, hasTool, onDownload, onSetUp }) {
   const t = useT();
   return (
     <div className="fleet-map-download">
       <span><Ico n="globe" sz={14} /> {t('map.noDataHere')}</span>
       {canDownload ? (
-        <button type="button" onClick={onDownload} disabled={downloading}>
-          {downloading ? <><Ico n="reload" sz={13} /> {t('map.downloading')}</> : <><Ico n="download" sz={13} /> {t('map.downloadRegion')}</>}
-        </button>
+        <>
+          <button type="button" onClick={onDownload} disabled={downloading}>
+            {downloading ? <><Ico n="reload" sz={13} /> {t('map.downloading')}</> : <><Ico n="download" sz={13} /> {t('map.downloadRegion')}</>}
+          </button>
+          {/* A source is configured but the server cannot act on it. Saying so HERE matters: the
+              warning is otherwise only inside the setup dialog, so the banner would offer a
+              download that fails every time with no hint as to why. */}
+          {!hasTool ? <span className="fleet-map-download-note">{t('map.toolMissing')}</span> : null}
+        </>
       ) : (
         <>
           <span className="fleet-map-download-note">{t('map.downloadNotConfigured')}</span>
@@ -37,7 +43,7 @@ export function BasemapDownloadBanner({ canDownload, downloading, envManaged, on
 }
 BasemapDownloadBanner.propTypes = {
   canDownload: PropTypes.bool, downloading: PropTypes.bool, envManaged: PropTypes.bool,
-  onDownload: PropTypes.func, onSetUp: PropTypes.func,
+  hasTool: PropTypes.bool, onDownload: PropTypes.func, onSetUp: PropTypes.func,
 };
 
 // BasemapSetupDialog points the server at a remote PMTiles archive to extract regions from. It
@@ -60,7 +66,9 @@ export function BasemapSetupDialog({ config, onSave, onCancel }) {
         </div>
         <div className="site-dialog-actions">
           <button type="button" className="quiet" onClick={onCancel}>{t('map.cancel')}</button>
-          <button type="button" onClick={() => onSave((inputRef.current && inputRef.current.value.trim()) || '')}>{t('fd.save')}</button>
+          {/* This used to borrow the floor designer's save label, which reads "Save plan" - on a
+              dialog about a map source that sounds like a button belonging to something else. */}
+          <button type="button" onClick={() => onSave((inputRef.current && inputRef.current.value.trim()) || '')}>{t('map.saveSource')}</button>
         </div>
       </div>
     </div>
