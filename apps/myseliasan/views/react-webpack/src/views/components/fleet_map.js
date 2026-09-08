@@ -11,7 +11,8 @@ import { normKind, siteGlyph } from './site_kinds';
 // rather than 1,600 lines of cartography, canvas styling and floating cards.
 import { basemapStyle } from './map/basemap_style';
 import { SEV_COLOR, PULSE_PERIOD, hexToRgba, easeOutCubic, markerShape, pinStyle, siteStyle } from './map/markers';
-import { NodeCameraPopup, MapPopupFrame, eventSnapshotSrc, recordingStreamSrc, SEV_RANK } from './map/popups';
+import { eventSnapshotSrc, recordingStreamSrc } from './map/media_src';
+import { Inspector } from './map/inspector';
 import { BasemapDownloadBanner, BasemapSetupDialog } from './map/basemap_ui';
 import { TwinTree } from './map/twin_tree';
 
@@ -33,6 +34,12 @@ import { PMTilesVectorSource } from 'ol-pmtiles';
 import 'ol/ol.css';
 import '../styles/fleet-map.css';
 import '../styles/twin-tree.css';
+// map-workspace.css supplies the inspector pane's card styles (the .mw-insp-* family). Its
+// three-pane grid rules go unused here - this page keeps its own flex body - and land on nothing.
+import '../styles/map-workspace.css';
+
+// Severity ordering for rolling a place's camera alerts up to one badge.
+const SEV_RANK = { critical: 3, warning: 2, info: 1 };
 
 const DEFAULT_CENTER = [109.45, 4.15];
 const DEFAULT_ZOOM = 6;
@@ -135,10 +142,15 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   const [placing, setPlacing] = useState(null);
   const placingRef = useRef(null);
   placingRef.current = placing;
-  // Camera popup: the node whose pin was clicked + where to anchor the card.
-  const [popup, setPopup] = useState(null); // { node, x, y }
-  // Drill-down: the node whose floor plan is open (with its cameras), or null for the map.
-  const [drill, setDrill] = useState(null); // { node, floorplans }
+  // What the inspector is describing, and what the stage is showing. ONE selection, set from the
+  // tree or from a marker on the plan, instead of a drill-down state plus a floating popup that
+  // could each be showing something different.
+  //
+  //   { type: 'site',   id }
+  //   { type: 'area',   siteId, floorId }
+  //   { type: 'camera', nodeId, cameraId, name, siteId, siteName, floorId, floorName }
+  //   { type: 'node',   nodeId }
+  const [sel, setSel] = useState(null);
   // Live footage windows: several can be open at once (each its own floating window). Opened
   // from a camera click in EITHER the quick popup or the floor plan — a camera never opens the
   // full camera page.
@@ -172,7 +184,10 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   const [plansBySite, setPlansBySite] = useState({});
   // Fleet-wide "what already holds a pin", so the tray can subtract it from each node's live
   // camera list. It is the placement index the editor palette already uses.
-  const [placedKeys, setPlacedKeys] = useState(() => new Set());
+  // The full placement index, not just the keys: the inspector needs each pin's SITE to answer
+  // "where are this recorder's cameras?", which is the one question the old model could not.
+  const [placements, setPlacements] = useState([]);
+  const placedKeys = useMemo(() => new Set(placements.map((p) => `${p.nodeId}::${p.cameraId || ''}`)), [placements]);
   const [treeQuery, setTreeQuery] = useState('');
   // Which tree row a dragged camera is currently over, so exactly one row lights up.
   const [dropTarget, setDropTarget] = useState(null);
@@ -289,14 +304,34 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   // subtracts it from each node's camera list. Refreshed alongside the site overview so placing
   // something in the editor removes it from the tray without a reload.
   const reloadPlaced = useCallback(() => api('/api/placements', { noRedirect: true })
-    .then((r) => {
-      const rows = r.ok && Array.isArray(r.body) ? r.body : [];
-      setPlacedKeys(new Set(rows.map((p) => `${p.nodeId}::${p.cameraId || ''}`)));
-    })
+    .then((r) => setPlacements(r.ok && Array.isArray(r.body) ? r.body : []))
     .catch(() => {}), []);
   useEffect(() => { reloadPlaced(); }, [reloadPlaced, sites]);
   const reloadPlacedRef = useRef(reloadPlaced);
   reloadPlacedRef.current = reloadPlaced;
+  // openBuilding is bound once into the OpenLayers click handler, so it reads the live plan cache
+  // through a ref rather than closing over a stale copy.
+  const plansBySiteRef = useRef(plansBySite);
+  plansBySiteRef.current = plansBySite;
+
+  // What the stage is showing: the plan behind the current selection, or null for the geo map.
+  // Derived rather than stored, so the stage can never drift from the inspector beside it - the
+  // old drill-down was a second copy of "where am I" and the two could disagree.
+  const stagePlan = useMemo(() => {
+    if (!sel || (sel.type !== 'area' && sel.type !== 'camera')) return null;
+    const row = sites.find((r) => r.site && r.site.id === sel.siteId);
+    const site = row && row.site;
+    const list = (plansBySite[sel.siteId] || {}).list || [];
+    if (!site || list.length === 0) return null;
+    return { site, plans: list };
+  }, [sel, sites, plansBySite]);
+
+  // Selecting anything inside a place needs that place's plans, however the selection was made -
+  // the tree's branch may never have been expanded (a camera located from a notification, say).
+  useEffect(() => {
+    if (!sel || (sel.type !== 'area' && sel.type !== 'camera')) return;
+    if (!plansBySite[sel.siteId]) loadSitePlansRef.current(sel.siteId);
+  }, [sel, plansBySite]);
 
   // A site's cameras are the ones PLACED there — for every kind, including a point asset, which
   // now owns an implicit area to pin them to.
@@ -364,10 +399,19 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
       const site = (sites.find((s) => s.site && s.site.id === siteId) || {}).site || { id: siteId, name: t('map.viewIndoor') };
       const sres = await api(`/api/sites/${siteId}/floorplans`);
       const sitePlans = sres.ok && Array.isArray(sres.body) ? sres.body.filter((p) => p && p.floor) : plans;
-      setPopup(null);
       setLiveWindows([]); // clear floating windows so the highlighted marker on the plan is unobstructed
       setMediaWindows([]);
-      setDrill({ kind: 'site', site, floorplans: sitePlans, focusCameraId: payload.cameraId });
+      setPlansBySite((m) => ({ ...m, [siteId]: { loading: false, list: sitePlans } }));
+      setSel({
+        type: 'camera',
+        nodeId: payload.nodeId,
+        cameraId: payload.cameraId,
+        name: payload.name || String(payload.cameraId),
+        siteId,
+        siteName: site.name,
+        floorId: holder.floor.id,
+        floorName: holder.floor.name,
+      });
     } catch (_) { if (onToast) onToast(t('map.error'), 'error'); }
   }, [sites, onToast, t]);
 
@@ -379,32 +423,34 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
     v.animate({ center: fromLonLat([s.lon, s.lat]), zoom: Math.max(13, v.getZoom() || DEFAULT_ZOOM), duration: 650 });
   }, []);
 
-  // Clicking a NODE opens its device card (status + cameras + events) — a node is an appliance, not
-  // a building, so it never opens a floor plan. Mirrored to a ref for the once-bound OL handler.
-  const openNode = useCallback((node, px) => {
-    // px is relative to the map container; convert to viewport coords so the popup frame can clamp
-    // against the window and never clip off the top/edges.
-    const rect = containerRef.current ? containerRef.current.getBoundingClientRect() : { left: 0, top: 0 };
-    setDrill(null);
-    setPopup({ node, x: Math.round(rect.left + px[0]), y: Math.round(rect.top + px[1]) });
+  // Clicking a NODE selects it into the inspector. It used to open a card floating over the map,
+  // which covered the marker you had just clicked; the pane sits beside it instead.
+  const openNode = useCallback((node) => {
+    if (node && node.nodeId) setSel({ type: 'node', nodeId: node.nodeId });
   }, []);
   const openNodeRef = useRef(openNode);
   openNodeRef.current = openNode;
 
-  // Clicking a site opens its plans with EVERY camera on them (multi-node) — the digital-twin
-  // drill, shown even with no plans yet. Every kind takes this path now, a point asset included:
-  // it owns one implicit area, so the cameras on that junction or gate are pinned things you can
-  // see and click, not an inferred list borrowed from whichever appliance was assigned to it.
-  // focusFloorId opens the drill-down on a SPECIFIC area (clicked in the rail), rather than the
-  // default first plan — otherwise clicking one area could land you on the other.
-  const openBuilding = useCallback(async (site, px, focusFloorId, focusCameraId) => {
-    let plans = [];
-    try {
-      const res = await api(`/api/sites/${site.id}/floorplans`);
-      plans = res.ok && Array.isArray(res.body) ? res.body.filter((p) => p && p.floor) : [];
-    } catch (_) { /* open empty */ }
-    setPopup(null);
-    setDrill({ kind: 'site', site, floorplans: plans, focusFloorId, focusCameraId });
+  // Opening an area puts its plan on the STAGE - beside the tree that got you there and the
+  // inspector describing it - rather than over the top of the map in a drill-down that had its own
+  // back button. The tree is the navigation now, so the plan needs no chrome of its own.
+  //
+  // floorId is optional: naming no area lands on the place's first one, which is what clicking a
+  // place (rather than an area) means.
+  const openBuilding = useCallback(async (site, px, floorId) => {
+    if (!site || !site.id) return;
+    let list = (plansBySiteRef.current[site.id] || {}).list;
+    if (!list) {
+      try {
+        const res = await api(`/api/sites/${site.id}/floorplans`);
+        list = res.ok && Array.isArray(res.body) ? res.body.filter((p) => p && p.floor) : [];
+      } catch (_) { list = []; }
+      setPlansBySite((m) => ({ ...m, [site.id]: { loading: false, list } }));
+    }
+    const target = floorId || (list[0] && list[0].floor.id) || null;
+    setSel(target
+      ? { type: 'area', siteId: site.id, floorId: target }
+      : { type: 'site', id: site.id });
   }, []);
   const openBuildingRef = useRef(openBuilding);
   openBuildingRef.current = openBuilding;
@@ -414,16 +460,11 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   const removeGhostPlacements = useCallback(async (ids) => {
     if (!ids || !ids.length) return;
     await Promise.all(ids.map((id) => api(`/api/placements/${id}`, { method: 'DELETE' }).catch(() => {})));
-    if (drill && drill.site) {
-      try {
-        const res = await api(`/api/sites/${drill.site.id}/floorplans`);
-        const plans = res.ok && Array.isArray(res.body) ? res.body.filter((p) => p && p.floor) : [];
-        setDrill((d) => (d ? { ...d, floorplans: plans } : d));
-      } catch (_) { /* ignore */ }
-    }
+    setPlansBySite({}); // drop the cache; the open branch reloads itself
+    if (reloadPlacedRef.current) reloadPlacedRef.current();
     if (siteReloadRef.current) siteReloadRef.current();
     if (onToast) onToast(t('map.ghostsRemoved', { n: ids.length }), 'success');
-  }, [drill, onToast, t]);
+  }, [onToast, t]);
 
   // Buildings-centric map: a node never gets its own pin — every node lives in a site and is
   // reached by drilling into that site. Nothing is placed standalone, so there are no node pins.
@@ -504,8 +545,6 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   // opens the same editor as everything else: it has no walls to draw, but it has an area to drop
   // its cameras onto and aim them, which is the only way its cameras get placed at all.
   const openEditor = useCallback((site) => {
-    setPopup(null);
-    setDrill(null);
     setEditorSite(site);
   }, []);
   const openEditorRef = useRef(openEditor);
@@ -517,6 +556,7 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   // not enters placing mode, because "drop me somewhere" is the only thing left to do with it.
   const openSiteFromTree = useCallback((row) => {
     const s = row.site;
+    setSel({ type: 'site', id: s.id });
     if (s.mapPlaced) { flyToSite(s); return; }
     setPlacing((cur) => (cur && cur.kind === 'site' && cur.id === s.id
       ? null
@@ -526,8 +566,17 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   // A camera leaf opens the plan it is pinned to, with that camera highlighted - the tree found
   // it, so the map should land on it rather than on the area in general.
   const openCameraFromTree = useCallback((site, floor, placement) => {
-    openBuilding(site, null, floor.id, placement.cameraId);
-  }, [openBuilding]);
+    setSel({
+      type: 'camera',
+      nodeId: placement.nodeId,
+      cameraId: placement.cameraId,
+      name: placement.lastKnownName || String(placement.cameraId),
+      siteId: site.id,
+      siteName: site.name,
+      floorId: floor.id,
+      floorName: floor.name,
+    });
+  }, []);
 
   // Placing a camera from the tray: open the place's editor already holding it, on the area it was
   // dropped on. The editor is where a pin gets a POSITION and a direction, which a tree row cannot
@@ -540,8 +589,6 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
       if (onToast) onToast(t('tree.pickAPlaceFirst', { name: pick.name }), 'info');
       return;
     }
-    setPopup(null);
-    setDrill(null);
     setEditorPick({ pick, floorId: floorId || null });
     setEditorSite(site);
   }, [onToast, t]);
@@ -564,10 +611,9 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
 
   // An appliance row opens its device card. The popup anchors to viewport coordinates, so the
   // click's own position is what keeps the card next to the row it came from.
-  const selectNodeFromTree = useCallback((node, x, y) => {
+  const selectNodeFromTree = useCallback((node) => {
     if (!node || !node.nodeId) return;
-    setDrill(null);
-    setPopup({ node, x: Math.round(x || 0), y: Math.round(y || 0) });
+    setSel({ type: 'node', nodeId: node.nodeId });
   }, []);
   // The OL click handler is bound once, so it reads the live site list through a ref to resolve
   // the id it just placed into the full row the editor needs.
@@ -589,6 +635,8 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
       setPlansBySite((m) => ({ ...m, [siteId]: { loading: false, error: true, list: [] } }));
     }
   }, []);
+  const loadSitePlansRef = useRef(loadSitePlans);
+  loadSitePlansRef.current = loadSitePlans;
   const toggleBranch = useCallback((key) => {
     setExpanded((cur) => {
       const next = new Set(cur);
@@ -788,12 +836,10 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
           const node = members[0].get('node');
           const px = map.getPixelFromCoordinate(evt.coordinate);
           openNodeRef.current(node, px);
-        } else {
-          setPopup(null);
         }
       });
       // Close the popups when the map moves (they would otherwise float away from their marker).
-      map.on('movestart', () => setPopup(null));
+
 
       // Track whether the current view is beyond every downloaded region's coverage (→ offer a
       // download of the area you're looking at).
@@ -1006,26 +1052,69 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
               onSetUp={() => setSetupOpen(true)}
             />
           ) : null}
-          {popup ? (
-            <MapPopupFrame x={popup.x} y={popup.y}>
-              <NodeCameraPopup
-                node={popup.node}
-                nowSec={nowSec}
-                onOpenNode={onOpenNode}
-                onPlay={playCamera}
-                onOpenMedia={openMedia}
-                onLocate={locateOnPlan}
-                onAck={() => { if (notifReloadRef.current) notifReloadRef.current(); }}
-                onClose={() => setPopup(null)}
-              />
-            </MapPopupFrame>
-          ) : null}
-          {drill ? (
+          {/* The selected area's plan, ON the stage. It used to be a drill-down with its own
+              header and back button covering the map; the tree is the navigation now, so the plan
+              needs no chrome beyond a breadcrumb saying where you are. */}
+          {/* The floor view, in the stage. It was already rendered here rather than in a page
+              modal; what changes is that ONE selection drives it and the inspector together, and
+              that clicking a camera marker now SELECTS the camera instead of immediately opening a
+              stream over the plan.
+
+              This is BuildingFloorView, not the smaller read-only FloorPlanView that shipped inert
+              in PR #125: that one has no walls, no 2D/3D toggle, no floor stacking and no
+              notification badges, so using it would have quietly dropped four shipped features in
+              a phase that is supposed to be about layout. */}
+          {stagePlan ? (
             <div className="fleet-map-drill">
-              <BuildingFloorView site={drill.site} floorplans={drill.floorplans} nodesById={nodesById} notifByCam={notifByCam} focusCameraId={drill.focusCameraId} focusFloorId={drill.focusFloorId} onBack={() => { const s = drill.site; setDrill(null); flyToSite(s); }} onPlay={playCamera} onRemovePlacements={removeGhostPlacements} onEdit={openEditor} />
+              <BuildingFloorView
+                site={stagePlan.site}
+                floorplans={stagePlan.plans}
+                nodesById={nodesById}
+                notifByCam={notifByCam}
+                focusCameraId={sel && sel.type === 'camera' ? sel.cameraId : undefined}
+                focusFloorId={sel && sel.floorId}
+                onBack={() => setSel(null)}
+                onPlay={playCamera}
+                onSelectCamera={(payload) => setSel({
+                  type: 'camera',
+                  nodeId: payload.nodeId,
+                  cameraId: payload.cameraId,
+                  name: payload.name,
+                  siteId: stagePlan.site.id,
+                  siteName: stagePlan.site.name,
+                  floorId: payload.floorId,
+                  floorName: payload.floorName,
+                })}
+                onRemovePlacements={removeGhostPlacements}
+                onEdit={openEditor}
+              />
             </div>
           ) : null}
         </div>
+
+        {/* One contextual card for whatever is selected, beside the thing it describes - not a
+            popup floating over it. */}
+        {/* NOT .mw-inspector: that rule sets a physical border-left for its own grid layout, loads
+            after this file's stylesheet, and would win - putting the border on the wrong edge in
+            Arabic. This pane supplies its own logical border instead. */}
+        <aside className="fleet-map-inspector">
+          <Inspector
+            sel={sel}
+            sites={sites}
+            nodesById={nodesById}
+            plansBySite={plansBySite}
+            placements={placements}
+            camsByNode={camsByNode}
+            nowSec={nowSec}
+            onPlay={playCamera}
+            onOpenMedia={openMedia}
+            onLocate={locateOnPlan}
+            onOpenArea={(site, floorId) => openBuilding(site, null, floorId)}
+            onEdit={openEditor}
+            onOpenNode={onOpenNode}
+            onWaive={waiveLocation}
+          />
+        </aside>
       </div>
       {attribution ? <div className="fleet-map-attribution">{attribution}</div> : null}
 

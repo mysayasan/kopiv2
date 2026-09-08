@@ -1,19 +1,23 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import PropTypes from 'prop-types';
 import { useT, Ico } from '@shared';
 import { api } from '../../lib/helpers';
 import { nodeToneKey } from '../../lib/fleet_status';
+import { hasDrawablePlan, siteGlyph } from '../site_kinds';
+import { nodeKindOf } from '../layout';
 
-// Inspector is the right pane: a single contextual card for whatever is selected — a building, a
-// camera, or an appliance — replacing the old scatter of floating popups for the primary flow. It
-// falls back to the current building's summary (when inside one) or a fleet hint (at the world
-// level). Live footage still opens as a floating window from the card's actions.
+// Inspector is the map's right pane: ONE contextual card for whatever the tree or the plan has
+// selected. It replaces the scatter of floating popups the map used to answer with - a card that
+// covered the thing you clicked, moved when the map moved, and could not be read alongside the
+// plan it described.
+//
+// Live footage is the deliberate exception: it stays a floating window, because watching a camera
+// while navigating somewhere else is the entire point of it.
 
-const STATUS_ORDER = ['critical', 'warning', 'online', 'idle'];
-const SEV_RANK = { critical: 3, warning: 2, info: 1 };
 const KIND_ICON = { camera: 'video', iot: 'cpu', door: 'door' };
-// kindSub names the appliance under its title. Empty/unknown kind = a recorder (legacy camera).
-const kindSubKey = (kind) => (kind === 'iot' ? 'mw.iotHub' : kind === 'door' ? 'mw.doorController' : 'mw.recorder');
+const SEV_RANK = { critical: 3, warning: 2, info: 1 };
+const TONE_ORDER = ['critical', 'warning', 'online', 'idle'];
+const hasFootage = (e) => e && e.refType === 'alert_event' && Number(e.refId) > 0;
 
 function shortAgo(sec) {
   if (!sec) return '';
@@ -23,101 +27,84 @@ function shortAgo(sec) {
   if (d < 86400) return `${Math.floor(d / 3600)}h`;
   return `${Math.floor(d / 86400)}d`;
 }
-const hasFootage = (e) => e && e.refType === 'alert_event' && Number(e.refId) > 0;
 
 function Head({ glyph, emoji, title, sub, status, statusLabel }) {
   return (
     <div className="mw-insp-head">
       <div className="mw-insp-ic">{emoji || <Ico n={glyph} sz={20} />}</div>
       <div className="mw-insp-id">
-        <div className="mw-insp-t">{title}</div>
+        <div className="mw-insp-t" title={title}>{title}</div>
         {sub ? <div className="mw-insp-s">{sub}</div> : null}
-        {status ? <div><span className={`mw-pill ${status}`}><span className={`mw-dot ${status}`} />{statusLabel}</span></div> : null}
+        {status ? <div><span className={`mw-pill ${status}`}>{statusLabel}</span></div> : null}
       </div>
     </div>
   );
 }
 Head.propTypes = { glyph: PropTypes.string, emoji: PropTypes.string, title: PropTypes.string, sub: PropTypes.string, status: PropTypes.string, statusLabel: PropTypes.string };
 
-export function Inspector({
-  sel, level, bId, sites = [], nodes = [], nodesById = {}, floorplansByBuilding = {}, allSites = [], editMode = false,
-  onPlayCamera, onOpenMedia, onLocate, onAssignBuilding, onOpenNode, onOpenBuilding, onOpenFloor, onEditBuilding, onPlaceNode,
-}) {
-  const t = useT();
-  const nowSec = Math.floor(Date.now() / 1000);
-
-  if (sel && sel.type === 'camera') {
-    return <CameraCard key={`${sel.nodeId}::${sel.cameraId}`} sel={sel} onPlayCamera={onPlayCamera} onOpenMedia={onOpenMedia} onLocate={onLocate} editMode={editMode} />;
-  }
-  if (sel && sel.type === 'node') {
-    const n = nodesById[sel.nodeId] || nodes.find((x) => x.nodeId === sel.nodeId);
-    if (n) return <NodeCard node={n} allSites={allSites} floorplansByBuilding={floorplansByBuilding} onAssignBuilding={onAssignBuilding} onOpenNode={onOpenNode} onPlaceNode={onPlaceNode} />;
-  }
-  // building card when a building is selected OR we're inside one
-  const bid = (sel && sel.type === 'building') ? sel.id : (level !== 'world' ? bId : null);
-  const row = bid ? sites.find((s) => s.site && s.site.id === bid) : null;
-  if (row) {
-    return <BuildingCard row={row} nodes={nodes} nodesById={nodesById} plans={floorplansByBuilding[bid] || []} nowSec={nowSec} editMode={editMode} onOpenBuilding={onOpenBuilding} onOpenFloor={onOpenFloor} onEditBuilding={onEditBuilding} onSelectNodeFn={onOpenNode} />;
-  }
-  return (
-    <div className="mw-insp-empty">
-      <Ico n="map" sz={30} />
-      <div><strong>{t('mw.nothingSelected')}</strong><div className="mw-insp-empty-sub">{t('mw.nothingSelectedHint')}</div></div>
-    </div>
-  );
-}
-
-function BuildingCard({ row, nodes, nodesById, plans, nowSec, editMode, onOpenBuilding, onOpenFloor, onEditBuilding }) {
+// ---------------------------------------------------------------------------------------------
+// A place: its areas, what is in them, and the way into the editor.
+function PlaceCard({ row, plans, nodesById, nowSec, onOpenArea, onEdit }) {
   const t = useT();
   const s = row.site;
   let worst = 'idle';
-  (row.nodeIds || []).forEach((nid) => { const k = nodeToneKey(nodesById[nid], nowSec); if (STATUS_ORDER.indexOf(k) < STATUS_ORDER.indexOf(worst)) worst = k; });
-  const residents = nodes.filter((n) => n.siteId === s.id);
+  (row.nodeIds || []).forEach((nid) => {
+    const k = nodeToneKey(nodesById[nid], nowSec);
+    if (TONE_ORDER.indexOf(k) < TONE_ORDER.indexOf(worst)) worst = k;
+  });
+  const areas = (plans && plans.list) || [];
+  const drawable = hasDrawablePlan(s.kind);
   return (
     <>
-      <Head emoji={s.icon || '🏢'} title={s.name} sub={`${plans.length} ${t('mw.floors')}`} status={worst} statusLabel={t(`map.legend.${worst}`)} />
+      <Head
+        emoji={siteGlyph(s)}
+        title={s.name}
+        sub={drawable ? t('insp.nAreas', { n: areas.length }) : t(`bld.kind.${s.kind || 'building'}`)}
+        status={worst}
+        statusLabel={t(`map.legend.${worst}`)}
+      />
       <div className="mw-inspscroll">
         <div className="mw-kpis">
-          <div className="mw-kpi"><div className="v">{row.cameras}</div><div className="l">{t('map.cameras')}</div></div>
-          <div className="mw-kpi"><div className="v">{plans.length}</div><div className="l">{t('mw.floors')}</div></div>
+          <div className="mw-kpi"><div className="v">{(row.cameraKeys || []).length}</div><div className="l">{t('map.cameras')}</div></div>
+          <div className="mw-kpi"><div className="v">{s.mapPlaced ? t('insp.yes') : t('insp.no')}</div><div className="l">{t('insp.onTheMap')}</div></div>
         </div>
-        <div className="mw-seclbl">{t('mw.floors')}</div>
-        {plans.length === 0 ? <div className="mw-insp-note">{t('map.noFloorsInBuilding')}</div> : plans.map((fp) => (
-          <button key={fp.floor.id} type="button" className="mw-lrow" onClick={() => onOpenFloor(s.id, fp.floor.id)}>
-            <Ico n="grid2" sz={13} /><span className="nm">{fp.floor.name}</span><span className="rt">{(fp.placements || []).filter((p) => p.cameraId).length}</span>
-          </button>
-        ))}
-        {residents.length > 0 ? (
+        {/* A point asset's single area is implicit and unnamed, so listing it would put a row
+            reading "At this point" between the junction and its cameras. */}
+        {drawable ? (
           <>
-            <div className="mw-seclbl">{t('mw.appliancesHere')}</div>
-            {residents.map((n) => (
-              <div key={n.nodeId} className="mw-lrow static">
-                <span className={`mw-dot ${nodeToneKey(n, nowSec)}`} /><span className="nm">{n.name || n.nodeId}</span><span className="rt">{n.kind === 'iot' ? 'IoT' : n.kind === 'door' ? t('mw.doorController') : t('map.layerNodes')}</span>
-              </div>
+            <div className="mw-seclbl">{t('bld.areas')}</div>
+            {areas.length === 0 ? <div className="mw-insp-note">{t('map.noAreasYet')}</div> : areas.map((fp) => (
+              <button key={fp.floor.id} type="button" className="mw-lrow" onClick={() => onOpenArea(s, fp.floor.id)}>
+                <Ico n="grid2" sz={13} />
+                <span className="nm">{fp.floor.name}</span>
+                <span className="rt">{(fp.placements || []).filter((p) => p.cameraId).length}</span>
+              </button>
             ))}
           </>
         ) : null}
         <div className="mw-act">
-          <button type="button" className="mw-btn primary" onClick={() => onOpenBuilding(s)}>{t('mw.openFloorPlan')}</button>
-          {editMode ? <button type="button" className="mw-btn" onClick={() => onEditBuilding(s)}><Ico n="edit-2" sz={13} /> {t('map.editBuilding')}</button> : null}
+          <button type="button" className="mw-btn primary" onClick={() => onEdit(s)}>
+            <Ico n="edit-2" sz={13} /> {drawable ? t('bld.editAreas') : t('map.editAsset')}
+          </button>
         </div>
       </div>
     </>
   );
 }
-BuildingCard.propTypes = { row: PropTypes.object, nodes: PropTypes.array, nodesById: PropTypes.object, plans: PropTypes.array, nowSec: PropTypes.number, editMode: PropTypes.bool, onOpenBuilding: PropTypes.func, onOpenFloor: PropTypes.func, onEditBuilding: PropTypes.func };
+PlaceCard.propTypes = { row: PropTypes.object, plans: PropTypes.object, nodesById: PropTypes.object, nowSec: PropTypes.number, onOpenArea: PropTypes.func, onEdit: PropTypes.func };
 
+// ---------------------------------------------------------------------------------------------
+// A camera: what it has seen lately, and the way to watch it.
 const EVENTS_PAGE = 40;
 const EVENTS_MAX = 400;
 
-function CameraCard({ sel, onPlayCamera, onOpenMedia, onLocate, editMode }) {
+function CameraCard({ sel, onPlay, onOpenMedia, onLocate }) {
   const t = useT();
-  // Newest-first, filtered to this camera. We page by GROWING the fetch limit (the endpoint returns
-  // the newest N for the node, which we filter by cameraId), so scrolling loads older events.
+  // Page by GROWING the fetch limit: the endpoint returns the newest N for the whole node, which
+  // we then filter to this camera, so scrolling asks for more of the node's feed.
   const [limit, setLimit] = useState(EVENTS_PAGE);
   const [state, setState] = useState({ loading: true, list: [], atEnd: false });
   const [loadingMore, setLoadingMore] = useState(false);
-  const listRef = useRef(null);
 
   useEffect(() => {
     let live = true;
@@ -128,11 +115,10 @@ function CameraCard({ sel, onPlayCamera, onOpenMedia, onLocate, editMode }) {
         const rows = Array.isArray(r.body?.items) ? r.body.items : (Array.isArray(r.body) ? r.body : []);
         const mine = rows.filter((e) => String(e.cameraId) === String(sel.cameraId));
         mine.sort((a, b) => (SEV_RANK[(b.severity || '').toLowerCase()] || 0) - (SEV_RANK[(a.severity || '').toLowerCase()] || 0) || (b.createdAt || 0) - (a.createdAt || 0));
-        // We've seen everything once the node returned fewer rows than we asked for, or we hit the cap.
         setState({ loading: false, list: mine, atEnd: rows.length < limit || limit >= EVENTS_MAX });
         setLoadingMore(false);
       })
-      .catch(() => { if (live) { setState((s) => ({ ...s, loading: false })); setLoadingMore(false); } });
+      .catch(() => { if (live) { setState((x) => ({ ...x, loading: false })); setLoadingMore(false); } });
     return () => { live = false; };
   }, [sel.nodeId, sel.cameraId, limit]);
 
@@ -141,24 +127,28 @@ function CameraCard({ sel, onPlayCamera, onOpenMedia, onLocate, editMode }) {
 
   return (
     <>
-      <Head glyph="video" title={sel.name} sub={`${sel.buildingName || ''}${sel.floorName ? ` · ${sel.floorName}` : ''}`} />
+      <Head glyph="video" title={sel.name} sub={[sel.siteName, sel.floorName].filter(Boolean).join(' · ')} />
       <div className="mw-act mw-cam-actions">
-        <button type="button" className="mw-btn primary" onClick={(e) => onPlayCamera(sel, e.clientX, e.clientY)}><Ico n="play" sz={13} /> {t('mw.openLive')}</button>
-        {onLocate ? <button type="button" className="mw-btn" onClick={() => onLocate(sel)}><Ico n="map-pin" sz={13} /> {t('map.locate')}</button> : null}
+        <button type="button" className="mw-btn primary" onClick={(e) => onPlay({ nodeId: sel.nodeId, cameraId: sel.cameraId, name: sel.name }, e.clientX, e.clientY)}>
+          <Ico n="play" sz={13} /> {t('tree.openLive')}
+        </button>
+        {onLocate ? (
+          <button type="button" className="mw-btn" onClick={() => onLocate(sel)}><Ico n="map-pin" sz={13} /> {t('map.locate')}</button>
+        ) : null}
       </div>
-      <div className="mw-seclbl mw-cam-evhdr">{t('map.events')}{state.list.length ? <span className="mw-evcount">{state.list.length}</span> : null}</div>
-      {/* The events list is its OWN bounded scroller so a busy camera doesn't stretch the panel; it
-          loads older events as you scroll (infinite), with a fallback button. */}
-      <div className="mw-inspscroll mw-evlist" ref={listRef} onScroll={onScroll}>
+      <div className="mw-seclbl mw-cam-evhdr">
+        {t('map.events')}{state.list.length ? <span className="mw-evcount">{state.list.length}</span> : null}
+      </div>
+      {/* Its own bounded scroller, so a busy camera does not stretch the pane past the plan. */}
+      <div className="mw-inspscroll mw-evlist" onScroll={onScroll}>
         {state.loading ? <div className="mw-insp-note">{t('common.loading')}</div> : null}
         {!state.loading && state.list.length === 0 ? <div className="mw-insp-note">{t('map.noEvents')}</div> : null}
         {state.list.map((e) => {
           const title = e.title || e.body || t('map.event');
-          const footage = hasFootage(e);
           return (
             <div key={e.id} className="mw-erow">
               <span className={`mw-dot sev-${(e.severity || 'info').toLowerCase()}`} />
-              {footage ? (
+              {hasFootage(e) ? (
                 <button type="button" className="nm link" onClick={(ev) => onOpenMedia({ nodeId: sel.nodeId, alertId: Number(e.refId), name: title }, ev.clientX, ev.clientY)}>{title}</button>
               ) : <span className="nm">{title}</span>}
               <span className="rt">{shortAgo(e.createdAt)}</span>
@@ -166,46 +156,153 @@ function CameraCard({ sel, onPlayCamera, onOpenMedia, onLocate, editMode }) {
           );
         })}
         {loadingMore ? <div className="mw-insp-note">{t('common.loading')}</div> : null}
-        {!state.loading && !state.atEnd && !loadingMore ? <button type="button" className="mw-loadmore" onClick={loadMore}>{t('mw.loadOlder')}</button> : null}
-        {editMode ? <div className="mw-insp-note edit">{t('mw.cameraEditNote')}</div> : null}
+        {!state.loading && !state.atEnd && !loadingMore ? (
+          <button type="button" className="mw-loadmore" onClick={loadMore}>{t('insp.loadOlder')}</button>
+        ) : null}
       </div>
     </>
   );
 }
-CameraCard.propTypes = { sel: PropTypes.object, onPlayCamera: PropTypes.func, onOpenMedia: PropTypes.func, onLocate: PropTypes.func, editMode: PropTypes.bool };
+CameraCard.propTypes = { sel: PropTypes.object, onPlay: PropTypes.func, onOpenMedia: PropTypes.func, onLocate: PropTypes.func };
 
-function NodeCard({ node, allSites, floorplansByBuilding, onAssignBuilding, onOpenNode, onPlaceNode }) {
+// ---------------------------------------------------------------------------------------------
+// An appliance. THE card this whole rework exists to make possible: where its cameras actually
+// are, which is a list, not a place - and separately, where its own box sits.
+function ApplianceCard({ node, placements, camsByNode, nowSec, onOpenNode, onOpenArea, onWaive }) {
   const t = useT();
-  const streamed = Object.values(floorplansByBuilding).flat().reduce((acc, fp) => acc + (fp.placements || []).filter((p) => p.nodeId === node.nodeId && p.cameraId).length, 0);
+  const tone = nodeToneKey(node, nowSec);
+  const mine = useMemo(() => placements.filter((p) => p.nodeId === node.nodeId), [placements, node.nodeId]);
+  const boxPin = mine.find((p) => !p.cameraId);
+  const camPins = mine.filter((p) => p.cameraId);
+
+  // Cameras per place. A recorder feeding three buildings has three rows here, and that is the
+  // fact no single "which site is this node in?" field could ever carry.
+  const fanOut = useMemo(() => {
+    const by = new Map();
+    camPins.forEach((p) => {
+      const key = p.siteId || 0;
+      const cur = by.get(key) || { siteId: p.siteId, siteName: p.siteName, floorId: p.floorId, n: 0 };
+      cur.n += 1;
+      by.set(key, cur);
+    });
+    return Array.from(by.values()).sort((a, b) => b.n - a.n);
+  }, [camPins]);
+
+  const entry = camsByNode[node.nodeId];
+  const reachable = !!(entry && !entry.loading && !entry.error);
+  const total = reachable ? (entry.cams || []).length : null;
+  const unplaced = reachable ? Math.max(0, total - camPins.length) : null;
+
   return (
     <>
-      <Head glyph={KIND_ICON[node.kind] || 'cpu'} title={node.name || node.nodeId} sub={t(kindSubKey(node.kind))} status={nodeToneKey(node)} statusLabel={t(`map.legend.${nodeToneKey(node)}`)} />
+      <Head
+        glyph={KIND_ICON[nodeKindOf(node)] || 'cpu'}
+        title={node.name || node.nodeId}
+        sub={node.nodeId}
+        status={tone}
+        statusLabel={t(`map.legend.${tone}`)}
+      />
       <div className="mw-inspscroll">
         <div className="mw-kpis">
-          <div className="mw-kpi"><div className="v">{streamed}</div><div className="l">{t('mw.camerasStreamed')}</div></div>
-          <div className="mw-kpi"><div className="v">{node.kind === 'iot' || node.kind === 'door' ? '—' : '✓'}</div><div className="l">{t('mw.cert')}</div></div>
+          <div className="mw-kpi"><div className="v">{camPins.length}</div><div className="l">{t('insp.camerasPlaced')}</div></div>
+          {/* Never render "0 unplaced" for a node we could not reach - that reads as finished. */}
+          <div className="mw-kpi"><div className="v">{unplaced === null ? '?' : unplaced}</div><div className="l">{t('insp.camerasUnplaced')}</div></div>
         </div>
-        <div className="mw-field">
-          <label>{t('map.residesIn')}</label>
-          <select value={node.siteId ? String(node.siteId) : ''} onChange={(e) => onAssignBuilding(node.nodeId, Number(e.target.value) || 0)}>
-            <option value="">{t('map.noBuilding')}</option>
-            {allSites.map((s) => <option key={s.id} value={s.id}>{s.icon ? `${s.icon} ${s.name}` : s.name}</option>)}
-          </select>
-        </div>
-        <div className="mw-insp-note">{t('mw.residesNote')}</div>
+
+        <div className="mw-seclbl">{t('insp.whereItsCamerasAre')}</div>
+        {fanOut.length === 0 ? (
+          <div className="mw-insp-note">{t('insp.noCamerasPlaced')}</div>
+        ) : fanOut.map((f) => (
+          <button key={f.siteId} type="button" className="mw-lrow" onClick={() => onOpenArea({ id: f.siteId, name: f.siteName }, f.floorId)}>
+            <Ico n="building" sz={13} />
+            <span className="nm">{f.siteName || t('insp.unknownPlace')}</span>
+            <span className="rt">{f.n}</span>
+          </button>
+        ))}
+        {!reachable ? <div className="mw-insp-note">{t('insp.camerasUnknownNote')}</div> : null}
+
+        <div className="mw-seclbl">{t('insp.whereItsBoxIs')}</div>
+        {boxPin ? (
+          <button type="button" className="mw-lrow" onClick={() => onOpenArea({ id: boxPin.siteId, name: boxPin.siteName }, boxPin.floorId)}>
+            <Ico n="map-pin" sz={13} />
+            <span className="nm">{[boxPin.siteName, boxPin.floorName].filter(Boolean).join(' · ')}</span>
+          </button>
+        ) : (
+          <div className="mw-insp-note">
+            {node.noFixedLocation ? t('insp.boxNoFixedLocation') : t('insp.boxNotPinned')}
+          </div>
+        )}
+
         <div className="mw-act">
           {onOpenNode ? <button type="button" className="mw-btn primary" onClick={() => onOpenNode(node.nodeId)}>{t('map.openNode')}</button> : null}
-          {!node.siteId && onPlaceNode ? <button type="button" className="mw-btn" onClick={() => onPlaceNode(node)}><Ico n="map-pin" sz={13} /> {t('map.placeStandalone')}</button> : null}
+          {!boxPin ? (
+            <button type="button" className="mw-btn" onClick={() => onWaive(node, !node.noFixedLocation)}>
+              <Ico n={node.noFixedLocation ? 'undo' : 'check-ok'} sz={13} />
+              {node.noFixedLocation ? t('tree.undoNoFixedLocation') : t('tree.markNoFixedLocation')}
+            </button>
+          ) : null}
         </div>
       </div>
     </>
   );
 }
-NodeCard.propTypes = { node: PropTypes.object, allSites: PropTypes.array, floorplansByBuilding: PropTypes.object, onAssignBuilding: PropTypes.func, onOpenNode: PropTypes.func, onPlaceNode: PropTypes.func };
+ApplianceCard.propTypes = {
+  node: PropTypes.object, placements: PropTypes.array,
+  camsByNode: PropTypes.object, nowSec: PropTypes.number,
+  onOpenNode: PropTypes.func, onOpenArea: PropTypes.func, onWaive: PropTypes.func,
+};
+
+// ---------------------------------------------------------------------------------------------
+export function Inspector({
+  sel, sites = [], nodesById = {}, plansBySite = {}, placements = [], camsByNode = {}, nowSec,
+  onPlay, onOpenMedia, onLocate, onOpenArea, onEdit, onOpenNode, onWaive,
+}) {
+  const t = useT();
+  const sitesById = useMemo(() => {
+    const m = {};
+    sites.forEach((r) => { if (r.site) m[r.site.id] = r; });
+    return m;
+  }, [sites]);
+
+  if (sel && sel.type === 'camera') {
+    return <CameraCard key={`${sel.nodeId}::${sel.cameraId}`} sel={sel} onPlay={onPlay} onOpenMedia={onOpenMedia} onLocate={onLocate} />;
+  }
+  if (sel && sel.type === 'node') {
+    const node = nodesById[sel.nodeId];
+    if (node) {
+      return (
+        <ApplianceCard
+          key={sel.nodeId}
+          node={node}
+          placements={placements}
+          camsByNode={camsByNode}
+          nowSec={nowSec}
+          onOpenNode={onOpenNode}
+          onOpenArea={onOpenArea}
+          onWaive={onWaive}
+        />
+      );
+    }
+  }
+  const siteId = sel && (sel.type === 'site' ? sel.id : sel.siteId);
+  const row = siteId ? sitesById[siteId] : null;
+  if (row) {
+    return <PlaceCard key={row.site.id} row={row} plans={plansBySite[row.site.id]} nodesById={nodesById} nowSec={nowSec} onOpenArea={onOpenArea} onEdit={onEdit} />;
+  }
+  return (
+    <div className="mw-insp-empty">
+      <Ico n="map" sz={30} />
+      <div>
+        <strong>{t('insp.nothingSelected')}</strong>
+        <div className="mw-insp-empty-sub">{t('insp.nothingSelectedHint')}</div>
+      </div>
+    </div>
+  );
+}
 
 Inspector.propTypes = {
-  sel: PropTypes.object, level: PropTypes.string, bId: PropTypes.number, sites: PropTypes.array, nodes: PropTypes.array,
-  nodesById: PropTypes.object, floorplansByBuilding: PropTypes.object, allSites: PropTypes.array, editMode: PropTypes.bool,
-  onPlayCamera: PropTypes.func, onOpenMedia: PropTypes.func, onLocate: PropTypes.func, onAssignBuilding: PropTypes.func,
-  onOpenNode: PropTypes.func, onOpenBuilding: PropTypes.func, onOpenFloor: PropTypes.func, onEditBuilding: PropTypes.func, onPlaceNode: PropTypes.func,
+  sel: PropTypes.object, sites: PropTypes.array, nodesById: PropTypes.object,
+  plansBySite: PropTypes.object, placements: PropTypes.array, camsByNode: PropTypes.object, nowSec: PropTypes.number,
+  onPlay: PropTypes.func, onOpenMedia: PropTypes.func, onLocate: PropTypes.func,
+  onOpenArea: PropTypes.func, onEdit: PropTypes.func, onOpenNode: PropTypes.func, onWaive: PropTypes.func,
 };

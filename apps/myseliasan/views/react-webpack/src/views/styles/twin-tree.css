@@ -206,3 +206,44 @@ span.tt-name:hover { color: inherit; }
   font-style: italic;
 }
 .tt-empty.sm { font-size: 0.68rem; padding: 3px 10px; }
+
+/* ---------------------------------------------------------------------------
+   The inspector pane (third column). Its CARDS come from map-workspace.css's
+   .mw-insp-* family, written for exactly this and inert until now; only the
+   pane itself needs sizing here, because this page keeps its own flex body
+   rather than that file's three-column grid.
+   --------------------------------------------------------------------------- */
+
+.fleet-map-inspector {
+  flex: 0 0 320px;
+  border: 1px solid var(--border-panel);
+  border-radius: 8px;
+  overflow: hidden;
+  /* The pane is a column of its own so a long event list scrolls inside the
+     card instead of stretching the whole page. */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* map-workspace.css gives .mw-inspector a physical left border for its grid layout. This pane
+     is a rounded card in a flex row and must mirror in Arabic, so it overrides that with the
+     logical property - a physical border-left would sit on the wrong edge in RTL. */
+  border-left: 0;
+  border-inline-start: 1px solid var(--border-panel);
+}
+
+/* The plan on the stage carries a breadcrumb instead of the drill-down's old
+   header and back button — the tree is the navigation now. */
+.fleet-map-drill { display: flex; flex-direction: column; background: var(--bg-body); }
+.fleet-map-drill .mw-stage { flex: 1 1 auto; }
+
+/* Below the map's stacked breakpoint the inspector would squeeze the plan to
+   nothing, so it drops under the stage at full width. */
+@media (max-width: 1200px) {
+  .fleet-map-inspector { flex: 1 1 100%; max-height: 340px; }
+}
+
+/* The floor view's toolbar was written for a stage that spanned the page. With the inspector
+   taking a third column beside it, the bar can run out of room and clip its own controls - the
+   2D/3D toggle was the first casualty. Let it wrap rather than hide a control that is still
+   there and still clickable, just invisible. */
+.fleet-map-drill .floor-view-bar { flex-wrap: wrap; row-gap: 6px; }

@@ -86,10 +86,11 @@ created, positioned and authored entirely from it:
   several sites (a point asset among them) would otherwise over-count every one of them; this used
   to be a real bug for a point asset specifically, since with no area of its own it fell back to
   claiming every camera on its assigned appliance(s), correct only when that appliance recorded
-  nowhere else. Clicking any marker — building, outdoor or point alike — opens its **floor plans
-  with every camera inside, from any node** (`BuildingFloorView`, see below); a point asset's
-  editor has no area tabs to switch between (it owns exactly one, unnamed), but the plan itself,
-  the camera palette and the drill-down are otherwise identical to a building's.
+  nowhere else. Clicking any marker — building, outdoor or point alike — selects that site and puts
+  its **plan, with every camera inside, from any node**, on the map's own stage beside the tree
+  (`FloorPlanView`, see "Three panes" below); a point asset's editor has no area tabs to switch
+  between (it owns exactly one, unnamed), but the plan itself, the camera palette and the inline
+  stage are otherwise identical to a building's.
 - **Twin-tree rail** (`map/twin_tree.js`): the side rail is **two trees**, not a flat list, because
   one fact the old flat rail couldn't express is that a single `mymatasan` recorder's cameras can
   live in *different* places — so a node is an **occupant** of a place, never its container.
@@ -184,9 +185,9 @@ created, positioned and authored entirely from it:
   placements all survive; only the picture is cleared (`FloorPlan.HasPlanImage` is what lets the
   editor know whether there is a plan to remove — see `entities/site.go.md`). Re-entry for an
   existing building/outdoor/point asset: an **edit** button on an unplaced site's rail row (it has
-  no marker to click into yet), and an **Edit plan** button in the read-only building drill-down
-  (`BuildingFloorView`, below) — the same editor opens for a point asset too, just with its area
-  bar hidden (see "Site-centric rail" above).
+  no marker to click into yet), and an **Edit plan** button on the inline stage's breadcrumb bar
+  (`FloorPlanView`, see "Three panes" below) — the same editor opens for a point asset too, just
+  with its area bar hidden (see "Twin-tree rail" above).
 - **Floor plans**: an operator's placements (`NodePlacement`) are **myseliasan's own record**, not
   fetched from the node — that is deliberate: the live camera list is fetched over the tunnel and
   returns nothing when a node is offline, so a placement carries a name snapshot and stays
@@ -208,34 +209,60 @@ created, positioned and authored entirely from it:
   segments in `FloorPlan.Grid` and extrude the same way in every 3D view, not just the editor's
   own; windows render as glazing, a raised floor as a slab (carved underneath any stairs that land
   on it), and stairs rest on their platform when they have one, descending stairs carving a
-  stairwell opening into the floor slab above when going down. The **read-only 2D drill-down**
-  (`BuildingFloorView`/`node_floor_view.js`) now renders this same authored geometry as a vector
-  overlay over the plan image too, not just the 3D tab — a floor with drawn walls no longer looks
-  empty in the 2D view. A camera marker with unread
-  notifications carries a severity-coloured count badge in **both** the 2D plan and the 3D view
-  (`GET /api/notifications/tally?unread=true`, same per-camera attribution as the building marker's
-  own badge); the 3D view additionally pulses a beacon on the floor beneath that camera — the same
-  two-wave animation as the geographic view's building beacon — shown on every stacked floor but
-  only animated on the active/non-dimmed one, so an alert a storey down stays visible without
-  piling up motion. Clicking a building marker on the geographic view shows
-  `BuildingFloorView` — every floor's placements from **every owning node**, each marker/wedge
-  coloured by *its own* node's status and streaming live over *that* node's tunnel, with its own
-  2D/3D toggle (three.js code-split in, only loaded when 3D is opened) and, for a multi-floor
-  building, a "stack floors" option that renders every floor at its `Elevation` at once — the view
-  that makes "the building is the twin, not any one node" concrete.
+  stairwell opening into the floor slab above when going down. The **editor's own 2D canvas**
+  (`floor_editor.js`) renders this same authored geometry as a vector overlay over the plan image,
+  not just the 3D tab, while authoring — a floor with drawn walls no longer looks empty there. On
+  the **map's monitor-mode stage**, though, clicking a building or outdoor marker (or an area in
+  the twin-tree) now renders `FloorPlanView` (`components/map/floor_view.js`) inline — one area at
+  a time, chosen via the tree or the breadcrumb — which is a flatter surface than the old
+  `BuildingFloorView` drill-down it replaced: plan image, coverage wedges and camera markers only,
+  with **no chrome of its own** (a breadcrumb above it — Everywhere / site / area — says where you
+  are instead), and **no** 2D wall/stair/door vector overlay, no 2D⇄3D toggle and no "stack floors"
+  option — those three remain editor-only (`floor_editor.js`/`floor_3d.js`) for now. Per-camera
+  unread-notification badges likewise no longer render on this inline plan (they still drive the
+  geographic marker's own aggregated badge, `GET /api/notifications/tally?unread=true`); a camera
+  with unread events is only visible on the plan by opening it in the inspector.
+- **Three panes**: the map is `fleet_map.js`'s twin-tree rail, the stage (the geographic map, or —
+  once a site/area/camera is selected — `FloorPlanView` inline beside the tree), and a right-hand
+  **inspector** pane (`components/map/inspector.js`'s `Inspector`), replacing the earlier scatter of
+  floating popups that used to cover the very marker you'd just clicked and drift away from it on
+  the next pan. `fleet_map.js` holds ONE selection, `sel` (`{type:'site'|'area'|'camera'|'node',
+  ...}`), that both the stage and the inspector are derived from, so the two can never disagree
+  about what's showing. The inspector renders exactly one contextual card: a **place** (its areas,
+  camera count, whether it's on the map, and the way into the editor), a **camera** (recent events
+  paged by growing the fetch limit — infinite scroll — Open live, Locate), or an **appliance** — the
+  card this rework exists for: "Where its cameras are" lists one row **per place** with a camera
+  count, since a recorder feeding three sites has three rows, a fact no single `SiteId` field could
+  ever carry (built from the fleet-wide placement index `fleet_map.js` now keeps in full, not just
+  its keys, so the inspector can resolve each pin's site), and separately "Where the appliance
+  itself is" shows its box pin or says it is unpinned / marked no-fixed-location; an unreachable
+  appliance shows its unplaced count as **"?"**, never `0`. Live footage is the deliberate exception
+  to the pane model — it stays a **floating window**, because watching a camera while navigating
+  elsewhere is the point of it. This is Phase 4, the last of the map rework: `components/map/`
+  (`popups.js` — `NodeCameraPopup`/`MapPopupFrame` — plus the early-scaffolding `asset_browser.js`
+  and `geo_map.js`, all from the earlier in-flight redesign) are deleted; `popups.js`'s two
+  node-media URL builders moved to the new `components/map/media_src.js`. Nothing under
+  `components/map/` is unwired scaffolding any longer. The pane is sized in `styles/twin-tree.css`
+  (`.fleet-map-inspector`), which deliberately does **not** take `styles/map-workspace.css`'s
+  `.mw-inspector` class — imported into `fleet_map.js` purely for its `.mw-insp-*` card styles —
+  since that class's physical `border-left` loads after `twin-tree.css` and would win, putting the
+  border on the wrong edge in Arabic; `border-inline-start` is used instead so the pane still mirrors
+  correctly in RTL (tree on the right, inspector on the left, its border on the true trailing edge).
 - **Locate on plan**: from a camera's own context (e.g. the node manager's embedded camera pages),
   **Locate on plan** (`GET /api/node-floorplan/{nodeId}`) jumps straight to the floor plan holding
-  that camera's placement and focuses its marker — no need to know which site/floor it lives on.
-  Clicking a camera marker on a plan opens a small, draggable, resizable floating window
-  (`CameraWindow`) with its live footage (PTZ overlay when supported) on top and recent
-  events below; clicking a footage event opens its recorded snapshot/clip **inline over the same
+  that camera's placement and selects its marker into the inspector — no need to know which
+  site/floor it lives on. Clicking a camera marker on the inline plan selects it into the inspector
+  rather than opening a window directly; from there (or from the twin-tree's play action) **Open
+  live** opens a small, draggable, resizable floating window (`CameraWindow`) with its live footage
+  (PTZ overlay when supported) on top and recent events below; clicking a footage event opens its
+  recorded snapshot/clip **inline over the same
   live panel** (a Back button returns to live without ever tearing down the underlying WebRTC
   stream, since the live tile stays mounted underneath). All windows float over the map, can
   be dragged by their title bar, resized from a corner grip, and toggled small ⇄ maximized without
   restarting the underlying stream.
 
-The geographic view's building markers and the building drill-down's per-node camera
-markers/rail rows share the same status vocabulary: **online** (green), **warning** — amber, cert
+The geographic view's building markers and the inline floor stage's per-node camera
+markers/inspector rows share the same status vocabulary: **online** (green), **warning** — amber, cert
 expiring soon — (reusing the same cert-health signal the Dashboard's "Certs expiring" KPI and the
 Nodes table already surface), **critical** —
 red, the node is `lost` — and **idle** — grey, `self-dropped` or a legacy/unknown status.
@@ -287,25 +314,29 @@ appliance has no place on any plan — the site a node resides in is set only by
 marker, via `POST /api/floors/{id}/placements` above).
 See `docs/modules/apps/myseliasan/apis/{basemap,sites,nodes}.go.md`.
 
-**In-flight redesign (not wired in):** `components/map/` (`geo_map.js`, `inspector.js`,
-`asset_browser.js`, `floor_view.js`, `styles/map-workspace.css`) holds early scaffolding for a
-unified three-pane "map workspace" shell — asset-browser rail, reworked geographic stage, and a
-single contextual inspector card replacing the current scatter of floating popups — intended to
-eventually supersede this section's `map_page.js`/`fleet_map.js`/`fleet-map.css`. Nothing imports
-these files yet: `App.js` still lazy-loads the shipped `map_page`, so none of the behavior
-described above has changed and the new components are not reachable from the UI.
+**The map rework is complete** — all five phases (0: pure refactor, 1: point-asset areas, 2: the
+two trees, 3: the box pin and the tray's verbs, 4: three panes) have shipped and are reachable from
+the UI; nothing under `components/map/` is inert scaffolding any more. `App.js` still lazy-loads
+`map_page.js`, which wraps `fleet_map.js`/`fleet-map.css` unchanged. `fleet_map.js` itself was cut
+from ~1,570 lines to ~1,100 in **Phase 0**, a pure internal refactor with zero behavior change:
+`map/basemap_style.js` (the offline Protomaps vector-tile cartography — land/water/roads/borders +
+place labels), `map/markers.js` (site/node pin styling by kind and worst owning-node status, plus
+the colour/easing helpers the critical beacon uses), and `map/basemap_ui.js` (the offline-basemap
+download banner and setup dialog) were lifted into sibling modules; `fleet_map.js` keeps the
+workspace state, the OpenLayers boot/interactions, the rail, and the beacon ring itself (animated
+per-frame in the layer's prerender handler, so it stays with the map's own render loop rather than
+the static style modules).
 
-Separately, `fleet_map.js` itself was cut from ~1,570 lines down to ~1,100 as **Phase 0** of that
-same rework — a pure internal refactor, zero behavior change. Four pieces were lifted into their
-own sibling modules, all four *actually imported* by `fleet_map.js` (unlike the still-inert
-scaffolding above): `map/basemap_style.js` (the offline Protomaps vector-tile cartography —
-land/water/roads/borders + place labels), `map/markers.js` (site/node pin styling by kind and
-worst owning-node status, plus the colour/easing helpers the critical beacon uses), `map/popups.js`
-(the floating device card and the frame that anchors it to a pin without clipping off the
-viewport), and `map/basemap_ui.js` (the offline-basemap download banner and setup dialog).
-`fleet_map.js` keeps the workspace state, the OpenLayers boot/interactions, the rail, and the
-beacon ring itself (animated per-frame in the layer's prerender handler, so it stays with the
-map's own render loop rather than the static style modules).
+**Phase 4** finished the rework by wiring in the three-pane shell (see "Three panes" above) and
+retiring the last floating-popup/drill-down code path: `map/popups.js` (`NodeCameraPopup` — the
+device card Phase 0 had lifted out — and `MapPopupFrame`, its viewport-clamping anchor frame) is
+deleted, its two node-media URL builders (`eventSnapshotSrc`/`recordingStreamSrc`) moved to the new
+`map/media_src.js`; the early-scaffolding `map/asset_browser.js` and `map/geo_map.js` (inert since
+PR #125, never imported) are deleted as superseded by the twin-tree and the live geographic map
+respectively; and `map/floor_view.js`'s `FloorPlanView` and `map/inspector.js`'s `Inspector` — both
+also inert scaffolding until now — are imported and live, rewritten against the shipped `sel`
+selection model rather than the `mw.*` i18n keys the PR #125 scaffolding used, which never existed
+in any dictionary.
 
 ## Fleet rules — cross-domain correlation
 
