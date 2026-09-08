@@ -560,7 +560,7 @@ export function NodeFloorView({ node, floorplans, focusCameraId, onBack, onPlay 
                 onClick={(e) => { if (isCam && onPlay) onPlay({ nodeId: node.nodeId, cameraId: p.cameraId, name: label, ptzSupported: ptzByCam[String(p.cameraId)] ?? !!p.ptzSupported }, e.clientX, e.clientY); }}
                 title={label}
               >
-                <Ico n={isCam ? 'video' : 'cpu'} sz={13} />
+                <Ico n={isCam ? 'video' : 'board'} sz={13} />
                 <span className="floor-marker-label">{label}</span>
               </button>
             );
@@ -798,7 +798,7 @@ export function BuildingFloorView({ site, floorplans, nodesById = {}, notifByCam
                 onClick={(e) => { if (!isCam || ghost) return; const payload = { nodeId: p.nodeId, cameraId: p.cameraId, name: label, ptzSupported: ptz, floorId: floor.id, floorName: floor.name }; if (onSelectCamera) onSelectCamera(payload); else if (onPlay) onPlay(payload, e.clientX, e.clientY); }}
                 title={ghost ? t('map.cameraGone', { name: label }) : (camOffline ? `${label} · ${t('map.legend.critical')}` : label)}
               >
-                <Ico n={ghost ? 'x' : isCam ? 'video' : 'cpu'} sz={13} />
+                <Ico n={ghost ? 'x' : isCam ? 'video' : 'board'} sz={13} />
                 <span className="floor-marker-label">{label}</span>
                 {notif && notif.count > 0 ? <span className={`floor-marker-badge sev-${notif.sev}`}>{notif.count > 99 ? '99+' : notif.count}</span> : null}
               </button>

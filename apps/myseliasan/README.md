@@ -97,7 +97,13 @@ created, positioned and authored entirely from it:
   **"Everywhere"** is the digital twin — place ▸ area ▸ camera — with kind shown as a small **glyph**
   on the row rather than a group heading, and the owning recorder shown beside each camera as a
   **dim tag**, never as a parent; a placement with no camera (the appliance's own map pin) renders
-  as a leaf tagged "the appliance". A point asset's single implicit area is not shown as its own
+  as a leaf tagged "the appliance", drawn with one shared **board** glyph (a single-board-computer
+  icon, `icons.js`) regardless of whether the appliance is a `mymatasan` recorder, a `myiotsan` hub
+  or a `mypintusan` door controller — the icon used to be picked by node kind (camera/cpu/door),
+  which drew a recorder as a literal camera glyph indistinguishable from an actual camera pinned
+  beside it, and a door controller as a door; the icon now shows what the box **is**, not what it
+  watches or controls. Kind is still legible from the row's own name, the tray's grouping, and the
+  inspector's subtitle. A point asset's single implicit area is not shown as its own
   level — it's unnamed by the operator — so its cameras hang straight off the place. The root row
   carries a **"{placed} / {total} placed"** counter (a trailing **+** whenever some appliance can't
   be reached, since the total is then only a lower bound) — the progress bar for the whole

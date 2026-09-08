@@ -3,7 +3,6 @@ import PropTypes from 'prop-types';
 import { useT, Ico } from '@shared';
 import { nodeToneKey, TONES } from '../../lib/fleet_status';
 import { hasDrawablePlan, multiPlan, siteGlyph } from '../site_kinds';
-import { nodeKindOf } from '../layout';
 
 // TwinTree is the fleet map's rail: TWO trees with different jobs, stacked in one scroller.
 //
@@ -27,7 +26,12 @@ const PICK_MIME = 'text/tray-pick';
 
 const TONE_ORDER = ['critical', 'warning', 'online', 'idle'];
 const worseTone = (a, b) => (TONE_ORDER.indexOf(b) < TONE_ORDER.indexOf(a) ? b : a);
-const KIND_ICON = { camera: 'video', iot: 'cpu', door: 'door' };
+// An appliance is a BOARD - a mini PC or a Pi - whatever it happens to manage. Kind used to
+// pick the glyph, which made a recorder look like a camera and a door controller look like a
+// door: the icon showed what the box WATCHES rather than what it IS, and a camera pin and its
+// recorder's pin were then indistinguishable on the same plan. Kind is still on the row, in
+// the name, and in the inspector.
+const APPLIANCE_ICON = 'board';
 
 // nodeLabel is what an operator calls the appliance; nodeId is the fallback a never-named node has.
 const nodeLabel = (n) => (n && (n.name || n.nodeId)) || '';
@@ -152,7 +156,7 @@ export function TwinTree({
         <div key={p.id} className="tt-row tt-leaf">
           <span className="tt-caret-gap" />
           <Dot tone={tone} />
-          <Ico n={KIND_ICON[nodeKindOf(owner)] || 'cpu'} sz={11} />
+          <Ico n={APPLIANCE_ICON} sz={11} />
           <button type="button" className="tt-name dim" onClick={(e) => onSelectNode(owner || { nodeId: p.nodeId }, e.clientX, e.clientY)}>
             {p.lastKnownName || nodeLabel(owner) || p.nodeId}
           </button>
@@ -300,7 +304,7 @@ export function TwinTree({
         >
           {r.unplaced.length > 0 ? <Caret open={open} onClick={() => onToggle(key)} label={t('tree.expand')} /> : <span className="tt-caret-gap" />}
           <Dot tone={tone} />
-          <Ico n={KIND_ICON[nodeKindOf(r.node)] || 'cpu'} sz={11} />
+          <Ico n={APPLIANCE_ICON} sz={11} />
           <button type="button" className="tt-name" onClick={(e) => onSelectNode(r.node, e.clientX, e.clientY)}>{nodeLabel(r.node)}</button>
           {r.loading ? <span className="tt-tag" title={t('common.loading')}>{t('common.loading')}</span> : null}
           {/* NEVER "0 unplaced" for a node we could not reach: that reads as done. */}

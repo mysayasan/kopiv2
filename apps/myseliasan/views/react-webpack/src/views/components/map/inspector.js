@@ -4,7 +4,6 @@ import { useT, Ico } from '@shared';
 import { api } from '../../lib/helpers';
 import { nodeToneKey } from '../../lib/fleet_status';
 import { hasDrawablePlan, siteGlyph } from '../site_kinds';
-import { nodeKindOf } from '../layout';
 
 // Inspector is the map's right pane: ONE contextual card for whatever the tree or the plan has
 // selected. It replaces the scatter of floating popups the map used to answer with - a card that
@@ -14,7 +13,12 @@ import { nodeKindOf } from '../layout';
 // Live footage is the deliberate exception: it stays a floating window, because watching a camera
 // while navigating somewhere else is the entire point of it.
 
-const KIND_ICON = { camera: 'video', iot: 'cpu', door: 'door' };
+// An appliance is a BOARD - a mini PC or a Pi - whatever it happens to manage. Kind used to
+// pick the glyph, which made a recorder look like a camera and a door controller look like a
+// door: the icon showed what the box WATCHES rather than what it IS, and a camera pin and its
+// recorder's pin were then indistinguishable on the same plan. Kind is still on the row, in
+// the name, and in the inspector.
+const APPLIANCE_ICON = 'board';
 const SEV_RANK = { critical: 3, warning: 2, info: 1 };
 const TONE_ORDER = ['critical', 'warning', 'online', 'idle'];
 const hasFootage = (e) => e && e.refType === 'alert_event' && Number(e.refId) > 0;
@@ -196,7 +200,7 @@ function ApplianceCard({ node, placements, camsByNode, nowSec, onOpenNode, onOpe
   return (
     <>
       <Head
-        glyph={KIND_ICON[nodeKindOf(node)] || 'cpu'}
+        glyph={APPLIANCE_ICON}
         title={node.name || node.nodeId}
         sub={node.nodeId}
         status={tone}

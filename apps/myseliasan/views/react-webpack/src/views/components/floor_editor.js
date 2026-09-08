@@ -4,7 +4,6 @@ import { useT, Ico, icoSvg } from '@shared';
 import { apiBase } from '../lib/helpers';
 import { nodeTone, TONES } from '../lib/fleet_status';
 import { KIND_BUILDING, KIND_OUTDOOR, normKind } from './site_kinds';
-import { nodeKindOf } from './layout';
 import {
   DEF_SILL, DEF_HEAD, sillOf, headOf, carveSeg,
   IDENTITY_XF, xfPoint, xfLengthAlong, rectCenter, rectSize, rectFrom, rectCorners, pointInRotatedRect, boundsOfPoints,
@@ -56,7 +55,12 @@ const MIN_STAGE_H = 260; // never shrink the plan to a sliver, scroll instead
 //
 // 24px with a centred hotspot - browsers ignore cursor images much bigger than 32px, and the
 // hotspot has to be the icon's middle because that is where the marker will land.
-const PLACING_ICON = { camera: 'video', iot: 'cpu', door: 'door' };
+// An appliance is a BOARD - a mini PC or a Pi - whatever it happens to manage. Kind used to
+// pick the glyph, which made a recorder look like a camera and a door controller look like a
+// door: the icon showed what the box WATCHES rather than what it IS, and a camera pin and its
+// recorder's pin were then indistinguishable on the same plan. Kind is still on the row, in
+// the name, and in the inspector.
+const APPLIANCE_ICON = 'board';
 function placingCursor(iconName) {
   const inner = icoSvg[iconName] || icoSvg.cpu || '';
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round">`
@@ -223,11 +227,8 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
   // camera; anything else is the appliance, which draws by node kind.
   const placingCursorCss = useMemo(() => {
     if (!placing) return undefined;
-    const icon = placing.cameraId
-      ? 'video'
-      : (PLACING_ICON[nodeKindOf(nodesById[placing.nodeId])] || 'cpu');
-    return placingCursor(icon);
-  }, [placing, nodesById]);
+    return placingCursor(placing.cameraId ? 'video' : APPLIANCE_ICON);
+  }, [placing]);
   const [, tick] = useState(0);
   const redraw = useCallback(() => tick((n) => n + 1), []);
   const nowSecRef = useRef(Math.floor(Date.now() / 1000));
@@ -767,7 +768,7 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
       ctx.fillStyle = tone.color; ctx.fill();
       ctx.lineWidth = selected ? 3 : 2; ctx.strokeStyle = selected ? '#2d6cdf' : '#fff'; ctx.stroke();
       // The same glyph the tray, the cursor and the read-only view use, in white on the tone disc.
-      const glyph = isCam ? 'video' : (PLACING_ICON[nodeKindOf(nodesById[p.nodeId])] || 'cpu');
+      const glyph = isCam ? 'video' : APPLIANCE_ICON;
       const gimg = markerIcon(glyph, '#ffffff', redraw);
       if (gimg) { const gs = r * 1.15; ctx.drawImage(gimg, sx - gs / 2, sy - gs / 2, gs, gs); }
       const label = p.lastKnownName || (isCam ? `Cam ${p.cameraId}` : (nodesById[p.nodeId]?.name || p.nodeId));
