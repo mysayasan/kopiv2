@@ -225,6 +225,8 @@ export default {
   'tree.allPlaced': '所有摄像机都已在平面图上',
   'tree.dragToPlace': '拖到它所在的地点',
   'tree.placeOnPlan': '放置到平面图',
+  'tree.dragApplianceToPlace': '拖到该设备所在的地点',
+  'tree.placeApplianceOnPlan': '将该设备放置到平面图',
   'tree.pickAPlaceFirst': '将“{name}”拖到它所在的地点，或打开该地点并将其放到平面图上。',
   'tree.camerasToPlace': '尚未放置在任何平面图上的摄像机',
   'tree.boxesToPin': '尚未固定自身位置的设备',

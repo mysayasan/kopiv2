@@ -225,6 +225,8 @@ export default {
   'tree.allPlaced': 'Setiap kamera berada pada pelan',
   'tree.dragToPlace': 'Seret ke lokasi tempat ia berada',
   'tree.placeOnPlan': 'Letak pada pelan',
+  'tree.dragApplianceToPlace': 'Seret ke lokasi tempat peranti ini berada',
+  'tree.placeApplianceOnPlan': 'Letak peranti ini pada pelan',
   'tree.pickAPlaceFirst': 'Seret "{name}" ke lokasi tempat ia berada, atau buka lokasi itu dan lepaskannya pada pelan.',
   'tree.camerasToPlace': 'Kamera yang belum berada pada mana-mana pelan',
   'tree.boxesToPin': 'Peranti yang lokasinya sendiri belum disemat',

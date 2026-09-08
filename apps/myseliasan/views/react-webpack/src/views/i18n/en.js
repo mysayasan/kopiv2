@@ -227,6 +227,8 @@ export default {
   'tree.allPlaced': 'Every camera is on a plan',
   'tree.dragToPlace': 'Drag onto the place it is in',
   'tree.placeOnPlan': 'Place on a plan',
+  'tree.dragApplianceToPlace': 'Drag onto the place this appliance sits in',
+  'tree.placeApplianceOnPlan': 'Place this appliance on a plan',
   'tree.pickAPlaceFirst': 'Drag "{name}" onto the place it is in, or open that place and drop it on the plan.',
   'tree.camerasToPlace': 'Cameras not on any plan yet',
   'tree.boxesToPin': 'Appliances whose own location is not pinned yet',

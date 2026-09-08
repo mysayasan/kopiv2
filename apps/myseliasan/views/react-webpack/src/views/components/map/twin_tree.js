@@ -21,6 +21,10 @@ import { nodeKindOf } from '../layout';
 // A camera is in the tray or in a place, never both and never neither, so emptying the tray is a
 // finishable job. The counter on the Places root is the progress bar for it.
 
+// The drag payload's type. Named for what it carries - a thing to place - because it is a camera
+// on a camera row and the appliance itself on an appliance row.
+const PICK_MIME = 'text/tray-pick';
+
 const TONE_ORDER = ['critical', 'warning', 'online', 'idle'];
 const worseTone = (a, b) => (TONE_ORDER.indexOf(b) < TONE_ORDER.indexOf(a) ? b : a);
 const KIND_ICON = { camera: 'video', iot: 'cpu', door: 'door' };
@@ -50,15 +54,17 @@ export function TwinTree({
   const t = useT();
   const isOpen = (key) => expanded.has(key);
 
-  // Dragging a camera out of the tray and onto a place is the whole verb: "this camera is there".
-  // The payload is the camera; the drop target decides which area it lands on.
-  const dragCamera = (e, payload) => {
-    e.dataTransfer.setData('text/tray-camera', JSON.stringify(payload));
+  // Dragging something out of the tray onto a place is the whole verb: "this belongs there". The
+  // payload is a PICK - a camera, or an appliance itself (cameraId ''), which is how the box gets
+  // pinned and therefore how the node's location is recorded at all. The drop target decides which
+  // area it lands on; the editor takes it from there for the exact spot.
+  const dragPick = (e, payload) => {
+    e.dataTransfer.setData(PICK_MIME, JSON.stringify(payload));
     e.dataTransfer.effectAllowed = 'copy';
   };
-  const readCamera = (e) => {
+  const readPick = (e) => {
     try {
-      const raw = e.dataTransfer.getData('text/tray-camera');
+      const raw = e.dataTransfer.getData(PICK_MIME);
       return raw ? JSON.parse(raw) : null;
     } catch (_) { return null; }
   };
@@ -66,14 +72,14 @@ export function TwinTree({
   // answer to a drop the UI appeared to invite.
   const dropProps = (key, onDrop) => ({
     onDragOver: (e) => {
-      if (e.dataTransfer.types.indexOf('text/tray-camera') < 0) return;
+      if (e.dataTransfer.types.indexOf(PICK_MIME) < 0) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
       if (dropTarget !== key) onDropTarget(key);
     },
     onDragLeave: () => { if (dropTarget === key) onDropTarget(null); },
     onDrop: (e) => {
-      const payload = readCamera(e);
+      const payload = readPick(e);
       onDropTarget(null);
       if (!payload) return;
       e.preventDefault();
@@ -274,11 +280,24 @@ export function TwinTree({
     const key = `tray:${r.node.nodeId}`;
     const open = isOpen(key) || (!!q && r.unplaced.some((c) => hit(c.name)));
     const tone = nodeToneKey(r.node, nowSec);
+    // Only worth dragging while the box has no pin: a placed one would be refused as already
+    // placed, and the way to move it is to unpin it on the plan it is on.
+    const boxPin = r.boxUnplaced && !r.node.noFixedLocation;
+    const boxPayload = { nodeId: r.node.nodeId, cameraId: '', name: nodeLabel(r.node) };
     return (
       <div key={r.node.nodeId} className="tt-branch">
         {/* tt-trayrow: a tray row's TAGS are its content - what is unknown, what is unpinned, what
             has been waived - so they wrap onto a second line rather than truncating to stubs. */}
-        <div className="tt-row tt-trayrow">
+        {/* An appliance whose own box has no pin is draggable too, onto the place it sits in.
+            That pin is what records WHERE THE BOX IS - it is the only writer of the node's site -
+            so without this the tray could tell you the location was missing but gave you no way
+            to answer it from here. */}
+        <div
+          className={`tt-row tt-trayrow${boxPin ? ' tt-draggable' : ''}`}
+          draggable={boxPin}
+          onDragStart={boxPin ? (e) => dragPick(e, boxPayload) : undefined}
+          title={boxPin ? t('tree.dragApplianceToPlace') : undefined}
+        >
           {r.unplaced.length > 0 ? <Caret open={open} onClick={() => onToggle(key)} label={t('tree.expand')} /> : <span className="tt-caret-gap" />}
           <Dot tone={tone} />
           <Ico n={KIND_ICON[nodeKindOf(r.node)] || 'cpu'} sz={11} />
@@ -292,6 +311,19 @@ export function TwinTree({
           {/* The exit from the tray for an appliance that genuinely has no place on any plan - a
               colo recorder, a hosted hub. Without it the tray can never be emptied, and a tray
               that can never be emptied is one operators stop reading. */}
+          {/* Dragging is the quick path; this is the discoverable one, and the only one that
+              works for anybody who cannot drag. */}
+          {boxPin ? (
+            <button
+              type="button"
+              className="tt-act"
+              onClick={() => onPlaceCamera(null, null, boxPayload)}
+              title={t('tree.placeApplianceOnPlan')}
+              aria-label={t('tree.placeApplianceOnPlan')}
+            >
+              <Ico n="map-pin" sz={11} />
+            </button>
+          ) : null}
           {r.boxUnplaced ? (
             <button
               type="button"
@@ -313,7 +345,7 @@ export function TwinTree({
                   key={c.id}
                   className="tt-row tt-leaf tt-draggable"
                   draggable
-                  onDragStart={(e) => dragCamera(e, payload)}
+                  onDragStart={(e) => dragPick(e, payload)}
                   title={t('tree.dragToPlace')}
                 >
                   <span className="tt-caret-gap" />

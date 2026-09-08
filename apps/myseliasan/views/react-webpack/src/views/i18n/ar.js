@@ -225,6 +225,8 @@ export default {
   "tree.allPlaced": "كل كاميرا موجودة على مخطط",
   "tree.dragToPlace": "اسحبها إلى الموقع الذي هي فيه",
   "tree.placeOnPlan": "وضعها على مخطط",
+  "tree.dragApplianceToPlace": "اسحبه إلى الموقع الذي يوجد فيه هذا الجهاز",
+  "tree.placeApplianceOnPlan": "ضع هذا الجهاز على مخطط",
   "tree.pickAPlaceFirst": "اسحب \"{name}\" إلى الموقع الذي هي فيه، أو افتح ذلك الموقع وأفلتها على المخطط.",
   "tree.camerasToPlace": "كاميرات ليست على أي مخطط بعد",
   "tree.boxesToPin": "أجهزة لم يُثبَّت موقعها بعد",

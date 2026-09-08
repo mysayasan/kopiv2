@@ -117,17 +117,24 @@ created, positioned and authored entirely from it:
   removed) went with the flat rail it lived in: pinning an appliance's **own** marker on a plan
   (a placement with no camera) is what sets `SiteId`, and unpinning it clears `SiteId` again
   (`ISiteService.AddPlacement`/`DeletePlacement`, `services/sites.go.md`). Each tray camera row is
-  **draggable** onto a place or an area row in the "Everywhere" tree (payload `"text/tray-camera"`;
+  **draggable** onto a place or an area row in the "Everywhere" tree (payload `"text/tray-pick"`;
   a row only highlights for a drag it can accept), and dropping opens that place's editor with the
   camera pre-picked and the right area already open (`BuildingEditorDialog`'s new `initialPick`/
   `initialFloorId` props) — the operator's next click lands it. Every tray camera also has an
-  explicit **"Place on a plan"** button, the discoverable path that works without dragging. Tray
-  node rows gain a **no-fixed-location** toggle (`PUT /api/nodes/{id}/no-fixed-location`) for an
-  appliance that genuinely has no place on any plan — a colo recorder, a hosted hub — since
-  without it the tray could never be emptied for a fleet with one, and a tray that can never be
-  emptied is one operators learn to ignore; a waived appliance stops counting as an outstanding
-  box. The tray root now shows **two** counters side by side — cameras not on any plan, and
-  appliances whose own box has no pin — because they are different jobs.
+  explicit **"Place on a plan"** button, the discoverable path that works without dragging. **An
+  unpinned appliance's own tray row is draggable too** — the same `"text/tray-pick"` payload, but
+  carrying the node with an empty `cameraId` — and gains its own explicit place button beside the
+  waiver toggle, since pinning the appliance's own marker is the *only* way `SiteId` gets set at
+  all: without this, the tray could tell an operator a box's location wasn't pinned but offered no
+  way to answer that from the tray itself, only by hunting the node down in a place's editor
+  palette. A row stops being draggable once its box is pinned (or waived) — moving it means
+  unpinning it on the plan it's already on. Tray node rows also keep the **no-fixed-location**
+  toggle (`PUT /api/nodes/{id}/no-fixed-location`) for an appliance that genuinely has no place on
+  any plan — a colo recorder, a hosted hub — since without it the tray could never be emptied for a
+  fleet with one, and a tray that can never be emptied is one operators learn to ignore; a waived
+  appliance stops counting as an outstanding box. The tray root now shows **two** counters side by
+  side — cameras not on any plan, and appliances whose own box has no pin — because they are
+  different jobs.
 - **Adding an asset**: a **`+ Add`** button in the rail opens a wizard (`asset_wizard.js`,
   replacing the old building-only `building_wizard.js`) whose first question is **what is being
   added** — building / outdoor area / point asset — because the kind decides everything after: a
