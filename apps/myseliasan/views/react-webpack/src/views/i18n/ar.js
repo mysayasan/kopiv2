@@ -392,6 +392,7 @@ export default {
   "grid.dragPanel": "اسحب للتحريك",
   "grid.finish": "إنهاء",
   "grid.undo": "تراجع",
+  "grid.lockedWhilePlacing": "أكمل الوضع أولاً، أو ألغِه",
   "grid.redo": "إعادة",
   "grid.totalLength": "إجمالي الجدران",
   "grid.wallHint": "انقر لإضافة زوايا · انقر مرتين أو Enter للإنهاء · Esc للإلغاء",

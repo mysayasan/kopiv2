@@ -394,6 +394,7 @@ export default {
   'grid.dragPanel': 'Drag to move',
   'grid.finish': 'Finish',
   'grid.undo': 'Undo',
+  'grid.lockedWhilePlacing': 'Finish placing first, or cancel it',
   'grid.redo': 'Redo',
   'grid.totalLength': 'Total wall',
   'grid.wallHint': 'Click to add corners · double-click or Enter to finish · Esc to cancel',

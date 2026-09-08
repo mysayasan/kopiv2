@@ -155,7 +155,12 @@ created, positioned and authored entirely from it:
   (add/rename/delete an area — a single-plan outdoor area has none of this), a node/camera palette
   down the side (drag or click-to-pick, then click the plan to place — the same click-first pattern
   as the geographic view; an already-placed camera is greyed out with a note naming where it sits,
-  since placement is now **exclusive** — see "Floor plans" below), and the `FloorEditor` canvas
+  since placement is now **exclusive** — see "Floor plans" below; carrying a pick forces the tool
+  back to **Select** and disables every drawing tool, tooltip explaining why, until it lands or is
+  cancelled — only Select's own click handler places a pick, so a drawing tool left active would
+  draw over the plan and quietly drop what was being carried — and the canvas cursor becomes the
+  pending marker's own icon, halo plus accent colour, instead of a plain crosshair, so what you are
+  holding is visible on the pointer), and the `FloorEditor` canvas
   (`floor_editor.js`) doing the actual drawing, with a **toolset that follows the site's kind**: a
   building offers **Select/Move, Wall, Room** (drag a rectangle → four walls), **Round** (drag a
   box → an elliptical room, decomposed into short wall segments so it reuses the same 2D/3D

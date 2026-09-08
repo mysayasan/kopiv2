@@ -1,9 +1,10 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
-import { useT, Ico } from '@shared';
+import { useT, Ico, icoSvg } from '@shared';
 import { apiBase } from '../lib/helpers';
 import { nodeTone, TONES } from '../lib/fleet_status';
 import { KIND_BUILDING, KIND_OUTDOOR, normKind } from './site_kinds';
+import { nodeKindOf } from './layout';
 import {
   DEF_SILL, DEF_HEAD, sillOf, headOf, carveSeg,
   IDENTITY_XF, xfPoint, xfLengthAlong, rectCenter, rectSize, rectFrom, rectCorners, pointInRotatedRect, boundsOfPoints,
@@ -49,6 +50,21 @@ const MIN_STAGE_H = 260; // never shrink the plan to a sliver, scroll instead
 //              (Site-plan convention: fences and gates, parking bays, hardstanding — see README.)
 //
 // A point asset (junction, pole) has no plan at all, so it never reaches this editor.
+// placingCursor turns the marker's own icon into the mouse cursor, so what you are carrying is
+// visible on the pointer rather than inferred from a banner. Drawn twice: a thick white pass
+// underneath as a halo (the plan can be any colour), then the accent-coloured icon on top.
+//
+// 24px with a centred hotspot - browsers ignore cursor images much bigger than 32px, and the
+// hotspot has to be the icon's middle because that is where the marker will land.
+const PLACING_ICON = { camera: 'video', iot: 'cpu', door: 'door' };
+function placingCursor(iconName) {
+  const inner = icoSvg[iconName] || icoSvg.cpu || '';
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round">`
+    + `<g stroke="#ffffff" stroke-width="5">${inner}</g>`
+    + `<g stroke="#2d6cdf" stroke-width="2">${inner}</g></svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 12 12, crosshair`;
+}
+
 const TOOLSETS = {
   [KIND_BUILDING]: ['select', 'wall', 'room', 'round', 'door', 'window', 'stairs', 'platform', 'erase'],
   [KIND_OUTDOOR]: ['select', 'wall', 'room', 'round', 'door', 'parking', 'erase'],
@@ -168,6 +184,24 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
   const cursorRef = useRef(null);
   const saveTimer = useRef(null);
   const placingRef = useRef(placing); placingRef.current = placing;
+  // See the note on `tool`: only the select branch places, so carrying something has to mean
+  // select. Done as an effect rather than at the drop, because a pick can also arrive with the
+  // editor already open (the palette on the left, or a second drag).
+  useEffect(() => {
+    if (!placing) return;
+    setTool('select');
+    draftRef.current = null;
+  }, [placing]);
+
+  // What the pointer should look like while carrying it: the marker's own icon. A camera is a
+  // camera; anything else is the appliance, which draws by node kind.
+  const placingCursorCss = useMemo(() => {
+    if (!placing) return undefined;
+    const icon = placing.cameraId
+      ? 'video'
+      : (PLACING_ICON[nodeKindOf(nodesById[placing.nodeId])] || 'cpu');
+    return placingCursor(icon);
+  }, [placing, nodesById]);
   const [, tick] = useState(0);
   const redraw = useCallback(() => tick((n) => n + 1), []);
   const nowSecRef = useRef(Math.floor(Date.now() / 1000));
@@ -179,6 +213,9 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
   const [dock, setDock] = useState({ toolbar: 'left', props: 'right' }); // 'left' | 'right' | 'float'
   const [floatPos, setFloatPos] = useState({ toolbar: null, props: null });
   const [tool, setTool] = useState('select'); // select | wall | room | round | door | window | stairs | parking | erase
+  // Arriving with something to place (dragged in from the map's tray) switches to select and
+  // holds there. Only the select branch of the pointer handler actually PLACES, so with a drawing
+  // tool active the next click would draw a wall and quietly lose the thing you were carrying.
   const toolRef = useRef(tool); toolRef.current = tool;
   // ONE selection holding things of any kind, as keys "<kind>:<index>" — 'seg' | 'door' | 'win' |
   // 'stair' | 'park', plus 'cam:<placementId>' for a camera/node marker. A plan edit is rarely
@@ -1465,13 +1502,17 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
   // building and "Fence" on a park.
   const toolBtn = (id) => {
     const f = faceOf(kind, id);
+    // Locked while carrying something: picking a tool would abandon the placement, and it is not
+    // obvious that it does. The banner's Cancel is the way out.
+    const locked = !!placing && id !== 'select';
     return (
       <button
         key={id}
         type="button"
         className={tool === id ? 'active' : ''}
+        disabled={locked}
         onClick={() => { setTool(id); draftRef.current = null; if (id !== 'select') clearSel(); }}
-        title={t(f.key)}
+        title={locked ? t('grid.lockedWhilePlacing') : t(f.key)}
         aria-label={t(f.key)}
       >
         <Ico n={f.icon} sz={15} />
@@ -1675,7 +1716,7 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
         <div className="floor-editor-stage">
           {mode === '2d' ? (
             <div className="floor-editor-canvas-wrap" ref={wrapRef} style={{ overflow: zoom > 1 ? 'auto' : 'hidden' }} onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }} onDrop={onDrop}>
-              <canvas ref={canvasRef} width={cssW} height={cssH} className={`grid-canvas tool-${tool}${placing ? ' placing' : ''}`} style={{ width: cssW, height: cssH, touchAction: 'none' }}
+              <canvas ref={canvasRef} width={cssW} height={cssH} className={`grid-canvas tool-${tool}${placing ? ' placing' : ''}`} style={{ width: cssW, height: cssH, touchAction: 'none', cursor: placingCursorCss }}
                 onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerLeave={() => { cursorRef.current = null; hoverRef.current = -1; if (!moveRef.current) redraw(); }} onDoubleClick={onDoubleClick} />
             </div>
           ) : (

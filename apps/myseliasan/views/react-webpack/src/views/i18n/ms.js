@@ -392,6 +392,7 @@ export default {
   'grid.dragPanel': 'Seret untuk gerak',
   'grid.finish': 'Selesai',
   'grid.undo': 'Buat asal',
+  'grid.lockedWhilePlacing': 'Selesaikan peletakan dahulu, atau batalkannya',
   'grid.redo': 'Buat semula',
   'grid.totalLength': 'Jumlah dinding',
   'grid.wallHint': 'Klik untuk tambah sudut · klik dua kali atau Enter untuk selesai · Esc untuk batal',

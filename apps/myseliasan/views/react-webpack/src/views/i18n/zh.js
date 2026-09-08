@@ -392,6 +392,7 @@ export default {
   'grid.dragPanel': '拖动以移动',
   'grid.finish': '完成',
   'grid.undo': '撤销',
+  'grid.lockedWhilePlacing': '请先完成放置，或取消放置',
   'grid.redo': '重做',
   'grid.totalLength': '墙体总长',
   'grid.wallHint': '点击添加拐角 · 双击或回车完成 · Esc 取消',
