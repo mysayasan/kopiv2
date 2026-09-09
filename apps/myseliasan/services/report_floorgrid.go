@@ -89,6 +89,11 @@ type gridOpening struct {
 	A  float64 `json:"a"`
 	Hf bool    `json:"hf"`
 	Sf bool    `json:"sf"`
+	// Sill and Head are METRES, and only a window carries them. Until coverage occlusion they
+	// were unused here - the printed window symbol does not need them - but they are exactly what
+	// decides whether a camera at a given mount height can see THROUGH the glazing.
+	Sill float64 `json:"sill"`
+	Head float64 `json:"head"`
 }
 
 // gridRect is an axis-aligned footprint (two corners) rotated about its centre by A (rad),
@@ -692,4 +697,132 @@ func drawCenteredLabel(dst *image.RGBA, cx, cy float64, text string, col color.R
 		Dot:  fixed.P(int(cx)-tw/2, int(cy)+th/2),
 	}
 	d.DrawString(text)
+}
+
+// ---- coverage occlusion -------------------------------------------------------------------------
+//
+// A printed survey that shows a camera covering the whole floor when a wall stands in the way is
+// worse than one that shows no coverage at all, because it looks like an answer. The wedge is
+// clipped here by the same rules the editor uses (plan_geometry.js coveragePolygon): an occluder
+// blocks a camera only at THAT camera's own mount height.
+//
+//   a wall         blocks, unless the camera is mounted above it
+//   a window       blocks unless the mount height falls between its sill and its head
+//   a doorway      never blocks - it is a hole in the wall
+//   a hedge        blocks while taller than the camera is mounted
+//   a tree canopy  blocks only between its CLEAR STEM and its total height
+//
+// The frontend sweeps rays and builds a polygon; this tests each pixel of the sector directly. Two
+// implementations of one rule is a thing to be uneasy about — but the alternative was porting an
+// angular sweep into a rasteriser that already works per pixel, and the per-pixel test is the
+// simpler and more exact of the two. The bench asserts the two agree on a real plan.
+
+type occDisc struct {
+	X, Y, R float64
+}
+
+type occluders struct {
+	Segs  []gridSeg
+	Discs []occDisc
+}
+
+// buildOccluders filters a floor's geometry down to what actually blocks a camera at mountH.
+func buildOccluders(g floorGrid, mountH, wallH, mpp float64) occluders {
+	var out occluders
+	if wallH <= 0 {
+		wallH = 2.7
+	}
+	if mpp <= 0 {
+		mpp = 0.02
+	}
+
+	if mountH < wallH {
+		// A doorway is always a hole. A window is one only when the camera's height falls inside
+		// its glazing — which is exactly what a sill and a head are for.
+		seeThrough := append([]gridOpening{}, g.Doors...)
+		for _, wn := range g.Windows {
+			sill := wn.Sill
+			if sill <= 0 {
+				sill = 0.9
+			}
+			head := wn.Head
+			if head <= sill {
+				head = 2.1
+			}
+			if mountH > sill && mountH < head {
+				seeThrough = append(seeThrough, wn)
+			}
+		}
+		for _, s := range g.Segments {
+			out.Segs = append(out.Segs, carveSegGo(s, seeThrough, 6)...)
+		}
+	}
+
+	for _, hg := range g.Hedges {
+		height := hg.Height
+		if height <= 0 {
+			height = 1.6
+		}
+		if mountH >= height {
+			continue // the camera looks over it
+		}
+		for i := 0; i+1 < len(hg.Pts); i++ {
+			out.Segs = append(out.Segs, gridSeg{X1: hg.Pts[i].X, Y1: hg.Pts[i].Y, X2: hg.Pts[i+1].X, Y2: hg.Pts[i+1].Y})
+		}
+	}
+
+	for _, tr := range g.Trees {
+		stem := tr.Stem
+		top := tr.Height
+		if top <= 0 {
+			top = 8
+		}
+		if mountH <= stem || mountH >= top {
+			continue // under the clear stem, or over the crown
+		}
+		canopy := tr.Canopy
+		if canopy <= 0 {
+			canopy = 4.5
+		}
+		r := canopy / mpp
+		if r > 0.5 {
+			out.Discs = append(out.Discs, occDisc{X: tr.X, Y: tr.Y, R: r})
+		}
+	}
+	return out
+}
+
+// segmentsCross reports whether the open segment a1->a2 crosses b1->b2.
+func segmentsCross(ax1, ay1, ax2, ay2, bx1, by1, bx2, by2 float64) bool {
+	rx := ax2 - ax1
+	ry := ay2 - ay1
+	sx := bx2 - bx1
+	sy := by2 - by1
+	den := rx*sy - ry*sx
+	if math.Abs(den) < 1e-12 {
+		return false // parallel
+	}
+	t := ((bx1-ax1)*sy - (by1-ay1)*sx) / den
+	u := ((bx1-ax1)*ry - (by1-ay1)*rx) / den
+	return t > 1e-6 && t < 1-1e-6 && u >= 0 && u <= 1
+}
+
+// segmentHitsDisc reports whether the segment a->b comes within r of the disc centre.
+func segmentHitsDisc(ax, ay, bx, by float64, d occDisc) bool {
+	return distToSegSq(d.X, d.Y, ax, ay, bx, by) < d.R*d.R
+}
+
+// visibleFrom reports whether (tx,ty) can be seen from (cx,cy) past every occluder.
+func visibleFrom(cx, cy, tx, ty float64, occ occluders) bool {
+	for _, s := range occ.Segs {
+		if segmentsCross(cx, cy, tx, ty, s.X1, s.Y1, s.X2, s.Y2) {
+			return false
+		}
+	}
+	for _, d := range occ.Discs {
+		if segmentHitsDisc(cx, cy, tx, ty, d) {
+			return false
+		}
+	}
+	return true
 }

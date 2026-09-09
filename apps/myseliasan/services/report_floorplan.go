@@ -2,6 +2,7 @@ package services
 
 import (
 	"bytes"
+	"encoding/json"
 	"image"
 	"image/color"
 	"image/draw"
@@ -34,7 +35,7 @@ import (
 // The primitives blend pixels directly (straight-alpha Porter-Duff over) rather than via
 // a path rasteriser: a translucent uniform through golang.org/x/image/vector was found to
 // bleed colour outside the intended shape, so the fill is kept fully under our control.
-func renderFloorPlacements(planImage []byte, gridJSON string, scale float64, placements []*entities.NodePlacement) (image.Image, error) {
+func renderFloorPlacements(planImage []byte, gridJSON string, scale, wallHeight float64, placements []*entities.NodePlacement) (image.Image, error) {
 	src, _, err := image.Decode(bytes.NewReader(planImage))
 	if err != nil {
 		return nil, err
@@ -50,6 +51,22 @@ func renderFloorPlacements(planImage []byte, gridJSON string, scale float64, pla
 
 	// Radius of the coverage wedge, proportional to the plan (matches fovRadius()).
 	fovR := math.Max(50, math.Min(float64(w), float64(h))*0.16)
+
+	// What blocks a view on this floor. Parsed once; the occluder SET is then rebuilt per camera,
+	// because which of these things blocks depends on that camera's own mount height.
+	var grid floorGrid
+	_ = json.Unmarshal([]byte(gridJSON), &grid)
+	mpp := scale
+	if mpp <= 0 {
+		unit := grid.Unit
+		if unit == 0 {
+			unit = grid.CellPx
+		}
+		if unit == 0 {
+			unit = 20
+		}
+		mpp = 0.5 / unit
+	}
 	steel := color.RGBA{43, 108, 176, 255}
 	fovFill := color.RGBA{43, 108, 176, 70} // straight alpha → translucent
 
@@ -60,7 +77,12 @@ func renderFloorPlacements(planImage []byte, gridJSON string, scale float64, pla
 		cx := pl.X
 		cy := float64(h) - pl.Y // flip y-up placement space into the image's y-down space
 		if pl.Fov > 0 {
-			drawFovWedge(dst, cx, cy, fovR, pl.Heading, pl.Fov, fovFill)
+			mountH := pl.MountHeight
+			if mountH <= 0 {
+				mountH = 2.5
+			}
+			occ := buildOccluders(grid, mountH, wallHeight, mpp)
+			drawFovWedge(dst, cx, cy, fovR, pl.Heading, pl.Fov, fovFill, occ)
 		}
 		drawMarker(dst, cx, cy, steel)
 		if pl.LastKnownName != "" {
@@ -91,7 +113,7 @@ func blendPx(dst *image.RGBA, x, y int, c color.RGBA) {
 // drawFovWedge fills a translucent circular sector centred at (cx,cy), spanning fovDeg
 // degrees around headingDeg. Heading is degrees clockwise from north (up = -Y on the
 // image), matching how placements store it, so the wedge points where the camera looks.
-func drawFovWedge(dst *image.RGBA, cx, cy, r, headingDeg, fovDeg float64, col color.RGBA) {
+func drawFovWedge(dst *image.RGBA, cx, cy, r, headingDeg, fovDeg float64, col color.RGBA, occ occluders) {
 	start := headingDeg - fovDeg/2
 	end := headingDeg + fovDeg/2
 	x0, x1 := int(cx-r)-1, int(cx+r)+1
@@ -105,9 +127,15 @@ func drawFovWedge(dst *image.RGBA, cx, cy, r, headingDeg, fovDeg float64, col co
 			}
 			// Angle clockwise from north: north = -Y, east = +X.
 			ang := math.Atan2(dx, -dy) * 180 / math.Pi
-			if inArc(ang, start, end) {
-				blendPx(dst, px, py, col)
+			if !inArc(ang, start, end) {
+				continue
 			}
+			// Inside the sector AND actually reachable: a pixel behind a wall is not covered, it
+			// only used to look as though it were.
+			if !visibleFrom(cx, cy, float64(px)+0.5, float64(py)+0.5, occ) {
+				continue
+			}
+			blendPx(dst, px, py, col)
 		}
 	}
 }

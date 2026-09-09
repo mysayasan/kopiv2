@@ -289,9 +289,20 @@ created, positioned and authored entirely from it:
   unplacing it first (`GET /api/placements` backs the palette's "already placed, and where" state
   across the whole fleet, not just the floor being edited). A camera placement carries a
   **coverage arc** (`heading`/`fov` in degrees, dragged into aim via on-marker handles, or the
-  editor's on-canvas POV drag handles) drawn as a translucent wedge on the plan, so an operator can
-  see at a glance which part of a room a camera actually watches; in the **3D view** the same
-  placement's `mountHeight`/`pitch` stand its coverage as a cone over the extruded walls. The 3D
+  editor's on-canvas POV drag handles) drawn as a translucent wedge on the plan — and the wedge is
+  no longer a decorative cone that passes straight through the building: `coveragePolygon`
+  (`components/plan_geometry.js`) clips it by every wall, window, hedge and tree canopy that
+  blocks it **at that camera's own mount height** — a wall blocks unless the camera is mounted
+  above it, a window blocks unless the mount height falls between its **sill** and its **head**, a
+  doorway never blocks (it is a hole), a hedge blocks while taller than the mount, and a tree
+  canopy blocks only between its **clear stem** and its crown; a road, the ground, a parking bay
+  and a raised floor are flat and never block. The same function runs in the editor canvas, the
+  read-only `node_floor_view.js` drill-down and the 3D scene, so an operator can see at a glance
+  which part of a room a camera actually watches and all three surfaces agree on it; in the **3D
+  view** the same placement's `mountHeight`/`pitch` stand its coverage as a fan of triangles from
+  the lens to the clipped polygon's edge — the shape that IS the visible volume, where a plain cone
+  could only ever pass through the walls — falling back to the old unclipped cone when a floor's
+  model has not loaded. The 3D
   view renders **only the walls the operator drew** — a floor with no authored `segments[]`
   extrudes as a bare slab, never an invented perimeter box, since an outer wall is something
   authored, not assumed. A floor's authored **stairs**, **doors**, **windows**, **raised floors**,
@@ -848,7 +859,7 @@ New articles must land in **all four** language folders (`en`/`ms`/`zh`/`ar`) �
 A **Reports** page (its own nav item alongside **Notifications** under the **System** group) generates printable PDF reports of the fleet on demand, rendered entirely pure-Go on the control plane (`domain/report` over `github.com/go-pdf/fpdf`, see `domain/report/doc.go.md`) — no headless browser, so it keeps working on an air-gapped install. Four reports are available, each a `GET /api/reports/*.pdf` under `apis/reports.go`:
 
 - **Fleet Health** (`fleet-health.pdf?range=`) — opens with an AI **Executive Summary** (see "AI Agent" above) when a language model is enabled, then online/offline status of every node, a certificate expiry roster, and an alert summary (by category and noisiest source) over a selectable trailing window (7/30/90 days).
-- **Site & Asset Inventory** (`inventory.pdf?siteId=`) — an asset register per building (or one selected site): the rendered floor plan for each floor/area — including the authored walls/doors/windows/stairs/parking/raised floors, and — on an outdoor area — roads/trees/hedges/ground from the floor editor's grid, not just the flat plan image — with camera coverage wedges and placement markers, plus a table of on-site appliances. The outdoor kit's own sizes (road width, canopy radius) are real-world metres, so the report draws them at the floor's own scale (falling back to the editor's nominal 0.5 m/cell for a plan nobody has scaled yet, rather than omitting them).
+- **Site & Asset Inventory** (`inventory.pdf?siteId=`) — an asset register per building (or one selected site): the rendered floor plan for each floor/area — including the authored walls/doors/windows/stairs/parking/raised floors, and — on an outdoor area — roads/trees/hedges/ground from the floor editor's grid, not just the flat plan image — with camera coverage wedges and placement markers, plus a table of on-site appliances. The outdoor kit's own sizes (road width, canopy radius) are real-world metres, so the report draws them at the floor's own scale (falling back to the editor's nominal 0.5 m/cell for a plan nobody has scaled yet, rather than omitting them). **A printed wedge now shows REAL coverage, not an aim**: the compositor clips it pixel-by-pixel to whatever blocks that camera at its own mount height — a wall unless the camera is mounted above it, a window unless the mount height falls between its sill and its head, a hedge while taller than the mount, a tree canopy only between its clear stem and its crown, never a doorway — the same height rules the editor's own wedge applies, so a wall standing in a camera's way no longer prints as if the camera could see through it.
 - **Incident Detail** (`incident.pdf?range=`) — recent alerts over the selected window with per-event detail, including a snapshot inline when the event carried one; the range-scoped report also opens with the same AI Executive Summary (a single-event report skips it — the event's own detail is the summary there).
 - **Security & Access** (`security.pdf?range=`) — users, roles, the endpoint permission matrix, the audit trail for the selected window, and a data-protection attestation paragraph. **Superadmin only**: the API 403s a non-superadmin caller, and the SPA hides the card entirely so it is never offered to a session that cannot use it.
 

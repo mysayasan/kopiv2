@@ -597,7 +597,7 @@ func (r *reportService) renderFloorPlan(ctx context.Context, doc *report.Documen
 	if img == nil || len(img.Data) == 0 {
 		return errors.New("plan image is empty")
 	}
-	composed, err := renderFloorPlacements(img.Data, floor.Grid, floor.Scale, placements)
+	composed, err := renderFloorPlacements(img.Data, floor.Grid, floor.Scale, floor.WallHeight, placements)
 	if err != nil {
 		return fmt.Errorf("could not decode plan image: %w", err)
 	}
