@@ -1,6 +1,6 @@
 {
   "core": {
-    "version": "1.115.0"
+    "version": "1.116.0"
   },
   "apps": {
     "myidsan": {
@@ -13,9 +13,9 @@
       "version": "1.151.0"
     },
     "myseliasan": {
-      "version": "1.92.0"
+      "version": "1.93.0"
     }
   },
-  "commit": "d41d9675426793a1c576cca962f3789991b3747e",
-  "updatedAt": "2026-09-09T07:04:55Z"
+  "commit": "c245f806dc9a9efba06e1594a876c6e95491276c",
+  "updatedAt": "2026-09-09T09:49:10Z"
 }
