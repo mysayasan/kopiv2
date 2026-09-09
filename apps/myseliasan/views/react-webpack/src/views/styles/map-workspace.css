@@ -132,6 +132,13 @@
 .mw-act { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
 .mw-btn { border: 1px solid var(--border-soft); background: var(--bg-surface); border-radius: 8px; padding: 8px 13px; font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; color: var(--text-primary); }
 .mw-btn:hover { border-color: var(--accent); }
+/* .mw-btn is worn by a <button> and, for "Edit plan", by an <a> — the plan opens in its own tab,
+ * and only a real link gives ctrl-click / middle-click / "copy link address". An anchor brings
+ * its own underline and its own colour, so the control has to state both or the same button
+ * renders differently depending on which element it happens to be. */
+a.mw-btn { text-decoration: none; }
+a.mw-btn:hover { text-decoration: none; }
+a.mw-btn.primary, a.mw-btn.primary:hover, a.mw-btn.primary:visited { color: #fff; }
 .mw-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .mw-field { display: flex; flex-direction: column; gap: 5px; margin-top: 12px; }
 .mw-field label { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .4px; font-weight: 700; }

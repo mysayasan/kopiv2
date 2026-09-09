@@ -3,15 +3,34 @@ import PropTypes from 'prop-types';
 import { useT, Ico } from '@shared';
 import { api, apiBase, csrfToken } from '../lib/helpers';
 import { nodeTone } from '../lib/fleet_status';
+import { publishPlanEdit, setPlanArea } from '../lib/plan_route';
+// The editor's layout (.bld-*, .palette-*, .grid-*, .fe-*, .floor-editor-*) and this shell's own
+// .pw-* rules all live in fleet-map.css, which until now was pulled in ONLY by the lazily-loaded
+// MAP chunk. The workspace is reached by URL and can be the first thing a tab ever renders, so
+// without this import it draws every element correctly and lays out none of them: a header, an
+// area bar, a palette and a canvas stacked down an unstyled scrolling page. Nothing fails - it
+// just looks broken, which is why a DOM-only bench passed it. Same trap as the setup wizard's
+// kind picker (see App.js): a lazy chunk cannot borrow another lazy chunk's stylesheet.
+import '../styles/fleet-map.css';
+import { FormBusyOverlay } from './ui';
 import { FloorEditor } from './floor_editor';
 import { SiteDialog } from './asset_wizard';
 import { multiPlan, normKind, showsAreaBar, siteGlyph } from './site_kinds';
 import { nodeKindOf } from './layout';
 
-// BuildingEditorDialog is the authoring surface for ONE building, opened as a modal over the
-// geographic map: pick an area (floor) along the top, drag a node or camera off the palette, and
-// drop it where it sits on the plan. It owns area management + placement CRUD; FloorEditor owns
-// the canvas itself (walls, camera pins, aim, 2D⇄3D).
+// PlanWorkspace is the authoring surface for ONE site, and it owns the whole browser tab: pick an
+// area (floor) along the top, drag a node or camera off the palette, and drop it where it sits on
+// the plan. It owns area management + placement CRUD; FloorEditor owns the canvas itself (walls,
+// camera pins, aim, 2D⇄3D).
+//
+// It used to be BuildingEditorDialog — a modal over the geographic map. The modal is what capped
+// how much toolbar, outliner and status bar the editor could ever carry, and a window that small
+// is why the tool read as a web form rather than an application. There is deliberately only ONE
+// host now: two hosts for the same editor would mean styling, translating and benching every
+// future change twice.
+//
+// What the tab buys beyond the feel: a plan is linkable ("here is the plan we are arguing about"),
+// and two areas can sit side by side on two monitors, which a modal can never do.
 //
 // Placements are myseliasan-owned, so a camera stays on the plan while its node is offline — the
 // control plane has no camera inventory of its own, and the live palette list goes empty when the
@@ -37,14 +56,17 @@ function AreaTab({ floor, active, onOpen, onRename }) {
 }
 AreaTab.propTypes = { floor: PropTypes.object, active: PropTypes.bool, onOpen: PropTypes.func, onRename: PropTypes.func };
 
-// initialPick / initialFloorId let a caller open the editor ALREADY holding something to place -
-// which is what dragging a camera out of the map's "not placed yet" tray onto an area does. The
-// operator's next click lands it; without this they would arrive at a plan and have to find the
-// same camera again in the palette they just dragged it from.
-export function BuildingEditorDialog({ site, nodes = [], initialPick, initialFloorId, onToast, onClose, onChanged }) {
+// initialPick / initialFloorId let a caller open the workspace ALREADY holding something to place -
+// which is what dragging a camera out of the map's "not placed yet" tray onto an area does. Both
+// arrive in the URL (?pick= / ?area=), because a cross-tab drag is not a thing: the gesture ends by
+// opening this tab. The operator's next click lands it; without this they would arrive at a plan
+// and have to find the same camera again in the palette they just dragged it from.
+export function PlanWorkspace({ site, nodes = [], initialPick, initialFloorId, onToast }) {
   const t = useT();
-  const changedRef = useRef(onChanged); changedRef.current = onChanged;
-  const notifyChanged = () => { if (changedRef.current) changedRef.current(); };
+  // Every edit is announced to the fleet map's tab, which can no longer be told by a React
+  // callback. See publishPlanEdit — the map also refetches on visibility, so this is the fast
+  // path and not the only one.
+  const notifyChanged = () => publishPlanEdit(site.id);
 
   const [building, setBuilding] = useState(site);
   const [floors, setFloors] = useState([]);
@@ -113,18 +135,39 @@ export function BuildingEditorDialog({ site, nodes = [], initialPick, initialFlo
   useEffect(() => { loadPlacements(activeFloor && activeFloor.id); }, [activeFloor && activeFloor.id, loadPlacements]);
   useEffect(() => () => clearTimeout(aimTimerRef.current), []);
 
-  // Esc closes the dialog — but only when nothing inside is mid-flow (placing a marker, or the
-  // rename dialog open), so one keypress never discards more than the operator expects.
+  // Esc cancels what the operator is carrying, and then STOPS.
+  //
+  // As a modal this handler closed the whole editor, and FloorEditor's own capture-phase handler
+  // deliberately let Escape bubble here once it had nothing of its own to cancel. In a tab there is
+  // no dialog to close and Escape must never navigate: one stray keypress would throw away the
+  // window, and the last unsaved 700 ms of work with it.
   useEffect(() => {
     const onKey = (e) => {
       if (e.key !== 'Escape') return;
       if (editSite) return;
-      if (placing) { setPlacing(null); return; }
-      onClose();
+      if (placing) setPlacing(null);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [placing, editSite, onClose]);
+  }, [placing, editSite]);
+
+  // The tab's title names the plan, so a second and third workspace are told apart in the tab
+  // strip. Being able to open several is most of the point of the tab, and identical titles would
+  // take that straight back.
+  useEffect(() => {
+    const prev = document.title;
+    const area = activeFloor && areaBar ? `${activeFloor.name} — ` : '';
+    document.title = `${area}${building.name}`;
+    return () => { document.title = prev; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [building.name, activeFloor && activeFloor.id, activeFloor && activeFloor.name, areaBar]);
+
+  // Keep ?area= describing what is on screen, so the address in the bar is always the one worth
+  // copying to someone else.
+  useEffect(() => {
+    if (activeFloor) setPlanArea(building.id, activeFloor.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [building.id, activeFloor && activeFloor.id]);
 
   // --- camera palette (live, over the node tunnel) ---
   const loadCams = useCallback(async (nodeId) => {
@@ -183,11 +226,15 @@ export function BuildingEditorDialog({ site, nodes = [], initialPick, initialFlo
 
   // saveModel persists the drawn walls + scale + wall height (autosaved by FloorEditor). It patches
   // local floor state (same id) so the editor never re-seeds or refetches the image.
-  const saveModel = useCallback(async (model) => {
+  //
+  // `urgent` means the tab is going away and this is the last chance to write (see FloorEditor's
+  // flushSave). keepalive is what lets the request outlive the document teardown; it is NOT used on
+  // the ordinary path, because keepalive caps the body at 64KB and a large plan would exceed that.
+  const saveModel = useCallback(async (model, opts = {}) => {
     const fid = activeFloor && activeFloor.id;
     if (!fid) return;
     try {
-      const res = await api(`/api/floors/${fid}/model`, { method: 'PUT', body: JSON.stringify(model) });
+      const res = await api(`/api/floors/${fid}/model`, { method: 'PUT', body: JSON.stringify(model), keepalive: !!opts.urgent });
       if (!res.ok) throw new Error();
       setFloors((list) => list.map((f) => (f.id === fid ? { ...f, ...model } : f)));
       setActiveFloor((f) => (f && f.id === fid ? { ...f, ...model } : f));
@@ -278,15 +325,19 @@ export function BuildingEditorDialog({ site, nodes = [], initialPick, initialFlo
   }
 
   // Delete the whole asset — its floor plans, their images, and every camera placement on them go
-  // with it. Guarded by a confirm, then the editor closes back to the map.
+  // with it. Guarded by a confirm.
+  //
+  // This workspace IS the deleted thing, so there is nothing left to show: send the tab back to the
+  // app rather than leave the operator editing a site the server no longer has. A full load, not a
+  // replaceState, because the map has to rebuild from scratch anyway.
   async function deleteSite() {
     if (!window.confirm(t('map.deleteAssetConfirm', { name: building.name }))) return;
     setBusy(true);
     try {
       const res = await api(`/api/sites/${building.id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error();
-      if (onToast) onToast(t('map.assetDeleted', { name: building.name }), 'success');
-      if (onClose) onClose(); // parent reloads the overview on close, so the marker vanishes
+      notifyChanged();
+      window.location.href = '/';
     } catch (_) { if (onToast) onToast(t('map.error'), 'error'); setBusy(false); }
   }
 
@@ -312,9 +363,13 @@ export function BuildingEditorDialog({ site, nodes = [], initialPick, initialFlo
   );
 
   return (
-    <div className="bld-overlay" role="dialog" aria-modal="true" aria-label={t('bld.editorLabel', { name: building.name })}>
-      <div className="bld-dialog">
-        <header className="bld-head">
+    <div className="pw-shell">
+      <div className="pw-frame">
+        <header className="bld-head pw-head">
+          {/* Back to the fleet map, as a real link: this tab has no parent to close to, and the
+              operator may well have arrived from a bookmark or a pasted address rather than from
+              the map at all. */}
+          <a className="pw-back" href="/" title={t('pw.backToApp')} aria-label={t('pw.backToApp')}><Ico n="chev-left" sz={15} /></a>
           <span className="bld-head-glyph" aria-hidden="true">{siteGlyph(building)}</span>
           <h2 className="bld-head-name">{building.name}</h2>
           <button type="button" className="quiet bld-head-edit" onClick={() => setEditSite(true)} disabled={busy}>
@@ -340,7 +395,6 @@ export function BuildingEditorDialog({ site, nodes = [], initialPick, initialFlo
               ) : null}
             </>
           ) : null}
-          <button type="button" className="icon-button bld-head-close" onClick={onClose} aria-label={t('bld.done')} title={t('bld.done')}><Ico n="x" sz={15} /></button>
         </header>
 
         {areaBar ? (
@@ -464,9 +518,13 @@ export function BuildingEditorDialog({ site, nodes = [], initialPick, initialFlo
           </div>
         </div>
 
-        <footer className="bld-foot">
+        {/* The status bar. It is a placeholder for the real one (tool, selection, cursor position,
+            snap mode) that the viewport phase builds — but the strip has to exist now so the shell
+            that phase is designed into is the shell that ships. */}
+        <footer className="bld-foot pw-status">
+          <span className="pw-status-cell">{building.name}</span>
+          {activeFloor && areaBar ? <span className="pw-status-cell">{activeFloor.name}</span> : null}
           <span className="bld-foot-hint">{t('bld.autosaveHint')}</span>
-          <button type="button" onClick={onClose}>{t('bld.done')}</button>
         </footer>
       </div>
 
@@ -482,12 +540,70 @@ export function BuildingEditorDialog({ site, nodes = [], initialPick, initialFlo
   );
 }
 
-BuildingEditorDialog.propTypes = {
+PlanWorkspace.propTypes = {
   site: PropTypes.object,
   nodes: PropTypes.array,
   initialPick: PropTypes.object,
   initialFloorId: PropTypes.number,
   onToast: PropTypes.func,
-  onClose: PropTypes.func,
-  onChanged: PropTypes.func,
+};
+
+// PlanWorkspacePage is what the /plan/{siteId} route renders. It turns a bare id from the address
+// into the site row the workspace needs.
+//
+// There is no GET /api/sites/{id} — the list is the only read — so it resolves out of the list.
+// That is cheap (a control plane has tens of sites, not thousands) and it means a stale bookmark to
+// a deleted site lands on an honest "not found" rather than a half-built editor.
+export function PlanWorkspacePage({ route, nodes = [], onToast }) {
+  const t = useT();
+  const [site, setSite] = useState(null);
+  const [state, setState] = useState('loading'); // loading | ok | missing | error
+
+  useEffect(() => {
+    let alive = true;
+    setState('loading');
+    api('/api/sites', { noRedirect: true })
+      .then((r) => {
+        if (!alive) return;
+        if (!r.ok) { setState('error'); return; }
+        const rows = Array.isArray(r.body) ? r.body : [];
+        const hit = rows.find((s) => Number(s.id) === Number(route.siteId));
+        if (!hit) { setState('missing'); return; }
+        setSite(hit);
+        setState('ok');
+      })
+      .catch(() => { if (alive) setState('error'); });
+    return () => { alive = false; };
+  }, [route.siteId]);
+
+  if (state === 'loading') return <main className="boot-screen"><FormBusyOverlay busy /></main>;
+  if (state !== 'ok') {
+    // A dead link is a normal thing to be holding — a bookmark to a site somebody has since
+    // deleted, or an address pasted from a chat months ago. Say which it is, and offer the way back.
+    return (
+      <main className="pw-shell pw-blank">
+        <div className="pw-blank-card">
+          <Ico n="map-pin" sz={30} />
+          <div className="pw-blank-t">{state === 'missing' ? t('pw.noSite') : t('pw.loadFailed')}</div>
+          <div className="pw-blank-s">{state === 'missing' ? t('pw.noSiteHint') : t('pw.loadFailedHint')}</div>
+          <a className="pw-blank-link" href="/">{t('pw.backToApp')}</a>
+        </div>
+      </main>
+    );
+  }
+  return (
+    <PlanWorkspace
+      site={site}
+      nodes={nodes}
+      initialPick={route.pick || undefined}
+      initialFloorId={route.floorId || undefined}
+      onToast={onToast}
+    />
+  );
+}
+
+PlanWorkspacePage.propTypes = {
+  route: PropTypes.object,
+  nodes: PropTypes.array,
+  onToast: PropTypes.func,
 };

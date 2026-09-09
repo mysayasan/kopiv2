@@ -457,6 +457,11 @@ export default {
   'map.resize': 'Drag to resize',
 
   // Add-building wizard + the building editor it opens into.
+  'pw.backToApp': 'Back to the fleet map',
+  'pw.noSite': 'That plan is no longer here',
+  'pw.noSiteHint': 'The site this link points to has been deleted, or you no longer have access to it.',
+  'pw.loadFailed': 'Could not open the plan',
+  'pw.loadFailedHint': 'The control plane did not answer. Check your connection and try again.',
   'bld.kindQuestion': 'What are you adding?',
   'bld.kind.building': 'Building',
   'bld.kind.outdoor': 'Outdoor area',
@@ -486,7 +491,6 @@ export default {
   'bld.nextHint.point': 'Next: click the map to place it, then assign the appliance whose cameras are mounted there.',
   'bld.createAndPlace': 'Create & place on map',
   'bld.createdPlaceIt': '"{name}" created — now click the map to place it.',
-  'bld.editorLabel': 'Editing {name}',
   'bld.editAreas': 'Edit plan',
   'bld.renameArea': 'Rename',
   'bld.deleteArea': 'Delete area',
@@ -509,7 +513,6 @@ export default {
   'bld.removePlanConfirm': 'Remove the plan image from “{name}”? The area, its walls and its cameras are kept — only the picture is cleared.',
   'bld.planRemoved': 'Plan removed.',
   'bld.removePlanFailed': 'Could not remove the plan.',
-  'bld.done': 'Done',
   'bld.autosaveHint': 'Changes save as you make them.',
   'nav.users': 'Users',
   'nav.roles': 'Roles & Access',

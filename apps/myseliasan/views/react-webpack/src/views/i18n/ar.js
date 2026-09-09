@@ -454,6 +454,11 @@ export default {
   "map.resize": "اسحب لتغيير الحجم",
 
   // Add-building wizard + the building editor it opens into.
+  "pw.backToApp": "العودة إلى خريطة الأسطول",
+  "pw.noSite": "لم يعد هذا المخطط موجودًا",
+  "pw.noSiteHint": "تم حذف الموقع الذي يشير إليه هذا الرابط، أو لم يعد لديك حق الوصول إليه.",
+  "pw.loadFailed": "تعذّر فتح المخطط",
+  "pw.loadFailedHint": "لم تستجب وحدة التحكم. تحقق من الاتصال وحاول مرة أخرى.",
   "bld.kindQuestion": "ما الذي تضيفه؟",
   "bld.kind.building": "مبنى",
   "bld.kind.outdoor": "منطقة خارجية",
@@ -483,7 +488,6 @@ export default {
   "bld.nextHint.point": "التالي: انقر على الخريطة لوضعه، ثم عيّن الجهاز المثبَّتة كاميراته هناك.",
   "bld.createAndPlace": "إنشاء ووضع على الخريطة",
   "bld.createdPlaceIt": "تم إنشاء \"{name}\" — الآن انقر على الخريطة لوضعه.",
-  "bld.editorLabel": "تحرير {name}",
   "bld.editAreas": "تعديل المخطط",
   "bld.renameArea": "إعادة تسمية",
   "bld.deleteArea": "حذف المنطقة",
@@ -506,7 +510,6 @@ export default {
   "bld.removePlanConfirm": "هل تريد إزالة صورة المخطط من ”{name}“؟ يتم الاحتفاظ بالمنطقة وجدرانها وكاميراتها — تُمسح الصورة فقط.",
   "bld.planRemoved": "تمت إزالة المخطط.",
   "bld.removePlanFailed": "تعذّرت إزالة المخطط.",
-  "bld.done": "تم",
   "bld.autosaveHint": "تُحفظ التغييرات فور إجرائها.",
   "nav.users": "المستخدمون",
   "nav.roles": "الأدوار والوصول",

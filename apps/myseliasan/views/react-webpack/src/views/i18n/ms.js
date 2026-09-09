@@ -454,6 +454,11 @@ export default {
   'map.resize': 'Seret untuk saiz semula',
 
   // Add-building wizard + the building editor it opens into.
+  'pw.backToApp': 'Kembali ke peta armada',
+  'pw.noSite': 'Pelan itu tiada lagi di sini',
+  'pw.noSiteHint': 'Tapak yang dirujuk oleh pautan ini telah dipadamkan, atau anda tidak lagi mempunyai akses kepadanya.',
+  'pw.loadFailed': 'Tidak dapat membuka pelan',
+  'pw.loadFailedHint': 'Satah kawalan tidak menjawab. Sila periksa sambungan anda dan cuba lagi.',
   'bld.kindQuestion': 'Apa yang anda tambah?',
   'bld.kind.building': 'Bangunan',
   'bld.kind.outdoor': 'Kawasan luar',
@@ -483,7 +488,6 @@ export default {
   'bld.nextHint.point': 'Seterusnya: klik peta untuk meletakkannya, kemudian tugaskan peranti yang kameranya dipasang di situ.',
   'bld.createAndPlace': 'Cipta & letak pada peta',
   'bld.createdPlaceIt': '"{name}" telah dicipta — kini klik peta untuk meletakkannya.',
-  'bld.editorLabel': 'Mengedit {name}',
   'bld.editAreas': 'Edit pelan',
   'bld.renameArea': 'Namakan semula',
   'bld.deleteArea': 'Padam kawasan',
@@ -506,7 +510,6 @@ export default {
   'bld.removePlanConfirm': 'Buang imej pelan daripada “{name}”? Kawasan, dindingnya dan kameranya dikekalkan — hanya gambar sahaja dikosongkan.',
   'bld.planRemoved': 'Pelan dibuang.',
   'bld.removePlanFailed': 'Tidak dapat membuang pelan.',
-  'bld.done': 'Selesai',
   'bld.autosaveHint': 'Perubahan disimpan sebaik sahaja dibuat.',
   'nav.users': 'Pengguna',
   'nav.roles': 'Peranan & Akses',

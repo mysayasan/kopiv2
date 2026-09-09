@@ -76,8 +76,9 @@ All routes require a myseliasan session (`auth.Middleware` + `session.Middleware
   line, raised floors with a rise in metres that stairs can lock onto, and parking bays — all
   authored in the same 2D canvas and extruded in 3D) alongside the wall `segments[]`.
 - Camera markers on a floor render a **coverage wedge** (SVG/canvas arc, `Heading`/`Fov` on
-  `NodePlacement`) in both the editor (`building_editor_dialog.js`'s `FloorEditor`, i.e.
-  `floor_editor.js`) and the read-only plan viewer (`node_floor_view.js`'s `BuildingFloorView`),
+  `NodePlacement`) in both the editor (the plan workspace's `FloorEditor`, i.e.
+  `floor_editor.js`, opened in its own browser tab by `components/plan_workspace.js`) and the
+  read-only plan viewer (`node_floor_view.js`'s `BuildingFloorView`),
   so an operator can see at a glance which part of a room a camera actually watches, not just
   where it is mounted. The same placement additionally carries `MountHeight`/`Pitch` for the 3D
   view's coverage cone (see `entities/node_placement.go.md`).
