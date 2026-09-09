@@ -128,5 +128,5 @@ func TestRenderFloorGridSurvivesUnknownKeys(t *testing.T) {
 	dst := image.NewRGBA(image.Rect(0, 0, 200, 200))
 	// The assertion is simply that this returns: a panic here is a broken PDF for every customer
 	// running an older control plane against a newer plan.
-	renderFloorGrid(dst, raw)
+	renderFloorGrid(dst, raw, 0.0116)
 }

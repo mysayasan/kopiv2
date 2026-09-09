@@ -4,16 +4,19 @@
 
 Composites a floor's decrypted plan image with camera/node placement pins for the Inventory
 report (`reports.go`'s `Inventory` -> `renderFloorPlan` -> `renderFloorPlacements`). Draws
-the authored wall/door/window/stairs/parking/raised-floor vector geometry from
-`FloorPlan.Grid` first (`report_floorgrid.go.md` — the editor never bakes this into the
-stored plan image), then overlays a translucent field-of-view wedge, a marker disc, and a
-name label per placement on top — matching the frontend's stacked read-only 2D overlay
-(`node_floor_view.js`) so a printed floor plan looks like what the operator sees on screen.
+the authored wall/door/window/stairs/parking/raised-floor/outdoor-kit (road/tree/hedge/
+ground) vector geometry from `FloorPlan.Grid` first (`report_floorgrid.go.md` — the editor
+never bakes this into the stored plan image), then overlays a translucent field-of-view
+wedge, a marker disc, and a name label per placement on top — matching the frontend's
+stacked read-only 2D overlay (`node_floor_view.js`) so a printed floor plan looks like what
+the operator sees on screen.
 
-## `renderFloorPlacements(planImage []byte, gridJSON string, placements []*entities.NodePlacement) (image.Image, error)`
+## `renderFloorPlacements(planImage []byte, gridJSON string, scale float64, placements []*entities.NodePlacement) (image.Image, error)`
 
 1. Decodes `planImage` into an `image.RGBA` canvas the same size as the source.
-2. Calls `renderFloorGrid` to draw the authored geometry.
+2. Calls `renderFloorGrid`, passing `scale` (the floor's metres-per-pixel) through so the
+   outdoor kit's real-world-metres fields (road/hedge width, tree canopy) draw at the right
+   size — `report_floorgrid.go.md` covers the fallback when a plan was never scaled.
 3. For each non-nil placement: flips its stored `(X,Y)` from the OpenLayers bottom-left,
    y-UP pixel space into the image's top-left, y-DOWN space (`cy := h - pl.Y`; grid geometry
    is already in image space and is drawn as-is — the two coordinate systems differ and this

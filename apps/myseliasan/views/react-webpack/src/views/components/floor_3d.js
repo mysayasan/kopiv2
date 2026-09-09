@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
 import * as THREE from 'three';
 import { sillOf, headOf, openingSpanOnSeg, remainingSpans, pointInRotatedRect, rectCorners } from './plan_geometry';
-import { readModel } from './map/plan_objects';
+import { PLAN_OBJECTS, readModel } from './map/plan_objects';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { useT } from '@shared';
 import { apiBase } from '../lib/helpers';
@@ -185,6 +185,68 @@ export default function Floor3D({ floors = [], activeIndex = 0, stacked = false,
       const dim = stacked && !isActive;
       const toWorld = (x, y) => new THREE.Vector3((x / w - 0.5) * fw, baseY, (0.5 - y / h) * fh);
 
+      // ---- registry-built types -----------------------------------------------------------------
+      //
+      // Roads, hedges, trees and ground areas come from their own `build3d` declarations. This scene
+      // needed no per-type code to gain them: it understands three PRIMITIVES (a flat area, an
+      // extruded ribbon, a tree) and each declaration says which one it is.
+      //
+      // A road is a RIBBON a few centimetres proud of the slab, never a wall. Storing one in
+      // `segments` would have extruded it to full storey height straight down the middle of the site.
+      const buildSpecs = () => {
+        Object.keys(PLAN_OBJECTS).forEach((name) => {
+          const spec = PLAN_OBJECTS[name];
+          if (spec.builtin || !spec.build3d) return;
+          ((readModel(f.grid).arrays[spec.array]) || []).forEach((o) => {
+            (spec.build3d(o, { mpp }) || []).forEach((prim) => {
+              if (prim.kind === 'ribbon' && prim.pts.length >= 2) {
+                for (let i = 0; i + 1 < prim.pts.length; i++) {
+                  const a0 = prim.pts[i]; const b0 = prim.pts[i + 1];
+                  const p0 = toWorld(a0.x, a0.y); const p1 = toWorld(b0.x, b0.y);
+                  const len = p0.distanceTo(p1);
+                  if (len < 1e-4) continue;
+                  const geo = new THREE.BoxGeometry(len, prim.height, prim.width);
+                  const mat = new THREE.MeshLambertMaterial({ color: prim.color, transparent: dim, opacity: dim ? 0.5 : 1 });
+                  const mesh = new THREE.Mesh(geo, mat);
+                  mesh.position.set((p0.x + p1.x) / 2, baseY + prim.height / 2, (p0.z + p1.z) / 2);
+                  mesh.rotation.y = -Math.atan2(p1.z - p0.z, p1.x - p0.x);
+                  scene.add(mesh);
+                }
+              } else if (prim.kind === 'area' && prim.pts.length >= 3) {
+                const shape = new THREE.Shape();
+                prim.pts.forEach((q, i) => { const wpt = toWorld(q.x, q.y); if (i) shape.lineTo(wpt.x, -wpt.z); else shape.moveTo(wpt.x, -wpt.z); });
+                shape.closePath();
+                const geo = new THREE.ShapeGeometry(shape);
+                const mat = new THREE.MeshLambertMaterial({ color: prim.color, transparent: true, opacity: dim ? 0.35 : 0.7, side: THREE.DoubleSide });
+                const mesh = new THREE.Mesh(geo, mat);
+                mesh.rotation.x = -Math.PI / 2;
+                mesh.position.y = baseY + 0.01; // just clear of the slab, so it does not z-fight
+                scene.add(mesh);
+              } else if (prim.kind === 'tree') {
+                const c = toWorld(prim.x, prim.y);
+                const stem = Math.max(0.1, prim.stem);
+                const crown = Math.max(0.2, prim.height - stem);
+                const trunk = new THREE.Mesh(
+                  new THREE.CylinderGeometry(Math.max(0.05, prim.canopy * 0.08), Math.max(0.07, prim.canopy * 0.1), stem, 8),
+                  new THREE.MeshLambertMaterial({ color: 0x6b4f2a, transparent: dim, opacity: dim ? 0.5 : 1 }),
+                );
+                trunk.position.set(c.x, baseY + stem / 2, c.z);
+                scene.add(trunk);
+                // A conifer is a cone and everything else a sphere: the shape carries the species,
+                // which is all the species field is for.
+                const canopyGeo = prim.species === 'conifer'
+                  ? new THREE.ConeGeometry(prim.canopy, crown, 12)
+                  : new THREE.SphereGeometry(prim.canopy, 14, 10);
+                const canopyMesh = new THREE.Mesh(canopyGeo, new THREE.MeshLambertMaterial({ color: 0x2f7a34, transparent: true, opacity: dim ? 0.4 : 0.85 }));
+                canopyMesh.position.set(c.x, baseY + stem + crown / 2, c.z);
+                if (prim.species !== 'conifer') canopyMesh.scale.set(1, Math.max(0.4, crown / (prim.canopy * 2)), 1);
+                scene.add(canopyMesh);
+              }
+            });
+          });
+        });
+      };
+
       // Floor slab, textured with the plan image (cookie-authed, same-origin). A DOWN stair descends
       // below the slab, so the slab is cut around each one — otherwise the opaque floor covers the
       // descent and it reads as being buried in concrete. The stairwell openings are the down-stair
@@ -229,6 +291,9 @@ export default function Floor3D({ floors = [], activeIndex = 0, stacked = false,
         slab.position.y = baseY;
         scene.add(slab);
       }
+      // After BOTH slab paths: a floor with a down-stair splits its slab into pieces, and the
+      // outdoor kit has to appear either way.
+      buildSpecs();
       pending += 1;
       new THREE.TextureLoader().load(
         `${apiBase()}/api/floors/${f.id}/image`,

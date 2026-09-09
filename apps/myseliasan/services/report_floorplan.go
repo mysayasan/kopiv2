@@ -34,7 +34,7 @@ import (
 // The primitives blend pixels directly (straight-alpha Porter-Duff over) rather than via
 // a path rasteriser: a translucent uniform through golang.org/x/image/vector was found to
 // bleed colour outside the intended shape, so the fill is kept fully under our control.
-func renderFloorPlacements(planImage []byte, gridJSON string, placements []*entities.NodePlacement) (image.Image, error) {
+func renderFloorPlacements(planImage []byte, gridJSON string, scale float64, placements []*entities.NodePlacement) (image.Image, error) {
 	src, _, err := image.Decode(bytes.NewReader(planImage))
 	if err != nil {
 		return nil, err
@@ -44,8 +44,9 @@ func renderFloorPlacements(planImage []byte, gridJSON string, placements []*enti
 	dst := image.NewRGBA(image.Rect(0, 0, w, h))
 	draw.Draw(dst, dst.Bounds(), src, b.Min, draw.Src)
 
-	// Authored walls/openings/stairs/floors (the reason a grid-drawn plan looked blank).
-	renderFloorGrid(dst, gridJSON)
+	// Authored walls/openings/stairs/floors, and the outdoor kit (roads, trees, hedges, ground).
+	// The scale is passed because the outdoor types store real-world sizes in METRES.
+	renderFloorGrid(dst, gridJSON, scale)
 
 	// Radius of the coverage wedge, proportional to the plan (matches fovRadius()).
 	fovR := math.Max(50, math.Min(float64(w), float64(h))*0.16)

@@ -189,7 +189,20 @@ created, positioned and authored entirely from it:
   — locks onto it as its base so the flight's labelled climb reads next to the platform's own
   height), and **Platform** (a raised floor with an adjustable rise in metres, carved under any
   stairs that land on it); an outdoor area swaps the building-only tools for **Gate** (the outdoor
-  counterpart of a door) and **Parking** (striped bays), keeping Wall/Room/Round/Platform/Erase. In
+  counterpart of a door) and **Parking** (striped bays), keeping Wall/Room/Round/Platform/Erase, and
+  adds **the outdoor kit** — four more outdoor-only tools, offered nowhere on a building because a
+  road inside one is a category error: **Road** (draw a centreline like a wall run; width in
+  metres, surface asphalt/concrete/gravel/paved, lane markings, an optional kerb — deliberately its
+  own type rather than a wall, since a road stored as a wall segment would extrude to full storey
+  height down the middle of the site), **Tree** (a single click; canopy radius, height, and a
+  **clear stem** — the height a canopy starts at, which is the number that answers "can a camera
+  mounted at 2.5 m see under this tree?"), **Hedge** (a drawn run with its own width and height —
+  the low solid occluder that actually blocks a fence-line camera, kept separate from a wall so
+  "erase hedge" never means "erase wall"), and **Ground** (draw a closed area like a room; a
+  surface — grass/water/gravel/hardstanding — painted beneath everything else so a site plan reads
+  as a site rather than a diagram of fences). All four are declared entirely in the plan object
+  registry (see below): the editor canvas, the read-only floor view and the 3D scene each draw them
+  from the same declaration, with no per-type drawing code of their own. In
   **Select** mode: a multi-select **transform gizmo** (drag to move, corner/edge handles to resize,
   a rotate knob — oriented to the object's own rotation when exactly one is selected) replaces the
   plain move-only selection, **copy/cut/paste** (Ctrl+C/X/V) duplicates geometry with a stepped
@@ -281,17 +294,22 @@ created, positioned and authored entirely from it:
   placement's `mountHeight`/`pitch` stand its coverage as a cone over the extruded walls. The 3D
   view renders **only the walls the operator drew** — a floor with no authored `segments[]`
   extrudes as a bare slab, never an invented perimeter box, since an outer wall is something
-  authored, not assumed. A floor's authored **stairs**, **doors**, **windows**, **raised floors**
-  and **parking** (see "Authoring a building or outdoor area" above) round-trip alongside the wall
-  segments in `FloorPlan.Grid` and extrude the same way in every 3D view, not just the editor's
-  own; windows render as glazing, a raised floor as a slab (carved underneath any stairs that land
-  on it), and stairs rest on their platform when they have one, descending stairs carving a
-  stairwell opening into the floor slab above when going down. Every object type's array name,
-  geometry and editor tool is declared once in the **plan object registry**
+  authored, not assumed. A floor's authored **stairs**, **doors**, **windows**, **raised floors**,
+  **parking** and — outdoor areas only — **roads**, **trees**, **hedges** and **ground** (see
+  "Authoring a building or outdoor area" above) round-trip alongside the wall segments in
+  `FloorPlan.Grid` and extrude the same way in every 3D view, not just the editor's own; windows
+  render as glazing, a raised floor as a slab (carved underneath any stairs that land on it), and
+  stairs rest on their platform when they have one, descending stairs carving a stairwell opening
+  into the floor slab above when going down. The 3D scene renders the outdoor kit from three
+  primitives it already understands — a flat area, an extruded ribbon (never a wall), and a tree —
+  rather than four type-specific builders: a road is a low ribbon a few centimetres above the
+  slab, a hedge a taller solid one, and ground a flat painted shape. Every object type's array
+  name, geometry and editor tool is declared once in the **plan object registry**
   (`components/map/plan_objects.js`), read by the editor, the 3D scene and the read-only view
   alike, so the three cannot disagree about what a floor contains; the registry also round-trips
   any array a newer build wrote but this one does not recognise, so opening a plan with an older
-  editor can never silently delete geometry the operator can't yet see. The **editor's own 2D canvas**
+  editor can never silently delete geometry the operator can't yet see — the guarantee the outdoor
+  kit's four arrays were the first real beneficiary of. The **editor's own 2D canvas**
   (`floor_editor.js`) renders this same authored geometry as a vector overlay over the plan image,
   not just the 3D tab, while authoring — a floor with drawn walls no longer looks empty there. On
   the **map's monitor-mode stage**, though, clicking a building or outdoor marker (or an area in
@@ -830,7 +848,7 @@ New articles must land in **all four** language folders (`en`/`ms`/`zh`/`ar`) �
 A **Reports** page (its own nav item alongside **Notifications** under the **System** group) generates printable PDF reports of the fleet on demand, rendered entirely pure-Go on the control plane (`domain/report` over `github.com/go-pdf/fpdf`, see `domain/report/doc.go.md`) — no headless browser, so it keeps working on an air-gapped install. Four reports are available, each a `GET /api/reports/*.pdf` under `apis/reports.go`:
 
 - **Fleet Health** (`fleet-health.pdf?range=`) — opens with an AI **Executive Summary** (see "AI Agent" above) when a language model is enabled, then online/offline status of every node, a certificate expiry roster, and an alert summary (by category and noisiest source) over a selectable trailing window (7/30/90 days).
-- **Site & Asset Inventory** (`inventory.pdf?siteId=`) — an asset register per building (or one selected site): the rendered floor plan for each floor/area — including the authored walls/doors/windows/stairs/parking/raised floors from the floor editor's grid, not just the flat plan image — with camera coverage wedges and placement markers, plus a table of on-site appliances.
+- **Site & Asset Inventory** (`inventory.pdf?siteId=`) — an asset register per building (or one selected site): the rendered floor plan for each floor/area — including the authored walls/doors/windows/stairs/parking/raised floors, and — on an outdoor area — roads/trees/hedges/ground from the floor editor's grid, not just the flat plan image — with camera coverage wedges and placement markers, plus a table of on-site appliances. The outdoor kit's own sizes (road width, canopy radius) are real-world metres, so the report draws them at the floor's own scale (falling back to the editor's nominal 0.5 m/cell for a plan nobody has scaled yet, rather than omitting them).
 - **Incident Detail** (`incident.pdf?range=`) — recent alerts over the selected window with per-event detail, including a snapshot inline when the event carried one; the range-scoped report also opens with the same AI Executive Summary (a single-event report skips it — the event's own detail is the summary there).
 - **Security & Access** (`security.pdf?range=`) — users, roles, the endpoint permission matrix, the audit trail for the selected window, and a data-protection attestation paragraph. **Superadmin only**: the API 403s a non-superadmin caller, and the SPA hides the card entirely so it is never offered to a session that cannot use it.
 

@@ -35,9 +35,9 @@ func TestRenderFloorPlacements(t *testing.T) {
 	placements := []*entities.NodePlacement{
 		{X: 120, Y: 210, Heading: 45, Fov: 90, LastKnownName: "Lobby Cam"}, // wedge+label at y=300-210=90
 		{X: 300, Y: 100, LastKnownName: "Sensor"},                          // marker at y=200
-		nil,                                                                // must be skipped
+		nil, // must be skipped
 	}
-	out, err := renderFloorPlacements(buf.Bytes(), grid, placements)
+	out, err := renderFloorPlacements(buf.Bytes(), grid, 0, placements)
 	if err != nil {
 		t.Fatalf("renderFloorPlacements() error = %v", err)
 	}
@@ -59,7 +59,7 @@ func TestRenderFloorPlacements(t *testing.T) {
 		t.Fatalf("wall pixel (200,210) is white — grid walls were not rendered")
 	}
 	// The door gap at y≈150 must NOT be a solid wall (the wall is carved there).
-	if c := rgba.RGBAAt(200, 150); (c == gridWall) {
+	if c := rgba.RGBAAt(200, 150); c == gridWall {
 		t.Fatalf("door gap pixel (200,150) is solid wall — wall not carved by door")
 	}
 	// The door symbol (leaf + swing arc, amber #b45309) must be drawn near the opening.

@@ -3,7 +3,7 @@ import PropTypes from 'prop-types';
 import { useT, Ico } from '@shared';
 import { api, apiBase } from '../lib/helpers';
 import { NodeCameraTile } from './node_manager';
-import { readModel } from './map/plan_objects';
+import { PLAN_OBJECTS, readModel } from './map/plan_objects';
 import { PTZRing } from './nodecam/ptz';
 import { nodeTone, TONES } from '../lib/fleet_status';
 import { carveSeg, rectCenter, rectSize } from './plan_geometry';
@@ -33,6 +33,23 @@ function FloorPlanGrid({ floor, w, h }) {
     const c = rectCenter(r); const deg = ((r.a || 0) * 180) / Math.PI;
     return <g key={key} transform={`rotate(${deg} ${c.x} ${c.y})`}>{children}</g>;
   };
+  // Registry-drawn types, from their own `svg2d` declarations - this view gained roads, trees,
+  // hedges and ground surfaces without an edit of its own. `under` types paint first.
+  const mppView = 0.5 / unit; // nominal metres-per-pixel; this view has no scale of its own
+  const drawSpecs = (under) => {
+    Object.keys(PLAN_OBJECTS).forEach((name) => {
+      const spec = PLAN_OBJECTS[name];
+      if (spec.builtin || !spec.svg2d || !!spec.under !== under) return;
+      (g[spec.array] || []).forEach((o, i) => {
+        const out = spec.svg2d(o, { mpp: mppView }, `${spec.sel}${i}`);
+        if (!out) return;
+        const El = out.el;
+        els.push(<El key={out.key} {...out.props} />);
+      });
+    });
+  };
+  drawSpecs(true);
+
   // Raised floors (drawn first, so walls/stairs sit over them).
   (g.platforms || []).forEach((p, i) => {
     const s = rectSize(p); const x = Math.min(p.x1, p.x2); const y = Math.min(p.y1, p.y2);
@@ -83,6 +100,7 @@ function FloorPlanGrid({ floor, w, h }) {
   )));
   // Windows: a glazing line across the opening (doors are left as a plain gap).
   windows.forEach((d, i) => { const ux = Math.cos(d.a || 0); const uy = Math.sin(d.a || 0); const hw = d.w / 2; els.push(<line key={`win${i}`} x1={d.cx - ux * hw} y1={d.cy - uy * hw} x2={d.cx + ux * hw} y2={d.cy + uy * hw} stroke="#38bdf8" strokeWidth={Math.max(2, wallW * 0.5)} />); });
+  drawSpecs(false); // roads, hedges and trees sit over the structure
   return <svg className="floor-plan-grid" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden="true">{els}</svg>;
 }
 FloorPlanGrid.propTypes = { floor: PropTypes.object, w: PropTypes.number, h: PropTypes.number };

@@ -62,6 +62,12 @@ export const icoSvg = {
   'chev-down': '<polyline points="6 9 12 15 18 9"/>',
   'chev-right': '<polyline points="9 18 15 12 9 6"/>',
   'chev-left': '<polyline points="15 18 9 12 15 6"/>',
+  // The outdoor kit: a road (two kerbs and a centreline), a hedge (a run of foliage), a tree
+  // (canopy over a trunk) and a ground area (a hatched patch).
+  road: '<path d="M6 21 L9 3"/><path d="M18 21 L15 3"/><path d="M12 6 v3"/><path d="M12 13 v3"/>',
+  hedge: '<path d="M3 17 h18"/><path d="M5 17 a3 3 0 0 1 3-3 a3 3 0 0 1 3 3"/><path d="M13 17 a3 3 0 0 1 3-3 a3 3 0 0 1 3 3"/>',
+  tree: '<circle cx="12" cy="9" r="6"/><path d="M12 15 v6"/>',
+  ground: '<rect x="3" y="6" width="18" height="12" rx="1"/><path d="M6 18 L12 6"/><path d="M12 18 L18 6"/>',
   user:        '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
   'user-plus': '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/>',
   shield:      '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',

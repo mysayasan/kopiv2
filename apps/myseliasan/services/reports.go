@@ -597,7 +597,7 @@ func (r *reportService) renderFloorPlan(ctx context.Context, doc *report.Documen
 	if img == nil || len(img.Data) == 0 {
 		return errors.New("plan image is empty")
 	}
-	composed, err := renderFloorPlacements(img.Data, floor.Grid, placements)
+	composed, err := renderFloorPlacements(img.Data, floor.Grid, floor.Scale, placements)
 	if err != nil {
 		return fmt.Errorf("could not decode plan image: %w", err)
 	}
@@ -635,7 +635,9 @@ func (r *reportService) Security(ctx context.Context, now time.Time, rangeDays i
 	if len(users) == 0 {
 		doc.Empty("No users.")
 	} else {
-		sort.Slice(users, func(i, j int) bool { return strings.ToLower(userLabel(users[i])) < strings.ToLower(userLabel(users[j])) })
+		sort.Slice(users, func(i, j int) bool {
+			return strings.ToLower(userLabel(users[i])) < strings.ToLower(userLabel(users[j]))
+		})
 		rows := make([][]string, 0, len(users))
 		for _, u := range users {
 			state := "Active"
