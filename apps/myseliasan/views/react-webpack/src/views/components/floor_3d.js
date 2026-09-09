@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
 import * as THREE from 'three';
 import { sillOf, headOf, openingSpanOnSeg, remainingSpans, pointInRotatedRect, rectCorners } from './plan_geometry';
+import { readModel } from './map/plan_objects';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { useT } from '@shared';
 import { apiBase } from '../lib/helpers';
@@ -65,24 +66,14 @@ function parseGrid(floor) {
   } catch (_) { return null; }
 }
 
-// parseStairs reads the straight-flight stairs authored in the 2D editor. Independent of parseGrid
-// so a floor can carry stairs with no walls. Each entry is an image-space footprint + ascent dir.
-function parseStairs(floor) {
-  if (!floor || !floor.grid) return [];
-  try {
-    const g = typeof floor.grid === 'string' ? JSON.parse(floor.grid) : floor.grid;
-    return g && Array.isArray(g.stairs) ? g.stairs : [];
-  } catch (_) { return []; }
-}
-// parseList reads one of the additive model arrays (doors, windows, parking). A floor authored
-// before a given array existed simply has no such key, which reads as empty.
+// parseList reads one of the model's object arrays through the shared registry reader, so this
+// scene and the editor cannot disagree about what a floor contains. A floor authored before a
+// given array existed simply has no such key, which reads as empty.
 function parseList(floor, key) {
   if (!floor || !floor.grid) return [];
-  try {
-    const g = typeof floor.grid === 'string' ? JSON.parse(floor.grid) : floor.grid;
-    return g && Array.isArray(g[key]) ? g[key] : [];
-  } catch (_) { return []; }
+  return readModel(floor.grid).arrays[key] || [];
 }
+const parseStairs = (floor) => parseList(floor, 'stairs');
 const parseDoors = (floor) => parseList(floor, 'doors');
 const parseWindows = (floor) => parseList(floor, 'windows');
 const parseParking = (floor) => parseList(floor, 'parking');

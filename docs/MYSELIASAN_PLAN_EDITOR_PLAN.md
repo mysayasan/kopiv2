@@ -1,7 +1,7 @@
 # MySeliaSan — Plan Editor Overhaul
 
-Status: **P1 SHIPPED** (#250, 2026-09-09). **P2 BUILT, in review** — built and live-benched.
-Phases P3–P5 remain planned; **P6 (coverage occlusion) is
+Status: **P1 SHIPPED** (#250) and **P2 SHIPPED** (#251), 2026-09-09. **P3 BUILT, in review** —
+built and live-benched. Phases P4–P5 remain planned; **P6 (coverage occlusion) is
 planned but deliberately sequenced last** and is a separate decision to take when P1–P5 are in.
 
 The plan editor is `FloorEditor` — `apps/myseliasan/views/react-webpack/src/views/components/floor_editor.js`.
@@ -298,7 +298,7 @@ source order.
 *Touches:* `floor_editor.js`, `plan_workspace.js` (renders the status bar), `fleet-map.css`,
 i18n ×4.
 
-### P3 — The object registry
+### P3 — The object registry — **BUILT, in review**
 
 The enabler. No user-visible feature of its own, which is exactly why it is worth doing before P4
 and P5 rather than after.
@@ -350,8 +350,22 @@ Also in P3:
   is to make drift *loud*. The test reads the registry's array names and field keys and asserts the
   Go `floorGrid` struct covers them.
 
-*Touches:* new `plan_objects.js`; `floor_editor.js`, `node_floor_view.js`, `floor_3d.js` refactored
-onto it; new parity test; `report_floorgrid.go` unchanged this phase.
+**Scope taken, and what was deliberately left alone.** The registry owns each type's IDENTITY —
+array, geometry, site kinds, tool, fields, how to measure it — and the three JS consumers now read
+the model through one shared reader. It does **not** take over the existing hand-written drawing.
+Walls, doors and windows are woven through `plan_geometry.js` (an opening *carves* the wall it sits
+on, in 2D and 3D alike), and rewriting that to route through a hook would be a large change to
+proven code for no gain this phase; those types are marked `builtin: true`. New types added from
+here declare `draw2d`/`svg2d`/`build3d` and need no edit in any renderer, which is the promise this
+phase existed to make good on — the outdoor kit is four declarations, not sixteen drawing routines.
+
+Both guards were verified by breaking them on purpose: injecting a `roads` type made the Go parity
+test fail with the array name, and disabling the extras passthrough made four bench checks fail. A
+guard that has never failed is not a guard.
+
+*Touches:* new `map/plan_objects.js`; `floor_editor.js` (model I/O, history, commit),
+`node_floor_view.js` and `floor_3d.js` (shared reader); new
+`services/report_floorgrid_parity_test.go`; `report_floorgrid.go` unchanged this phase.
 
 ### P4 — Outliner and numeric inspector
 
@@ -489,8 +503,8 @@ without it. **Decide at the end of P5, not now.**
 | Phase | Depends on | Status |
 |---|---|---|
 | P1 Editor becomes a workspace (own tab) | — | **Shipped (#250)** |
-| P2 Viewport and navigation | P1 (styles the shell P1 creates) | **Built, in review** |
-| P3 Object registry | — (independent; land after P2) | **Planned** |
+| P2 Viewport and navigation | P1 (styles the shell P1 creates) | **Shipped (#251)** |
+| P3 Object registry | — (independent; land after P2) | **Built, in review** |
 | P4 Outliner and numeric inspector | P3 | **Planned** |
 | P5 Outdoor kit | P3 | **Planned** |
 | P6 Coverage occlusion | P5 | **Planned — separate go/no-go after P5** |

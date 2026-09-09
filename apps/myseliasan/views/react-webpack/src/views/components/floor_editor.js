@@ -4,6 +4,7 @@ import { useT, Ico, icoSvg } from '@shared';
 import { apiBase } from '../lib/helpers';
 import { nodeTone, TONES } from '../lib/fleet_status';
 import { KIND_BUILDING, KIND_OUTDOOR, normKind } from './site_kinds';
+import { PLAN_OBJECTS, readModel, writeModel } from './map/plan_objects';
 import {
   DEF_SILL, DEF_HEAD, sillOf, headOf, carveSeg,
   IDENTITY_XF, xfPoint, xfLengthAlong, rectCenter, rectSize, rectFrom, rectCorners, pointInRotatedRect, boundsOfPoints,
@@ -296,7 +297,17 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
 
   const w = (floor && floor.width) || 1024;
   const h = (floor && floor.height) || 768;
-  const existing = (() => { try { return floor && floor.grid ? JSON.parse(floor.grid) : null; } catch (_) { return null; } })();
+  // The stored model, read through the registry so unrecognised keys are CAPTURED rather than
+  // silently dropped on the next autosave (see readModel/writeModel).
+  const parsed = readModel(floor && floor.grid);
+  // meta AND arrays together, because the seeding below reads `existing.segments`, `existing.walls`
+  // and friends. Only `extras` is held apart - it is the one thing nothing here should look at.
+  const existing = Object.keys(parsed.meta).length || Object.keys(parsed.extras).length
+    || Object.values(parsed.arrays).some((a) => a.length) ? { ...parsed.meta, ...parsed.arrays } : null;
+  // Every top-level key this build does not know about, round-tripped verbatim on save. This is
+  // what makes a future model version safe: an older editor opening a newer plan preserves the
+  // arrays it has never heard of instead of deleting them.
+  const extrasRef = useRef(parsed.extras);
   const unit = (existing && existing.unit) || (existing && existing.cellPx) || Math.max(8, Math.round(Math.max(w, h) / COLS_TARGET));
   // Fit the plan to the space the host actually has (minus the wrapper's padding), so the same
   // editor works full-screen and in a dialog on a small laptop.
@@ -482,10 +493,18 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
 
   // The floor's model as stored in floor.grid. windows/parking are additive: a floor authored
   // before they existed simply has neither key, and every reader defaults them to empty.
-  const modelJSON = () => ({
-    version: 2, unit, segments: segsRef.current, stairs: stairsRef.current,
-    doors: doorsRef.current, windows: windowsRef.current, parking: parkingRef.current, platforms: platsRef.current,
+  // The model is assembled FROM THE REGISTRY, so a type added there is saved without an edit here -
+  // and every unrecognised key read at load is written back untouched.
+  const listByRef = () => ({
+    segs: segsRef.current, stairs: stairsRef.current, doors: doorsRef.current,
+    windows: windowsRef.current, parking: parkingRef.current, platforms: platsRef.current,
   });
+  const modelJSON = () => {
+    const lists = listByRef();
+    const arrays = {};
+    Object.values(PLAN_OBJECTS).forEach((t) => { arrays[t.array] = lists[t.ref] || []; });
+    return writeModel({ version: 2, unit, arrays, extras: extrasRef.current });
+  };
 
   // Debounced autosave of the wall model + scale + height.
   //
@@ -536,19 +555,33 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
   // History snapshots the WHOLE model, so undo/redo restores it in one step however many lists a
   // single edit touched. Taking a snapshot (rather than a per-list diff) is also why adding a new
   // kind of thing to the plan needs nothing here beyond listing it.
-  const snapshot = () => ({ segs: segsRef.current, stairs: stairsRef.current, doors: doorsRef.current, windows: windowsRef.current, parking: parkingRef.current, plats: platsRef.current });
-  const restore = (m) => { segsRef.current = m.segs || []; stairsRef.current = m.stairs || []; doorsRef.current = m.doors || []; windowsRef.current = m.windows || []; parkingRef.current = m.parking || []; platsRef.current = m.plats || []; };
+  // History and commit are driven by the registry's `ref` names, so a type added there is undoable
+  // and committable without an edit here. The ref names are historic and not derivable, which is
+  // exactly why the registry records them.
+  const REF_SETTERS = {
+    segs: (v) => { segsRef.current = v; },
+    stairs: (v) => { stairsRef.current = v; },
+    doors: (v) => { doorsRef.current = v; },
+    windows: (v) => { windowsRef.current = v; },
+    parking: (v) => { parkingRef.current = v; },
+    platforms: (v) => { platsRef.current = v; },
+  };
+  const snapshot = () => {
+    const lists = listByRef(); const out = {};
+    Object.values(PLAN_OBJECTS).forEach((t) => { out[t.ref] = lists[t.ref] || []; });
+    return out;
+  };
+  const restore = (m) => {
+    Object.values(PLAN_OBJECTS).forEach((t) => { const set = REF_SETTERS[t.ref]; if (set) set(m[t.ref] || []); });
+  };
   const pushHistory = useCallback(() => { histRef.current.push(snapshot()); if (histRef.current.length > 100) histRef.current.shift(); futRef.current = []; }, []);
   // commit takes a PATCH: name only the lists the edit changes, e.g. commit({ doors: next }).
   const commit = useCallback((patch) => {
     pushHistory();
     const p = patch || {};
-    if (p.segs !== undefined) segsRef.current = p.segs;
-    if (p.stairs !== undefined) stairsRef.current = p.stairs;
-    if (p.doors !== undefined) doorsRef.current = p.doors;
-    if (p.windows !== undefined) windowsRef.current = p.windows;
-    if (p.parking !== undefined) parkingRef.current = p.parking;
-    if (p.platforms !== undefined) platsRef.current = p.platforms;
+    Object.values(PLAN_OBJECTS).forEach((t) => {
+      if (p[t.ref] !== undefined) { const set = REF_SETTERS[t.ref]; if (set) set(p[t.ref]); }
+    });
     redraw(); scheduleSave();
   }, [pushHistory, redraw, scheduleSave]);
   const undo = useCallback(() => { if (!histRef.current.length) return; futRef.current.push(snapshot()); restore(histRef.current.pop()); draftRef.current = null; redraw(); scheduleSave(); }, [redraw, scheduleSave]);

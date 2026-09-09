@@ -74,3 +74,11 @@ matches the frontend overlay — platforms, parking, and stairs are filled UNDER
 - Every numeric shape parameter (`Steps`, `Bays`, `Height`/`Rise`) is defaulted and clamped
   defensively (e.g. `Bays` 1–60, `Steps` 2–40) so a malformed or hand-edited `Grid` JSON
   cannot make the renderer allocate an unbounded number of divider/tread lines.
+- `report_floorgrid_parity_test.go` is a parity gate against the frontend's plan object
+  registry (`views/react-webpack/src/views/components/map/plan_objects.js`): it reads the
+  registry's `array:` declarations as data (a regex, not a JS parser) and asserts every one of
+  them has a matching `floorGrid` json tag, so a new object type added to the editor either
+  reaches this file too or fails the build with the array name that was missed, instead of the
+  PDF silently omitting geometry the operator drew. It also asserts `renderFloorGrid` survives
+  a `gridJSON` carrying arrays this build has never heard of (the same forward-compatible
+  round-trip `readModel`/`writeModel` give the JS side) rather than panicking on it.
