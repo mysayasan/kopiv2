@@ -3,6 +3,7 @@ import PropTypes from 'prop-types';
 import { useT, Ico } from '@shared';
 import { api, apiBase } from '../lib/helpers';
 import { NodeCameraTile } from './node_manager';
+import { readModel } from './map/plan_objects';
 import { PTZRing } from './nodecam/ptz';
 import { nodeTone, TONES } from '../lib/fleet_status';
 import { carveSeg, rectCenter, rectSize } from './plan_geometry';
@@ -15,12 +16,16 @@ import { showsAreaBar, siteGlyph } from './site_kinds';
 // as the FOV layer, so it lines up with the markers.
 function FloorPlanGrid({ floor, w, h }) {
   const t = useT();
-  const g = (() => { try { return floor && floor.grid ? (typeof floor.grid === 'string' ? JSON.parse(floor.grid) : floor.grid) : null; } catch (_) { return null; } })();
+  // Read through the shared registry reader, so this view and the editor cannot disagree about
+  // what a floor contains. `meta` keeps the legacy painted-cell fields (walls/cellPx) the fallback
+  // below still needs.
+  const parsed = floor && floor.grid ? readModel(floor.grid) : null;
+  const g = parsed ? { ...parsed.meta, ...parsed.arrays } : null;
   if (!g) return null;
   const unit = g.unit || g.cellPx || 20;
   const wallW = Math.max(3, unit * 0.22);
-  const doors = Array.isArray(g.doors) ? g.doors : [];
-  const windows = Array.isArray(g.windows) ? g.windows : [];
+  const doors = g.doors;
+  const windows = g.windows;
   const openings = doors.concat(windows);
   const els = [];
   // Rotated footprint wrapper — the group carries the rotation so the shapes stay axis-aligned.

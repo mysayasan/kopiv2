@@ -264,7 +264,12 @@ created, positioned and authored entirely from it:
   segments in `FloorPlan.Grid` and extrude the same way in every 3D view, not just the editor's
   own; windows render as glazing, a raised floor as a slab (carved underneath any stairs that land
   on it), and stairs rest on their platform when they have one, descending stairs carving a
-  stairwell opening into the floor slab above when going down. The **editor's own 2D canvas**
+  stairwell opening into the floor slab above when going down. Every object type's array name,
+  geometry and editor tool is declared once in the **plan object registry**
+  (`components/map/plan_objects.js`), read by the editor, the 3D scene and the read-only view
+  alike, so the three cannot disagree about what a floor contains; the registry also round-trips
+  any array a newer build wrote but this one does not recognise, so opening a plan with an older
+  editor can never silently delete geometry the operator can't yet see. The **editor's own 2D canvas**
   (`floor_editor.js`) renders this same authored geometry as a vector overlay over the plan image,
   not just the 3D tab, while authoring — a floor with drawn walls no longer looks empty there. On
   the **map's monitor-mode stage**, though, clicking a building or outdoor marker (or an area in
