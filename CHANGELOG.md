@@ -134,6 +134,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-09-09 — myseliasan 1.92.0 (d41d967)
+
+### Changed
+
+- **myseliasan**: The plan editor gets two new dockable panels, both driven entirely by the P3 object registry so a future type needs no edit to appear in either. The new **outliner** (`components/map/plan_outliner.js`) lists every wall, door, window, stair, platform, parking bay and camera/appliance on the plan, grouped by the registry's collection, with a per-row and per-collection show/hide and lock toggle; it replaces the properties panel's old resting state, a bare tally ("Walls 42, Doors 3") that let you count objects but never find, hide or lock one. Hide/lock are the operator's own working view rather than plan data - kept in `localStorage` keyed to the area, never written into the saved model, so a browser blocking site data just shows everything visible and unlocked - and every hit test, the draw loop, and band-select on the canvas now honour them. The new numeric inspector (`components/map/plan_inspector.js`, the "N-panel") replaces five hand-written per-type slider blocks (door/window width, sill, head, stair height/steps, platform rise, parking bay count) with one panel: every property is a typed number field you can click into and type an exact value for, with a slider alongside only where dragging is genuinely the nicer gesture - there was previously no way to type a number anywhere in the editor. It also renders a transform block (X, Y, rotation, width, height) that routes through the same affine step a drag or a G/R/S accelerator uses, so a typed move and a dragged move can never disagree. `floor_editor.js` was refactored to generic `patchObject`/`patchObjectLive`/`transformObject` helpers driving both panels, in place of the five type-specific setters they replace. Building both surfaced a real defect: `FloorPlan.Scale` defaults to 0 (unset), but the editor's `cellMeters` was silently falling back to a nominal 0.5 m regardless, so `scale` was never actually zero and every metre readout on a plan nobody had scaled was a guess presented as a measured fact. A new `scaleKnown` flag now tracks whether a real scale has been established (by the Set scale tool or the cell-size box); until then the status bar, both new panels, and every on-canvas measurement label show pixels instead of a fabricated metre value. This is phase P4 ("outliner and numeric inspector") of docs/MYSELIASAN_PLAN_EDITOR_PLAN.md.
 ## 2026-09-09 — myseliasan 1.91.1 (e707bfd)
 
 ### Fixed
