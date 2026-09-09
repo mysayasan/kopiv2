@@ -1,7 +1,7 @@
 # MySeliaSan — Plan Editor Overhaul
 
-Status: **P1 SHIPPED** (#250) and **P2 SHIPPED** (#251), 2026-09-09. **P3 BUILT, in review** —
-built and live-benched. Phases P4–P5 remain planned; **P6 (coverage occlusion) is
+Status: **P1–P3 SHIPPED** (#250, #251, #252), 2026-09-09. **P4 BUILT, in review** — built and
+live-benched. Phase P5 remains planned; **P6 (coverage occlusion) is
 planned but deliberately sequenced last** and is a separate decision to take when P1–P5 are in.
 
 The plan editor is `FloorEditor` — `apps/myseliasan/views/react-webpack/src/views/components/floor_editor.js`.
@@ -367,7 +367,7 @@ guard that has never failed is not a guard.
 `node_floor_view.js` and `floor_3d.js` (shared reader); new
 `services/report_floorgrid_parity_test.go`; `report_floorgrid.go` unchanged this phase.
 
-### P4 — Outliner and numeric inspector
+### P4 — Outliner and numeric inspector — **BUILT, in review**
 
 The "is precise" pass. Depends on P3, because the outliner has to enumerate types generically.
 
@@ -389,8 +389,20 @@ everything visible and unlocked.)
 typed, all in metres where scale allows (§4). Plus the type's own `fields` from the registry. For a
 multi-selection: the fields common to every member, editable together.
 
-*Touches:* new outliner component + CSS; `floor_editor.js` inspector replaced by a
-registry-driven renderer; i18n ×4.
+**A real defect this phase surfaced: the editor was fabricating a scale.** `FloorPlan.Scale`
+defaults to `0 = unset`, but `cellMeters` fell back to 0.5 m regardless — so `scale` was never zero
+and every metre readout on an unscaled plan was a guess printed as a fact. A survey drawing that
+says "1.50 m" when nobody ever told it how big the plan is, is worse than one that says "129 px",
+because it looks like an answer. The nominal stays (the grid and the 3D view need one), but
+everything shown to an operator now asks `scaleKnown` first and shows pixels until the Set scale
+tool or the cell-size box establishes a real one.
+
+**The old tally is gone.** "Walls 42, Doors 3" was a count where a list was wanted; the outliner is
+that list, with the same numbers plus the ability to find, hide or lock any one of them.
+
+*Touches:* new `map/plan_inspector.js` and `map/plan_outliner.js` + CSS; `floor_editor.js` (five
+hand-written property blocks replaced by one registry-driven panel; hit tests, draw and band-select
+all respect hidden/locked); i18n ×4.
 
 ### P5 — The outdoor kit
 
@@ -504,8 +516,8 @@ without it. **Decide at the end of P5, not now.**
 |---|---|---|
 | P1 Editor becomes a workspace (own tab) | — | **Shipped (#250)** |
 | P2 Viewport and navigation | P1 (styles the shell P1 creates) | **Shipped (#251)** |
-| P3 Object registry | — (independent; land after P2) | **Built, in review** |
-| P4 Outliner and numeric inspector | P3 | **Planned** |
+| P3 Object registry | — (independent; land after P2) | **Shipped (#252)** |
+| P4 Outliner and numeric inspector | P3 | **Built, in review** |
 | P5 Outdoor kit | P3 | **Planned** |
 | P6 Coverage occlusion | P5 | **Planned — separate go/no-go after P5** |
 

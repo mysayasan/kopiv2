@@ -199,9 +199,27 @@ created, positioned and authored entirely from it:
   coverage wedge directly on the plan instead of only through the inspector. Undo/redo snapshots
   every authored layer together (walls/stairs/doors/windows/platforms/parking) as one history. A
   wall run in progress can be cancelled with **Esc** (Enter or double-click still finishes it)
-  without exiting the whole editor. The tool palette and the properties inspector are both
-  **dockable panels** — drag either by its grip to float it, or drop it near the left/right edge to
-  dock there (dropping both on one side stacks them). The canvas is a real **viewport**, not a
+  without exiting the whole editor. The tool palette, the **outliner** and the properties
+  **inspector** are all **dockable panels** — drag any by its grip to float it, or drop it near the
+  left/right edge to dock there (dropping several on one side stacks them). The outliner
+  (`components/map/plan_outliner.js`) lists everything on the plan grouped by type — Walls, Doors,
+  Windows, Stairs, Platforms, Parking, Cameras/Appliances — with a per-row and per-group **eye**
+  (hide) and **lock** toggle; clicking a row selects it, same as clicking it on the canvas. It
+  replaces the inspector's old resting state, a plain tally ("Walls 42, Doors 3") that let you count
+  objects but never find, hide or lock one. Hide and lock are the operator's own working view, not
+  part of the plan: they live in the browser's `localStorage`, keyed to the area, and are never
+  saved into the model — a hidden wall is skipped by the canvas draw, hit-testing and band-select
+  alike, and a locked one cannot be picked, but neither fact ever reaches another operator's screen
+  or the PDF report; a browser that blocks site data just shows everything visible and unlocked. The
+  properties inspector renders one panel for whichever single object is selected, built from the
+  object registry's declared fields (see the plan object registry, below) rather than a
+  hand-written block per type: every numeric property — door/window width, sill, head, stair height
+  and step count, platform rise, parking bay count, plus the selection's own X/Y/rotation/width/
+  height — is a **typed number field** you can click into and type an exact value for, with a
+  slider alongside where dragging is genuinely the nicer gesture (never a slider on its own, which
+  is what every one of these fields used to be). The X/Y/rotation/width/height block routes through
+  the same affine transform a drag or a **G**/**R**/**S** accelerator uses, so a typed move and a
+  dragged move can never disagree. The canvas is a real **viewport**, not a
   scrollable image: it fills the stage and the plan is drawn through a pan/zoom transform instead of
   being sized to the whole plan — **middle-mouse drag or Space+drag pans** (a trackpad with no
   middle button still gets one), the **wheel zooms to the cursor** (Ctrl/⌘+wheel is kept as the same
@@ -214,7 +232,11 @@ created, positioned and authored entirely from it:
   toolbar button, every kind) turns a drag along a run of known length plus a typed length in metres
   into the plan's metres-per-pixel — `FloorPlan.Scale` defaults to **unset** (`0`), and every
   metre-valued field the editor and its reports produce (sills, stair/wall heights, coverage) is dead
-  until a plan has one; this replaces reasoning about "metres per grid cell" from a spinner. A
+  until a plan has one; this replaces reasoning about "metres per grid cell" from a spinner. Whether
+  that scale is actually known is tracked separately from the nominal 0.5 m/cell the editor assumes
+  for its own grid: until the Set scale tool or the cell-size box establishes a real one, the status
+  bar, the inspector and every on-canvas measurement show **pixels**, not a metre number extrapolated
+  from an assumption nobody confirmed. A
   **status bar** along the bottom of the workspace, fed live by the editor, reports the active tool,
   how many objects are selected, the cursor position (metres once a plan has a scale, pixels until
   then), the active snap mode, the current zoom, and a live hint for what the mouse/keyboard do right
