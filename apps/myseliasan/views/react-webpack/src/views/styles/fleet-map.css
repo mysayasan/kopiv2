@@ -384,7 +384,25 @@ button.mp-event-main:hover .mp-event-title { text-decoration: underline; }
 /* Embedded single floor editor: one surface, 2D draw + camera placement ⇄ 3D preview. */
 /* The editor surface: the canvas fills the stage, the properties inspector docks on the right, and
    the tool palette floats on top (MS-Paint style) and can be dragged around. */
-.floor-editor { position: relative; flex: 1 1 auto; min-height: 0; min-width: 0; border: 1px solid var(--border-panel); border-radius: 10px; overflow: hidden; background: #e9edf2; }
+/* The viewport.
+ *
+ * Dark, flat, square, and scoped to .floor-editor so none of it leaks into the rest of the app —
+ * which stays theme-aware. A drawing viewport is dark in both themes, the way every DCC and design
+ * tool settles on; the plan SHEET inside it stays light, because a floor plan is ink on paper and
+ * every stroke colour in floor_editor.js was picked against a light ground.
+ *
+ * These are deliberately literal colours rather than app tokens: the surround has to agree with the
+ * canvas pixels painted in floor_editor.js (VIEW_SURROUND), and a token that changes with the theme
+ * would put a light panel edge against a dark canvas. */
+.floor-editor {
+  --fe-panel: #262c35;
+  --fe-panel-edge: #39414d;
+  --fe-ink: #cbd5e1;
+  --fe-ink-dim: #8b97a8;
+  --fe-accent: #4d8bf0;
+  position: relative; flex: 1 1 auto; min-height: 0; min-width: 0;
+  border: 1px solid #12161c; border-radius: 8px; overflow: hidden; background: #1b2027;
+}
 .floor-editor-main { position: absolute; inset: 0; display: flex; }
 .floor-editor-stage { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; }
 .floor-editor-modes { display: inline-flex; border: 1px solid var(--border-panel); border-radius: 7px; overflow: hidden; }
@@ -394,36 +412,56 @@ button.mp-event-main:hover .mp-event-title { text-decoration: underline; }
 .floor-editor-modes button.active { background: var(--accent); color: #fff; }
 /* Block + text-align:center (not flex centering) so a zoomed-in canvas that overflows can still be
    scrolled all the way to its top/left edge — centered flex items clip their overflowing start. */
-.floor-editor-canvas-wrap { position: absolute; inset: 0; overflow: auto; background: #e9edf2; padding: 12px; text-align: center; }
-.floor-editor-canvas-wrap .grid-canvas { display: inline-block; vertical-align: top; }
+/* No padding, no scrollbars, no centring: the canvas IS the viewport and fills the stage. Panning
+ * is the middle button (or space-drag) and the plan moves inside it. */
+.floor-editor-canvas-wrap { position: absolute; inset: 0; overflow: hidden; background: #1b2027; }
+.floor-editor-canvas-wrap .grid-canvas { display: block; }
 .floor-editor-stage .grid-3d-wrap { position: absolute; inset: 0; min-height: 0; border-radius: 0; }
 
 /* Dock zones flanking the stage; panels stack vertically inside. */
-.fe-dock { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 8px; overflow: auto; background: var(--bg-subtle); }
-.fe-dock-left { border-right: 1px solid var(--border-subtle); }
-.fe-dock-right { border-left: 1px solid var(--border-subtle); }
+.fe-dock { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 6px; overflow: auto; background: #20262e; }
+/* A hairline, not a border: the dock and the viewport are one surface with a seam. */
+.fe-dock-left { border-inline-end: 1px solid #12161c; }
+.fe-dock-right { border-inline-start: 1px solid #12161c; }
 
 /* A dockable panel is a bordered card; floating adds absolute position + shadow. */
-.fe-panel { background: var(--bg-surface); border: 1px solid var(--border-panel); border-radius: 10px; }
+/* Flat, square-ish, compact — a tool panel, not a card. */
+.fe-panel { background: var(--fe-panel); border: 1px solid var(--fe-panel-edge); border-radius: 5px; color: var(--fe-ink); }
+.fe-panel .grid-hint, .fe-panel .fe-float-hint { color: var(--fe-ink-dim); }
+.fe-panel .fed-inspector-title, .fe-panel .grid-readout strong, .fe-panel .grid-field em { color: #e8edf4; }
+.fe-panel .grid-field > span, .fe-panel .grid-readout span { color: var(--fe-ink-dim); }
+.fe-panel input[type="number"] { background: #1b2027; border: 1px solid var(--fe-panel-edge); color: #e8edf4; }
+.fe-panel .grid-readout { border-color: var(--fe-panel-edge); }
+/* Every control in the dock has to state its own colours: the app's broad button rules assume a
+ * light surface, and a panel that only sets a dark background gets dark-on-dark text. */
+.fe-panel .fd-tool, .fe-panel .grid-tool-group button, .fe-panel .floor-editor-modes button {
+  background: #2f3742; border-color: var(--fe-panel-edge); color: var(--fe-ink);
+}
+.fe-panel .fd-tool:hover:not(:disabled), .fe-panel .grid-tool-group button:hover:not(:disabled) { background: #3a444f; color: #fff; border-color: #4b5765; }
+.fe-panel .fd-tool.active, .fe-panel .grid-tool-group button.active, .fe-panel .floor-editor-modes button.active { background: var(--fe-accent); border-color: var(--fe-accent); color: #fff; }
+.fe-panel .quiet { background: #2f3742; border-color: var(--fe-panel-edge); color: var(--fe-ink); }
+.fe-panel .quiet:hover { background: #3a444f; color: #fff; }
+.fe-panel .fe-grip { background: #1b2027; color: var(--fe-ink-dim); }
+.fe-panel .fd-toolbar-sep { background: var(--fe-panel-edge); }
 .fe-panel.fe-float { position: absolute; z-index: 6; box-shadow: 0 10px 30px rgba(15, 23, 33, 0.22); }
 .fe-panel.fe-float.fe-toolbar { max-height: calc(100% - 24px); overflow-y: auto; }
 .fe-panel.fe-float.fe-inspector { max-height: calc(100% - 24px); overflow: auto; }
 /* Vertical tool palette laid out as a 2-column grid, so every button is the same square and the
    undo/redo and zoom-out/in pairs each sit as a symmetrical row of two. */
-.fe-toolbar { display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 6px; width: 80px; }
+.fe-toolbar { display: flex; flex-direction: column; align-items: stretch; gap: 3px; padding: 5px; width: 72px; }
 .fe-toolbar .fe-grip { width: auto; height: 16px; cursor: move; }
 .fe-toolbar .floor-editor-modes { flex-direction: row; }
 .fe-toolbar .floor-editor-modes button { padding: 6px 0; }
 .fe-toolbar .floor-editor-modes button + button { border-left: 1px solid var(--border-panel); border-top: 0; }
 .fe-toolbar .grid-tool-group { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; border: 0; border-radius: 0; padding: 0; overflow: visible; }
-.fe-toolbar .grid-tool-group button { width: auto; height: 34px; padding: 0; justify-content: center; border: 1px solid var(--border-soft); border-radius: 7px; }
+.fe-toolbar .grid-tool-group button { width: auto; height: 28px; padding: 0; justify-content: center; border: 1px solid var(--border-soft); border-radius: 4px; }
 .fe-toolbar .grid-tool-group button + button { border-left: 1px solid var(--border-soft); }
 .fe-toolbar .grid-tool-group button.active { border-color: var(--accent); }
-.fe-toolbar > .fd-tool { width: 100%; height: 34px; padding: 0; justify-content: center; }
+.fe-toolbar > .fd-tool { width: 100%; height: 28px; padding: 0; justify-content: center; border-radius: 4px; }
 .fe-toolbar-row { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
-.fe-toolbar-row .fd-tool { width: auto; height: 34px; padding: 0; justify-content: center; }
+.fe-toolbar-row .fd-tool { width: auto; height: 28px; padding: 0; justify-content: center; border-radius: 4px; }
 .fe-toolbar .fd-toolbar-sep { width: auto; height: 1px; margin: 3px 2px; align-self: stretch; }
-.fe-inspector { width: 246px; max-width: calc(100% - 24px); padding: 8px 10px 10px; }
+.fe-inspector { width: 240px; max-width: calc(100% - 24px); padding: 7px 9px 9px; }
 .fe-grip { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 26px; border: 0; border-radius: 6px; background: var(--bg-subtle); color: var(--text-faint); cursor: move; touch-action: none; flex: 0 0 auto; }
 .fe-grip:hover { color: var(--accent); }
 .fe-float-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
@@ -743,7 +781,55 @@ button.mp-event-main:hover .mp-event-title { text-decoration: underline; }
   width: 26px; height: 26px; flex: 0 0 auto;
   border-radius: 6px; color: var(--text-secondary); text-decoration: none;
 }
-.pw-back:hover { background: var(--bg-subtle); color: var(--accent); }
+.pw-back:hover { background: #2f3742; color: #fff; }
+
+/* The workspace window is dark THROUGHOUT, not just its canvas.
+ *
+ * The first cut scoped the dark to .floor-editor, and the result was a half-lit window: a light
+ * header, a light node palette, then a dark dock and a dark viewport butted against them. It read
+ * as an unfinished screen rather than an application. The palette and the header sit in the same
+ * body row as the viewport and are part of the same tool.
+ *
+ * This still does not leak: every selector below is under .pw-shell, and the rest of myseliasan -
+ * which is theme-aware - never sees it. */
+.pw-shell { background: #12161c; }
+.pw-frame { background: #1b2027; color: #cbd5e1; }
+/* .pw-status shares its element with .bld-foot, which sets a LIGHT background at the SAME
+ * specificity and appears later in this file - so it won, and the status bar sat light-grey on
+ * near-white until a contrast probe caught it. Scoping under .pw-frame settles the cascade
+ * rather than relying on which rule happens to come last. */
+.pw-frame .pw-head, .pw-frame .bld-areabar, .pw-frame .bld-foot.pw-status { background: #20262e; border-color: #12161c; }
+.pw-head .bld-head-name { color: #e8edf4; }
+/* EVERY rule in this dark block is scoped under .pw-frame, and that is load-bearing rather than
+ * tidiness: these overrides sit ABOVE the base .pw-status-cell / .bld-foot rules in this file, so
+ * at equal specificity the base rules win on source order. Twice that produced the same defect -
+ * a light background under the dark chrome, then dark text on the dark bar - and both times only
+ * a contrast probe caught it, because 'dark on dark' looks like an empty strip, not a bug.
+ *
+ * Small text read at a glance is where contrast matters most, so these sit well clear of 3:1. */
+.pw-frame .pw-status-cell { color: #b8c4d4; border-color: #333c47; }
+.pw-frame .pw-status-tool { color: #e8edf4; }
+.pw-frame .pw-status .bld-foot-hint { color: #97a4b6; }
+/* Every control in the dark chrome states its own colours: the app's broad button rules assume a
+ * light surface, so a panel that only sets a dark background gets dark-on-dark text. */
+.pw-frame .quiet, .pw-frame .bld-areaadd, .pw-frame .bld-areaact, .pw-frame .bld-areatab-nm {
+  background: #2f3742; border-color: #39414d; color: #cbd5e1;
+}
+.pw-frame .quiet:hover, .pw-frame .bld-areaadd:hover, .pw-frame .bld-areaact:hover, .pw-frame .bld-areatab-nm:hover { background: #3a444f; color: #fff; }
+.pw-frame .bld-areatab.active .bld-areatab-nm { background: #4d8bf0; border-color: #4d8bf0; color: #fff; }
+.pw-frame .danger-text, .pw-frame .quiet.danger-text { color: #f87171; }
+/* The node/camera palette. */
+.pw-frame .bld-palette { background: #20262e; border-color: #39414d; }
+.pw-frame .palette-head { color: #e8edf4; }
+.pw-frame .palette-hint, .pw-frame .palette-cam.muted { color: #7d8a9c; }
+.pw-frame .palette-item, .pw-frame .palette-cam { color: #cbd5e1; }
+.pw-frame .palette-item:hover, .pw-frame .palette-cam:hover { background: #2f3742; color: #fff; }
+.pw-frame .palette-item.active, .pw-frame .palette-cam.active { background: #4d8bf0; color: #fff; }
+.pw-frame .palette-expand { color: #9aa7b8; }
+.pw-frame .bld-empty, .pw-frame .bld-empty-t { color: #cbd5e1; }
+.pw-frame .bld-empty-s { color: #7d8a9c; }
+/* The placing banner floats over the viewport, so it has to read against it. */
+.pw-frame .fleet-map-placing { background: #262c35; border-color: #39414d; color: #e8edf4; }
 /* "Back" is a direction, not a glyph: under Arabic the page mirrors and a left chevron then
  * points the way you came FROM. Mirror the icon with the layout. */
 [dir="rtl"] .pw-back svg { transform: scaleX(-1); }
@@ -754,6 +840,11 @@ button.mp-event-main:hover .mp-event-title { text-decoration: underline; }
 .pw-status { border-top: 1px solid var(--border-subtle); }
 /* Logical properties, not physical: a padding-right/border-right here puts the divider on the
  * wrong edge of every cell under Arabic. This exact mistake has been made in this file before. */
+/* The status bar's live cells, fed by the editor. */
+.pw-status-tool { font-weight: 650; color: var(--text-primary); display: inline-flex; align-items: center; gap: 5px; }
+.pw-status-num { font-variant-numeric: tabular-nums; }
+.pw-status-snap { display: inline-flex; align-items: center; gap: 5px; opacity: 0.6; }
+.pw-status-snap.on { opacity: 1; color: #16a34a; }
 .pw-status-cell {
   font-size: 0.74rem; color: var(--text-secondary);
   padding-inline-end: 12px; border-inline-end: 1px solid var(--border-subtle);

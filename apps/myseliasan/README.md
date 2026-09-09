@@ -201,10 +201,28 @@ created, positioned and authored entirely from it:
   wall run in progress can be cancelled with **Esc** (Enter or double-click still finishes it)
   without exiting the whole editor. The tool palette and the properties inspector are both
   **dockable panels** — drag either by its grip to float it, or drop it near the left/right edge to
-  dock there (dropping both on one side stacks them). **Zoom** — toolbar zoom in/out/fit-to-100%, or
-  Ctrl/⌘+wheel — lets the canvas grow past the viewport (scrollbars appear only once zoomed past
-  fit). A **2D ⇄ 3D** toggle sits in its own header (a Select-mode marker inspector also sets a
-  camera's `mountHeight`/`pitch` for the 3D coverage cone). Walls/scale/wall-height autosave
+  dock there (dropping both on one side stacks them). The canvas is a real **viewport**, not a
+  scrollable image: it fills the stage and the plan is drawn through a pan/zoom transform instead of
+  being sized to the whole plan — **middle-mouse drag or Space+drag pans** (a trackpad with no
+  middle button still gets one), the **wheel zooms to the cursor** (Ctrl/⌘+wheel is kept as the same
+  action, for the muscle memory), **Home** frames the whole plan, **`.`** frames the current
+  selection, and the zoom readout (click it to frame all) is the true view scale rather than a
+  percentage of "fit". A **snap magnet** — grid / vertex / edge / midpoint / off, cycled with **M** or
+  its own toolbar button — replaces what used to be silent, always-on, grid-only snapping: whichever
+  point it actually catches is drawn on the canvas, and holding **Ctrl** inverts the current mode for
+  as long as it is held (snap off → on for one click, or the reverse). A **Set scale** tool (its own
+  toolbar button, every kind) turns a drag along a run of known length plus a typed length in metres
+  into the plan's metres-per-pixel — `FloorPlan.Scale` defaults to **unset** (`0`), and every
+  metre-valued field the editor and its reports produce (sills, stair/wall heights, coverage) is dead
+  until a plan has one; this replaces reasoning about "metres per grid cell" from a spinner. A
+  **status bar** along the bottom of the workspace, fed live by the editor, reports the active tool,
+  how many objects are selected, the cursor position (metres once a plan has a scale, pixels until
+  then), the active snap mode, the current zoom, and a live hint for what the mouse/keyboard do right
+  now — this is also where the **G**/**R**/**S** modal accelerators (move/rotate/scale — type a
+  number for an exact value, **X**/**Y** locks an axis, **Enter** confirms, **Esc** cancels) are
+  advertised, since they accelerate the same drag handles rather than replace them. A **2D ⇄ 3D**
+  toggle sits in its own header (a Select-mode marker inspector also sets a camera's
+  `mountHeight`/`pitch` for the 3D coverage cone). Walls/scale/wall-height autosave
   (debounced 700ms, `PUT /api/floors/{id}/model`); camera placement/move/aim persist immediately
   (`POST`/`PUT /api/floors/{id}/placements`, `PUT /api/placements/{id}`) — there is no separate
   "save" step. A pending debounced save is **flushed** on `visibilitychange`/`pagehide` (the
