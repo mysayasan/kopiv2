@@ -409,14 +409,50 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
   });
 
   // Debounced autosave of the wall model + scale + height.
-  const scheduleSave = useCallback(() => {
-    clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      onSaveModel({ grid: JSON.stringify(modelJSON()), scale: scaleRef.current, wallHeight: +wallHeight || 0, elevation: (floor && floor.elevation) || 0 });
-    }, 700);
+  //
+  // saveTimer is nulled the moment the save fires, so "is there a timer" is an honest answer to
+  // "is there unsaved work" — flushSave below depends on that being true.
+  const saveNow = useCallback((urgent) => {
+    onSaveModel({ grid: JSON.stringify(modelJSON()), scale: scaleRef.current, wallHeight: +wallHeight || 0, elevation: (floor && floor.elevation) || 0 }, { urgent });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onSaveModel, unit, wallHeight, floor && floor.elevation]);
+  const scheduleSave = useCallback(() => {
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => { saveTimer.current = null; saveNow(false); }, 700);
+  }, [saveNow]);
   useEffect(() => () => clearTimeout(saveTimer.current), []);
+
+  // A pending autosave must not die with the tab.
+  //
+  // The editor now owns a whole browser tab, and people close tabs constantly — nobody ever closed
+  // the old modal by accident. That turned a harmless 700 ms debounce into a real way to lose the
+  // last edit: draw a wall, hit Ctrl+W, and it was never written.
+  //
+  // Three guards, weakest last. `visibilitychange` is the one that actually works — the page is
+  // still alive and a normal request completes. `pagehide` is the backstop for a browser that skips
+  // straight there, and takes `urgent` so the request goes out with keepalive and survives the
+  // teardown. `beforeunload` only asks the browser to confirm, and only when something really is
+  // pending; browsers ignore custom text, so there is none to write.
+  const flushSave = useCallback((urgent) => {
+    if (!saveTimer.current) return false;
+    clearTimeout(saveTimer.current);
+    saveTimer.current = null;
+    saveNow(urgent);
+    return true;
+  }, [saveNow]);
+  useEffect(() => {
+    const onVisibility = () => { if (document.visibilityState === 'hidden') flushSave(true); };
+    const onPageHide = () => flushSave(true);
+    const onBeforeUnload = (e) => { if (flushSave(true)) { e.preventDefault(); e.returnValue = ''; } };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', onPageHide);
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+    };
+  }, [flushSave]);
 
   // History snapshots the WHOLE model, so undo/redo restores it in one step however many lists a
   // single edit touched. Taking a snapshot (rather than a per-list diff) is also why adding a new

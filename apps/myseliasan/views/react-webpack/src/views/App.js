@@ -41,7 +41,12 @@ import { ReportsPage } from './components/reports';
 import { SettingsPage } from './components/settings';
 import { LoginScreen, ChangePasswordScreen, PendingClearanceScreen } from './components/auth_screens';
 import { SetupWizard } from './components/setup';
+// The plan workspace owns a whole browser tab of its own, so it is reached by URL rather than by
+// the side-nav. Lazy, like the map: it pulls FloorEditor (and, on the 3D tab, three.js) behind it,
+// and an operator who never opens a plan should never pay for that weight.
+const PlanWorkspacePage = lazy(() => import('./components/plan_workspace').then((m) => ({ default: m.PlanWorkspacePage })));
 import { api, sessionCanGet, apiBase } from './lib/helpers';
+import { parsePlanRoute } from './lib/plan_route';
 import { enBundle, loadLocaleDict } from './i18n';
 
 // Names this app's remembered section (see @shared/stickyTab). The prefix keeps the five
@@ -87,6 +92,11 @@ function AppInner({ lang, onLangChange }) {
   // reached only once the session has loaded — so they, not a list up here, decide whether a
   // restored section is one this operator may have.
   const [activeTab, setActiveTab] = useStickyTab(TAB_KEY, 'dashboard');
+  // The app's one URL route (see lib/plan_route). Read ONCE at mount, and it wins over the
+  // remembered tab below: opening the workspace with target=_blank hands the new tab a COPY of
+  // this tab's sessionStorage, so without this the plan tab would restore whatever screen the
+  // operator happened to be on and the address bar would be lying.
+  const [planRoute] = useState(() => parsePlanRoute());
   const [toasts, setToasts] = useState([]);
   // Fleet state is lifted here so the side-nav tree and the Nodes page stay in sync:
   // the tree lists adopted nodes and `managingNodeId` selects which one the page opens.
@@ -261,6 +271,22 @@ function AppInner({ lang, onLangChange }) {
         onToast={pushToast}
         onDone={() => setSetupState('done')}
       />,
+    );
+  }
+
+  // The plan workspace takes the whole window: no side-nav, no workspace header, its own status
+  // bar. That full-window shell is the point — the modal it replaces is what capped how much
+  // toolbar and status bar the editor could carry.
+  //
+  // It sits AFTER every pre-app gate above, which is what makes a pasted /plan/12 link behave: a
+  // dead session shows the login screen and lands on the plan once signed in, and a fresh install
+  // still gets the setup wizard first. Rendering it any earlier would hand an unauthenticated
+  // browser an editor.
+  if (planRoute) {
+    return withToasts(
+      <Suspense fallback={<main className="boot-screen"><FormBusyOverlay busy /></main>}>
+        <PlanWorkspacePage route={planRoute} nodes={nodes} onToast={pushToast} />
+      </Suspense>,
     );
   }
 

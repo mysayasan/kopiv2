@@ -5,7 +5,7 @@ import { api, apiBase } from '../lib/helpers';
 import { nodeTone, nodeToneKey, TONES } from '../lib/fleet_status';
 import { BuildingFloorView, CameraWindow, MediaWindow } from './node_floor_view';
 import { AssetWizard } from './asset_wizard';
-import { BuildingEditorDialog } from './building_editor_dialog';
+import { openPlanTab, subscribePlanEdits } from '../lib/plan_route';
 import { normKind, siteGlyph } from './site_kinds';
 // The map's own pieces, lifted out of this file so the workspace below is state and composition
 // rather than 1,600 lines of cartography, canvas styling and floating cards.
@@ -191,13 +191,10 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   const [treeQuery, setTreeQuery] = useState('');
   // Which tree row a dragged camera is currently over, so exactly one row lights up.
   const [dropTarget, setDropTarget] = useState(null);
-  // A camera dragged out of the tray, waiting for the editor to open on its new home.
-  const [editorPick, setEditorPick] = useState(null); // { pick, floorId }
   // Adding a building is a three-beat flow owned here: the wizard collects name/glyph/areas, the
-  // map takes the drop point, then the editor opens on the building just created. editorSite is
-  // also the re-entry point for an EXISTING building (from the rail or the drill-down).
+  // map takes the drop point, then the plan workspace opens in its own tab on the building just
+  // created (see openEditor).
   const [wizardOpen, setWizardOpen] = useState(false);
-  const [editorSite, setEditorSite] = useState(null);
   const [busy, setBusy] = useState(false); // a building create/save is in flight
   const buildingSourceRef = useRef(null);
   const buildingLayerRef = useRef(null);
@@ -466,6 +463,29 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
     if (onToast) onToast(t('map.ghostsRemoved', { n: ids.length }), 'success');
   }, [onToast, t]);
 
+  // --- staying current with the plan workspace's tab --------------------------------------------
+  //
+  // Editing moved out of a modal in this tree and into a tab of its own, so an edit can no longer
+  // reach the map through a React callback. Two ways back, and the map needs both:
+  //
+  //   BroadcastChannel  — the workspace announces each edit, so a map left open on a second monitor
+  //                       updates while you watch. Same-origin, no server hop, nothing leaves the
+  //                       machine, so it holds under the intranet/air-gap rule.
+  //   visibilitychange  — refetch when this tab is looked at again. This is the one that has to be
+  //                       right: BroadcastChannel is missing or throws in some contexts, and a
+  //                       message posted while this tab was closed is a message nobody heard.
+  const refreshFromEdit = useCallback(() => {
+    setPlansBySite({}); // drop the cache; the open branch reloads itself
+    if (reloadPlacedRef.current) reloadPlacedRef.current();
+    if (siteReloadRef.current) siteReloadRef.current();
+  }, []);
+  useEffect(() => subscribePlanEdits(() => refreshFromEdit()), [refreshFromEdit]);
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === 'visible') refreshFromEdit(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [refreshFromEdit]);
+
   // Buildings-centric map: a node never gets its own pin — every node lives in a site and is
   // reached by drilling into that site. Nothing is placed standalone, so there are no node pins.
   const placed = useMemo(() => [], []);
@@ -544,8 +564,15 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   // operator asked — rail row, drill-down header, or the drop that just finished. A point asset
   // opens the same editor as everything else: it has no walls to draw, but it has an area to drop
   // its cameras onto and aim them, which is the only way its cameras get placed at all.
-  const openEditor = useCallback((site) => {
-    setEditorSite(site);
+  // The plan opens in a BROWSER TAB of its own (see lib/plan_route), not a modal over the map.
+  //
+  // This is the programmatic path — the tail of "add a building", where the map's own click handler
+  // continues into the editor, and the end of a drag. Anywhere the operator clicks a visible
+  // control, the control is a real <a href> instead, so ctrl-click, middle-click and "copy link
+  // address" behave; see the inspector's Edit button.
+  const openEditor = useCallback((site, floorId, pick) => {
+    if (!site || !site.id) return;
+    openPlanTab(site.id, { floorId: floorId || undefined, pick: pick || undefined });
   }, []);
   const openEditorRef = useRef(openEditor);
   openEditorRef.current = openEditor;
@@ -589,9 +616,8 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
       if (onToast) onToast(t('tree.pickAPlaceFirst', { name: pick.name }), 'info');
       return;
     }
-    setEditorPick({ pick, floorId: floorId || null });
-    setEditorSite(site);
-  }, [onToast, t]);
+    openEditor(site, floorId, pick);
+  }, [onToast, t, openEditor]);
 
   // The waiver: "this appliance has no place on any plan, on purpose". The only other way out of
   // the tray, and the reason the tray can ever be empty for a fleet with an off-site recorder.
@@ -1111,7 +1137,6 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
             onOpenMedia={openMedia}
             onLocate={locateOnPlan}
             onOpenArea={(site, floorId) => openBuilding(site, null, floorId)}
-            onEdit={openEditor}
             onOpenNode={onOpenNode}
             onWaive={waiveLocation}
           />
@@ -1125,18 +1150,6 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
 
       {wizardOpen ? (
         <AssetWizard busy={busy} onCreate={createBuilding} onCancel={() => setWizardOpen(false)} />
-      ) : null}
-
-      {editorSite ? (
-        <BuildingEditorDialog
-          site={editorSite}
-          nodes={nodes}
-          initialPick={editorPick ? editorPick.pick : undefined}
-          initialFloorId={editorPick && editorPick.floorId ? editorPick.floorId : undefined}
-          onToast={onToast}
-          onClose={() => { const id = editorSite.id; setEditorSite(null); setEditorPick(null); setPlansBySite((m) => { const c = { ...m }; delete c[id]; return c; }); if (siteReloadRef.current) siteReloadRef.current(); if (reloadNodes) reloadNodes(); }}
-          onChanged={() => { setPlansBySite((m) => { const c = { ...m }; delete c[editorSite.id]; return c; }); if (siteReloadRef.current) siteReloadRef.current(); if (reloadPlacedRef.current) reloadPlacedRef.current(); }}
-        />
       ) : null}
 
       {/* Floating live windows are position:fixed (viewport-anchored), so they live at the

@@ -4,6 +4,7 @@ import { useT, Ico } from '@shared';
 import { api } from '../../lib/helpers';
 import { nodeToneKey } from '../../lib/fleet_status';
 import { hasDrawablePlan, siteGlyph } from '../site_kinds';
+import { planHref } from '../../lib/plan_route';
 
 // Inspector is the map's right pane: ONE contextual card for whatever the tree or the plan has
 // selected. It replaces the scatter of floating popups the map used to answer with - a card that
@@ -48,7 +49,7 @@ Head.propTypes = { glyph: PropTypes.string, emoji: PropTypes.string, title: Prop
 
 // ---------------------------------------------------------------------------------------------
 // A place: its areas, what is in them, and the way into the editor.
-function PlaceCard({ row, plans, nodesById, nowSec, onOpenArea, onEdit }) {
+function PlaceCard({ row, plans, nodesById, nowSec, onOpenArea }) {
   const t = useT();
   const s = row.site;
   let worst = 'idle';
@@ -87,15 +88,18 @@ function PlaceCard({ row, plans, nodesById, nowSec, onOpenArea, onEdit }) {
           </>
         ) : null}
         <div className="mw-act">
-          <button type="button" className="mw-btn primary" onClick={() => onEdit(s)}>
+          {/* A real link, not a button with an onClick: the plan opens in its own tab, and an
+              anchor is what makes ctrl-click, middle-click, "open in new window" and "copy link
+              address" work. A scripted window.open gives up every one of them. */}
+          <a className="mw-btn primary" href={planHref(s.id)} target="_blank" rel="noopener noreferrer">
             <Ico n="edit-2" sz={13} /> {drawable ? t('bld.editAreas') : t('map.editAsset')}
-          </button>
+          </a>
         </div>
       </div>
     </>
   );
 }
-PlaceCard.propTypes = { row: PropTypes.object, plans: PropTypes.object, nodesById: PropTypes.object, nowSec: PropTypes.number, onOpenArea: PropTypes.func, onEdit: PropTypes.func };
+PlaceCard.propTypes = { row: PropTypes.object, plans: PropTypes.object, nodesById: PropTypes.object, nowSec: PropTypes.number, onOpenArea: PropTypes.func };
 
 // ---------------------------------------------------------------------------------------------
 // A camera: what it has seen lately, and the way to watch it.
@@ -259,7 +263,7 @@ ApplianceCard.propTypes = {
 // ---------------------------------------------------------------------------------------------
 export function Inspector({
   sel, sites = [], nodesById = {}, plansBySite = {}, placements = [], camsByNode = {}, nowSec,
-  onPlay, onOpenMedia, onLocate, onOpenArea, onEdit, onOpenNode, onWaive,
+  onPlay, onOpenMedia, onLocate, onOpenArea, onOpenNode, onWaive,
 }) {
   const t = useT();
   const sitesById = useMemo(() => {
@@ -291,7 +295,7 @@ export function Inspector({
   const siteId = sel && (sel.type === 'site' ? sel.id : sel.siteId);
   const row = siteId ? sitesById[siteId] : null;
   if (row) {
-    return <PlaceCard key={row.site.id} row={row} plans={plansBySite[row.site.id]} nodesById={nodesById} nowSec={nowSec} onOpenArea={onOpenArea} onEdit={onEdit} />;
+    return <PlaceCard key={row.site.id} row={row} plans={plansBySite[row.site.id]} nodesById={nodesById} nowSec={nowSec} onOpenArea={onOpenArea} />;
   }
   return (
     <div className="mw-insp-empty">
@@ -308,5 +312,5 @@ Inspector.propTypes = {
   sel: PropTypes.object, sites: PropTypes.array, nodesById: PropTypes.object,
   plansBySite: PropTypes.object, placements: PropTypes.array, camsByNode: PropTypes.object, nowSec: PropTypes.number,
   onPlay: PropTypes.func, onOpenMedia: PropTypes.func, onLocate: PropTypes.func,
-  onOpenArea: PropTypes.func, onEdit: PropTypes.func, onOpenNode: PropTypes.func, onWaive: PropTypes.func,
+  onOpenArea: PropTypes.func, onOpenNode: PropTypes.func, onWaive: PropTypes.func,
 };

@@ -454,6 +454,11 @@ export default {
   'map.resize': '拖动以调整大小',
 
   // Add-building wizard + the building editor it opens into.
+  'pw.backToApp': '返回机群地图',
+  'pw.noSite': '该平面图已不存在',
+  'pw.noSiteHint': '此链接指向的站点已被删除，或者您已无权访问。',
+  'pw.loadFailed': '无法打开平面图',
+  'pw.loadFailedHint': '控制平面没有响应。请检查网络连接后重试。',
   'bld.kindQuestion': '您要添加什么？',
   'bld.kind.building': '建筑',
   'bld.kind.outdoor': '户外区域',
@@ -483,7 +488,6 @@ export default {
   'bld.nextHint.point': '下一步：点击地图放置它，然后分配摄像头所安装的设备。',
   'bld.createAndPlace': '创建并放置到地图',
   'bld.createdPlaceIt': '"{name}" 已创建 — 现在点击地图以放置它。',
-  'bld.editorLabel': '正在编辑 {name}',
   'bld.editAreas': '编辑平面图',
   'bld.renameArea': '重命名',
   'bld.deleteArea': '删除区域',
@@ -506,7 +510,6 @@ export default {
   'bld.removePlanConfirm': '要移除“{name}”的平面图图片吗？该区域及其墙体和摄像头都会保留——仅清除图片。',
   'bld.planRemoved': '平面图已移除。',
   'bld.removePlanFailed': '无法移除平面图。',
-  'bld.done': '完成',
   'bld.autosaveHint': '更改会随时自动保存。',
   'nav.users': '用户',
   'nav.roles': '角色与访问',

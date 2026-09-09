@@ -125,8 +125,9 @@ created, positioned and authored entirely from it:
   (`ISiteService.AddPlacement`/`DeletePlacement`, `services/sites.go.md`). Each tray camera row is
   **draggable** onto a place or an area row in the "Everywhere" tree (payload `"text/tray-pick"`;
   a row only highlights for a drag it can accept), and dropping opens that place's editor with the
-  camera pre-picked and the right area already open (`BuildingEditorDialog`'s new `initialPick`/
-  `initialFloorId` props) — the operator's next click lands it. Every tray camera also has an
+  camera pre-picked and the right area already open (the plan workspace's tab opens with
+  `?pick=<nodeId>::<cameraId>&area={floorId}` in its URL — `lib/plan_route.js`'s `openPlanTab`) —
+  the operator's next click lands it. Every tray camera also has an
   explicit **"Place on a plan"** button, the discoverable path that works without dragging. **An
   unpinned appliance's own tray row is draggable too** — the same `"text/tray-pick"` payload, but
   carrying the node with an empty `cameraId` — and gains its own explicit place button beside the
@@ -154,13 +155,23 @@ created, positioned and authored entirely from it:
   right after the insert (`ISiteService.EnsurePointArea`, a smaller 600×400 canvas the operator
   never names), so it is never a site that cannot hold a camera. Either way the map then enters
   placing mode so the operator clicks/drags the marker onto its geographic spot; dropping it opens
-  the building editor for **every** kind, point asset included, so "add an asset" always ends on
+  the plan workspace for **every** kind, point asset included, so "add an asset" always ends on
   the plan surface rather than back at a map with an unexplained new marker.
-- **Authoring a building or outdoor area**: dropping (or re-opening) one opens
-  `building_editor_dialog.js`, a near-fullscreen modal over the map: area tabs along the top
-  (add/rename/delete an area — a single-plan outdoor area has none of this), a node/camera palette
-  down the side (drag or click-to-pick, then click the plan to place — the same click-first pattern
-  as the geographic view; an already-placed camera is greyed out with a note naming where it sits,
+- **Authoring a building or outdoor area**: dropping (or re-opening) one opens the **plan
+  workspace** (`components/plan_workspace.js`'s `PlanWorkspace`) in a **browser tab of its own** —
+  not a dialog over the map. It is reached by URL: `/plan/{siteId}` (optionally
+  `?area={floorId}&pick={nodeId}::{cameraId}&name=...`), the app's **first and only route**
+  (`lib/plan_route.js`), resolved in `App.js` ahead of the side-nav but after every pre-app gate
+  (login / must-change-password / pending clearance / setup wizard), so a pasted or bookmarked
+  `/plan/...` link always lands on the plan once the operator is signed in. Opening it is always a
+  real `<a href target="_blank" rel="noopener noreferrer">` (the map rail, the inspector's "Edit
+  plan" card) or, where there is no element to hang an href on (the tail of "add a building", the
+  end of a tray drag), `openPlanTab()`'s `window.open` — so ctrl-click, middle-click and "copy link
+  address" all work. `building_editor_dialog.js` is retired: there is deliberately **one** host for
+  the editor now, not a dialog and a tab both. Full-window: area tabs along the top (add/rename/
+  delete an area — a single-plan outdoor area has none of this), a node/camera palette down the
+  side (drag or click-to-pick, then click the plan to place — the same click-first pattern as the
+  geographic view; an already-placed camera is greyed out with a note naming where it sits,
   since placement is now **exclusive** — see "Floor plans" below; carrying a pick forces the tool
   back to **Select** and disables every drawing tool, tooltip explaining why, until it lands or is
   cancelled — only Select's own click handler places a pick, so a drawing tool left active would
@@ -194,9 +205,17 @@ created, positioned and authored entirely from it:
   Ctrl/⌘+wheel — lets the canvas grow past the viewport (scrollbars appear only once zoomed past
   fit). A **2D ⇄ 3D** toggle sits in its own header (a Select-mode marker inspector also sets a
   camera's `mountHeight`/`pitch` for the 3D coverage cone). Walls/scale/wall-height autosave
-  (debounced, `PUT /api/floors/{id}/model`); camera placement/move/aim persist immediately
+  (debounced 700ms, `PUT /api/floors/{id}/model`); camera placement/move/aim persist immediately
   (`POST`/`PUT /api/floors/{id}/placements`, `PUT /api/placements/{id}`) — there is no separate
-  "save" step. A blank area's generated canvas can be replaced with a real uploaded plan (scan/CAD
+  "save" step. A pending debounced save is **flushed** on `visibilitychange`/`pagehide` (the
+  request goes out with `fetch` `keepalive` so it survives the teardown) and guarded by
+  `beforeunload` while one is outstanding — the workspace now owns a whole browser tab, and people
+  close tabs far more casually than they ever closed the modal it replaced, so without this a wall
+  drawn in the last 700ms of a session could be lost. Every write here also announces itself to the
+  fleet map's own tab over a same-origin `BroadcastChannel` (`publishPlanEdit`/`subscribePlanEdits`
+  in `lib/plan_route.js` — no server round trip, nothing leaves the machine), so a map left open on
+  a second monitor updates live; a map tab also refetches on `visibilitychange` as the fallback for
+  a missed or unsupported broadcast. A blank area's generated canvas can be replaced with a real uploaded plan (scan/CAD
   export) at any time from the editor's toolbar without losing the drawn walls or placements, and
   a **Remove plan** button (beside Upload plan, confirm-gated) clears an uploaded/drawn plan back
   to that same blank canvas (`DELETE /api/floors/{id}/image`) — walls, stairs, doors and camera

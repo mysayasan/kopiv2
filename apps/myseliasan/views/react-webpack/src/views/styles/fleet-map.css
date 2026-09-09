@@ -723,13 +723,54 @@ button.mp-event-main:hover .mp-event-title { text-decoration: underline; }
 
 /* --- Building editor dialog (areas + plan canvas + camera palette) --- */
 /* Near-fullscreen: FloorEditor wants ~1100px of canvas plus its inspector and the palette. */
-.bld-overlay { position: fixed; inset: 0; z-index: 1150; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(15, 23, 33, 0.6); }
-.bld-dialog {
+/* The plan workspace owns the whole window.
+ *
+ * It replaces the .bld-overlay/.bld-dialog modal this editor used to live in: a box capped at
+ * 1560x940 with a shadow around it, which is what limited how much toolbar, palette and status bar
+ * the tool could ever carry. Everything INSIDE the frame (.bld-head, .bld-areabar, .bld-body,
+ * .bld-palette, .bld-stage, .bld-foot) is unchanged and still shared — only the container is new,
+ * so the layout that was already proven carries over. */
+.pw-shell { position: fixed; inset: 0; display: flex; background: var(--bg-app, var(--bg-subtle)); }
+.pw-frame {
   display: flex; flex-direction: column;
-  width: min(1560px, 97vw); height: min(940px, 94vh);
-  background: var(--bg-surface); border: 1px solid var(--border-panel); border-radius: 12px;
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45); overflow: hidden;
+  flex: 1 1 auto; min-width: 0; min-height: 0;
+  background: var(--bg-surface); overflow: hidden;
 }
+/* No radius and no shadow: this is the window, not a card floating in one. */
+.pw-head { border-radius: 0; }
+.pw-back {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; flex: 0 0 auto;
+  border-radius: 6px; color: var(--text-secondary); text-decoration: none;
+}
+.pw-back:hover { background: var(--bg-subtle); color: var(--accent); }
+/* "Back" is a direction, not a glyph: under Arabic the page mirrors and a left chevron then
+ * points the way you came FROM. Mirror the icon with the layout. */
+[dir="rtl"] .pw-back svg { transform: scaleX(-1); }
+
+/* Status bar. Deliberately a strip of cells rather than a sentence: the viewport phase fills it
+ * with tool, selection, cursor position and snap mode, and it should not have to re-lay-out to do
+ * it. */
+.pw-status { border-top: 1px solid var(--border-subtle); }
+/* Logical properties, not physical: a padding-right/border-right here puts the divider on the
+ * wrong edge of every cell under Arabic. This exact mistake has been made in this file before. */
+.pw-status-cell {
+  font-size: 0.74rem; color: var(--text-secondary);
+  padding-inline-end: 12px; border-inline-end: 1px solid var(--border-subtle);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 26ch;
+}
+
+/* A workspace that cannot open: a bookmark to a deleted site, or a failed load. */
+.pw-blank { align-items: center; justify-content: center; padding: 24px; }
+.pw-blank-card {
+  display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center;
+  padding: 28px 32px; max-width: 420px;
+  background: var(--bg-surface); border: 1px solid var(--border-panel); border-radius: 12px;
+  color: var(--text-faint);
+}
+.pw-blank-t { font-size: 0.95rem; font-weight: 650; color: var(--text-primary); }
+.pw-blank-s { font-size: 0.8rem; color: var(--text-muted); line-height: 1.45; }
+.pw-blank-link { margin-top: 6px; font-size: 0.82rem; color: var(--accent); }
 .bld-head { display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-bottom: 1px solid var(--border-subtle); flex-wrap: wrap; }
 .bld-head-glyph { font-size: 1.25rem; line-height: 1; }
 .bld-head-name { margin: 0; font-size: 1rem; font-weight: 650; color: var(--text-primary); }

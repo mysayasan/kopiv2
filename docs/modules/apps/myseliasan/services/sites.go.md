@@ -102,7 +102,7 @@ floor-plan images, and node/camera placements on those plans — the indoor half
     removed **after** `UpdateById` succeeds, so a failed row update can never orphan the floor by
     deleting a file the row still references. Returns `ErrFloorUnknown` for an unknown floor.
     Backs `DELETE /api/floors/{id}/image` (`apis/sites.go`'s `clearFloorImage`), which the
-    building editor's **Remove plan** action calls (`building_editor_dialog.js`).
+    plan workspace's **Remove plan** action calls (`components/plan_workspace.js`).
   - `FloorImage(ctx, id)` — reads the file at `ImagePath` and decrypts it (`cipher.DecryptBytes`)
     when a cipher is configured, returning the raw bytes + content type ready to serve.
   - `FloorBackground(ctx, id)` — same as `FloorImage` but reads `BgPath` instead; returns
