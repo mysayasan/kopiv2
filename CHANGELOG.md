@@ -133,6 +133,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-09-09 — myseliasan 1.91.1 (e707bfd)
+
+### Fixed
+
+- **myseliasan**: The plan editor's model I/O, history/undo, and commit path are now driven by a single new registry (`components/map/plan_objects.js`) declaring each object type (wall, door, window, stair, parking, platform) once - its array key in the floor's `grid` JSON, geometry shape, which site kinds offer it, its tool, and its future numeric-inspector fields - instead of six hardcoded lists repeated across `floor_editor.js`. `floor_3d.js` and `node_floor_view.js` now read the stored model through the same shared `readModel()` rather than their own ad-hoc JSON parsing, so the editor, the 3D scene and the read-only view cannot disagree about what a floor contains. Alongside the refactor, a real forward-compatibility bug is fixed: the editor used to rebuild the saved model from only the arrays it recognised, so any top-level `grid` key it did not know about was silently dropped on the next autosave; an older build opening a plan a newer build had written (e.g. a future outdoor-kit array) would delete that geometry about 700ms after the operator touched anything. `readModel`/`writeModel` now capture and round-trip every unrecognised key verbatim. A new Go test (`services/report_floorgrid_parity_test.go`) reads the JS registry as data and asserts the PDF report's `floorGrid` struct covers every array it declares, so a type added to the editor either reaches the print path too or fails a named test instead of the PDF silently omitting geometry the operator drew; it also asserts the compositor survives a model carrying arrays it has never heard of. This is phase P3 ("the object registry") of docs/MYSELIASAN_PLAN_EDITOR_PLAN.md - an enabler with no feature of its own; `report_floorgrid.go` itself is unchanged this phase, and no user-visible behaviour or i18n changed.
 ## 2026-09-09 — myseliasan 1.91.0 (fdf9180)
 
 ### Changed
