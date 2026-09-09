@@ -131,6 +131,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-09-09 — myseliasan 1.90.0, core 1.115.0 (1c0367f)
+
+### Changed
+
+- **myseliasan,shared**: The site/floor plan editor moved out of a near-fullscreen modal (`building_editor_dialog.js`, now deleted) and into a browser tab of its own, opened at the app's first and only URL route: `/plan/{siteId}?area={floorId}&pick=<nodeId>::<cameraId>&name=...` (new `lib/plan_route.js`, rendered by new `components/plan_workspace.js`'s `PlanWorkspace`/`PlanWorkspacePage`). The route is resolved in `App.js` ahead of the side-nav but after every pre-app gate (login, must-change-password, pending clearance, setup wizard), so a bookmarked or pasted `/plan/...` link always lands on the plan once signed in, and a fresh install still gets the setup wizard first. Every place that used to open the dialog (the fleet map's drop-a-marker flow, a tray drag-to-place, the inspector's Edit-plan card) now opens the workspace as a real `<a href target="_blank" rel="noopener noreferrer">` or, where there is no element to hang an href on, `window.open` via `openPlanTab()` - so ctrl-click, middle-click and "copy link address" all work. Because the editor and the fleet map now live in separate tabs, an edit is announced cross-tab over a same-origin `BroadcastChannel` (`publishPlanEdit`/`subscribePlanEdits`, no server round trip) with a `visibilitychange` refetch on the map's tab as the fallback for browsers/contexts without it. The editor's 700ms debounced autosave is now flushed on `visibilitychange`/`pagehide` (via `fetch` `keepalive`) and guarded by `beforeunload`, closing a data-loss window this move introduces: nobody closed the old modal by accident, but people close tabs constantly. Added a `chev-left` glyph to the shared icon set (`frontend/shared/src/icons.js`) for the workspace's back-to-map control, and five new `pw.*` i18n keys (en/ms/zh/ar) for the back link and the dead-link "not found" card; `bld.editorLabel` and `bld.done` were removed from all four dicts, having belonged solely to the deleted dialog. No Go/server change: apphost's spaHandler already serves index.html for any unmatched path and webpack's publicPath is '/' so the deep route resolves the hashed bundle chunks.
 ## 2026-09-09 — myseliasan 1.89.6, core 1.114.1 (a2f5f5d)
 
 ### Added
