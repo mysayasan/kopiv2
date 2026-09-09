@@ -4,7 +4,7 @@ import { useT, Ico, icoSvg } from '@shared';
 import { apiBase } from '../lib/helpers';
 import { nodeTone, TONES } from '../lib/fleet_status';
 import { KIND_BUILDING, KIND_OUTDOOR, normKind } from './site_kinds';
-import { PLAN_OBJECTS, readModel, writeModel } from './map/plan_objects';
+import { PLAN_OBJECTS, boundsOfObject, readModel, writeModel } from './map/plan_objects';
 import { PlanFields } from './map/plan_inspector';
 import { PlanOutliner, loadOutlinerState, saveOutlinerState } from './map/plan_outliner';
 import {
@@ -121,7 +121,7 @@ function markerIcon(name, color, onReady) {
 
 const TOOLSETS = {
   [KIND_BUILDING]: ['select', 'wall', 'room', 'round', 'door', 'window', 'stairs', 'platform', 'setscale', 'erase'],
-  [KIND_OUTDOOR]: ['select', 'wall', 'room', 'round', 'door', 'parking', 'setscale', 'erase'],
+  [KIND_OUTDOOR]: ['select', 'wall', 'room', 'round', 'door', 'parking', 'road', 'hedge', 'tree', 'ground', 'setscale', 'erase'],
 };
 // Per-kind icon + label for the tools whose MEANING shifts with the place. The tool id stays the
 // same (`wall` draws segments, `door` cuts an opening) — only what the operator is told changes.
@@ -144,6 +144,12 @@ const DEFAULT_FACE = {
   stairs: { icon: 'stairs', key: 'grid.stairs', hint: 'grid.stairsHint' },
   parking: { icon: 'parking', key: 'grid.parking', hint: 'grid.parkingHint' },
   platform: { icon: 'platform', key: 'grid.platform', hint: 'grid.platformHint' },
+  // The outdoor kit. A road inside a BUILDING is a category error, so these appear only on an
+  // outdoor site (the registry's `kinds` says so, and TOOLSETS agrees).
+  road: { icon: 'road', key: 'grid.road', hint: 'grid.roadHint' },
+  hedge: { icon: 'hedge', key: 'grid.hedge', hint: 'grid.hedgeHint' },
+  tree: { icon: 'tree', key: 'grid.tree', hint: 'grid.treeHint' },
+  ground: { icon: 'ground', key: 'grid.ground2', hint: 'grid.groundHint' },
   setscale: { icon: 'sliders', key: 'grid.setScale', hint: 'grid.setScaleHint' },
   erase: { icon: 'trash', key: 'grid.erase', hint: 'grid.eraseHint' },
 };
@@ -151,7 +157,10 @@ const faceOf = (kind, id) => (TOOL_FACE[kind] && TOOL_FACE[kind][id]) || DEFAULT
 // Tools that drag out a rectangle, and (a superset) tools that show a snapped cursor dot. Named
 // once so adding a tool does not mean hunting down four `a || b || c` chains.
 const BOX_TOOLS = new Set(['room', 'round', 'stairs', 'parking', 'platform']);
-const DRAG_TOOLS = new Set(['wall', 'room', 'round', 'stairs', 'parking', 'platform']);
+// Tools that build a RUN of points the way the wall tool does - click corners, double-click or
+// Enter to finish. A road and a hedge are lines; ground is the same run, closed into an area.
+const POLY_TOOLS = new Set(['road', 'hedge', 'ground']);
+const DRAG_TOOLS = new Set(['wall', 'room', 'round', 'stairs', 'parking', 'platform', 'road', 'hedge', 'ground', 'tree']);
 const COLS_TARGET = 28;
 // How many snap steps sit inside one metre cell. A finer lattice than the cell itself, so an object
 // locks onto the grid easily without making the metre cell (and the scale it defines) tiny.
@@ -227,6 +236,12 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
   const windowsRef = useRef([]); // same shape as a door, plus sill/head in metres — wall remains below and above
   const parkingRef = useRef([]); // outdoor bay rows: { x1,y1,x2,y2 (image-space footprint), bays }
   const platsRef = useRef([]); // raised floors: { x1,y1,x2,y2, a, rise (metres above the floor) }
+  // The outdoor kit (model v3). These are drawn entirely from their registry declarations - there
+  // is no per-type drawing code for them anywhere in this file.
+  const roadsRef = useRef([]);  // { pts:[{x,y}], width (m), surface, markings, kerb }
+  const treesRef = useRef([]);  // { x, y, canopy (m), height (m), stem (m), species }
+  const hedgesRef = useRef([]); // { pts:[{x,y}], width (m), height (m) }
+  const groundRef = useRef([]); // { pts:[{x,y}], surface }
   const histRef = useRef([]);
   const futRef = useRef([]);
   const draftRef = useRef(null); // wall {pts} · room/round/stairs/parking {start,cur}
@@ -236,6 +251,9 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
   const hoverWinRef = useRef(-1); // window index under the erase cursor
   const hoverParkRef = useRef(-1); // parking-row index under the erase cursor
   const hoverPlatRef = useRef(-1); // raised-floor index under the erase cursor
+  // Erase hover for the registry-drawn types, as { ref, idx } - one ref rather than one per type,
+  // so a new declaration needs no new state here.
+  const hoverExtraRef = useRef({ ref: null, idx: -1 });
   const cursorRef = useRef(null);
   // Where the pointer is, in image space, for the status bar's readout ONLY.
   //
@@ -526,6 +544,13 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
     windowsRef.current = existing && Array.isArray(existing.windows) ? existing.windows.map((d) => ({ cx: d.cx, cy: d.cy, w: d.w, a: d.a || 0, sill: d.sill, head: d.head })) : [];
     parkingRef.current = existing && Array.isArray(existing.parking) ? existing.parking.map((p) => ({ x1: p.x1, y1: p.y1, x2: p.x2, y2: p.y2, bays: p.bays || 1, a: p.a || 0 })) : [];
     platsRef.current = existing && Array.isArray(existing.platforms) ? existing.platforms.map((p) => ({ x1: p.x1, y1: p.y1, x2: p.x2, y2: p.y2, a: p.a || 0, rise: p.rise > 0 ? p.rise : DEF_RISE })) : [];
+    // The outdoor kit is taken as stored: its shapes are declared in the registry, so there is no
+    // per-field normalising to do here beyond guarding the point list.
+    const takePoly = (list) => (Array.isArray(list) ? list.filter((o) => Array.isArray(o.pts) && o.pts.length).map((o) => ({ ...o, pts: o.pts.map((q) => ({ x: q.x, y: q.y })) })) : []);
+    roadsRef.current = takePoly(existing && existing.roads);
+    hedgesRef.current = takePoly(existing && existing.hedges);
+    groundRef.current = takePoly(existing && existing.ground);
+    treesRef.current = existing && Array.isArray(existing.trees) ? existing.trees.map((o) => ({ ...o })) : [];
     histRef.current = []; futRef.current = []; draftRef.current = null; clearSel();
     redraw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -547,12 +572,15 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
   const listByRef = () => ({
     segs: segsRef.current, stairs: stairsRef.current, doors: doorsRef.current,
     windows: windowsRef.current, parking: parkingRef.current, platforms: platsRef.current,
+    roads: roadsRef.current, trees: treesRef.current, hedges: hedgesRef.current, ground: groundRef.current,
   });
   const modelJSON = () => {
     const lists = listByRef();
     const arrays = {};
     Object.values(PLAN_OBJECTS).forEach((t) => { arrays[t.array] = lists[t.ref] || []; });
-    return writeModel({ version: 2, unit, arrays, extras: extrasRef.current });
+    // v3 = the outdoor kit exists. An older build reading this keeps the arrays it does not know
+    // (see readModel/writeModel), which is the guarantee P3 landed before this phase for.
+    return writeModel({ version: 3, unit, arrays, extras: extrasRef.current });
   };
 
   // Debounced autosave of the wall model + scale + height.
@@ -614,6 +642,10 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
     windows: (v) => { windowsRef.current = v; },
     parking: (v) => { parkingRef.current = v; },
     platforms: (v) => { platsRef.current = v; },
+    roads: (v) => { roadsRef.current = v; },
+    trees: (v) => { treesRef.current = v; },
+    hedges: (v) => { hedgesRef.current = v; },
+    ground: (v) => { groundRef.current = v; },
   };
   const snapshot = () => {
     const lists = listByRef(); const out = {};
@@ -768,12 +800,42 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
 
     // What the outliner has hidden, read once for the whole frame.
     const hid = hiddenRef.current;
+
     const seg = (s, color, wd) => { ctx.strokeStyle = color; ctx.lineWidth = wd; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(s.x1 * ds, s.y1 * ds); ctx.lineTo(s.x2 * ds, s.y2 * ds); ctx.stroke(); };
     const dot = (x, y, color, r = 3) => { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); };
 
     // walls (image space) — selected walls are highlighted; a group drag previews the moved position.
     const mv = moveRef.current;
     const pv = mv && mv.moved ? xfObjects(mv.orig, mv.xf) : null;
+    // ---- registry-drawn types ------------------------------------------------------------------
+    //
+    // Every type that declares `draw2d` is painted from its declaration. There is no per-type code
+    // for roads, trees, hedges or ground anywhere in this file - that is the whole point of the
+    // registry, and the reason the outdoor kit was four declarations rather than sixteen routines.
+    //
+    // `mpp` is the NOMINAL metres-per-pixel: geometry has to be drawn even on a plan nobody has
+    // scaled, so this deliberately uses `scale` and not `shownScale`.
+    const mppNow = scaleRef.current > 0 ? scaleRef.current : 0.5 / unit;
+    const drawRegistry = (under) => {
+      Object.keys(PLAN_OBJECTS).forEach((name) => {
+        const spec = PLAN_OBJECTS[name];
+        if (spec.builtin || !spec.draw2d) return;
+        if (!!spec.under !== under) return;
+        const list = listByRef()[spec.ref] || [];
+        list.forEach((o, i) => {
+          if (hid.has(`${spec.sel}:${i}`)) return;
+          const moved = pv && pv.extra && pv.extra[spec.ref] && pv.extra[spec.ref].has(i) ? pv.extra[spec.ref].get(i) : o;
+          ctx.save();
+          spec.draw2d(ctx, moved, {
+            ds, mpp: mppNow,
+            sel: selection.has(`${spec.sel}:${i}`),
+            hov: toolRef.current === 'erase' && hoverExtraRef.current.ref === spec.ref && hoverExtraRef.current.idx === i,
+          });
+          ctx.restore();
+        });
+      });
+    };
+    drawRegistry(true); // ground first: the surface everything else sits on
     segsRef.current.forEach((s, i) => {
       if (hid.has(`seg:${i}`)) return; // hidden in the outliner
       let ss = s;
@@ -1038,6 +1100,8 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
 
     // camera / node markers (OL coords → flip y). FOV wedge for cameras.
     const rad = arcRadius(w, h);
+    drawRegistry(false); // roads, hedges and trees over the structure
+
     placements.forEach((p) => {
       if (hid.has(`cam:${p.id}`)) return; // hidden in the outliner
       // Markers live in OL space (y UP) while the drag delta is image space (y DOWN), so the
@@ -1104,6 +1168,12 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
     const mOf = (a, b) => (Math.hypot(b.x - a.x, b.y - a.y) * (sc > 0 ? sc : 1)).toFixed(sc > 0 ? 1 : 0);
     const d = draftRef.current; const cur = cursorRef.current;
     if (d && d.pts) {
+      // A ground area previews CLOSED, because that is what it will become - an outline that looks
+      // like an open run right up until it is committed would be a preview that lies.
+      if (d.poly && PLAN_OBJECTS[Object.keys(PLAN_OBJECTS).find((k) => PLAN_OBJECTS[k].tool && PLAN_OBJECTS[k].tool.id === d.poly)]?.closed && d.pts.length > 2) {
+        const f = d.pts[0]; const l2 = d.pts[d.pts.length - 1];
+        seg({ x1: l2.x, y1: l2.y, x2: f.x, y2: f.y }, 'rgba(45,108,223,0.45)', 3);
+      }
       for (let i = 0; i < d.pts.length - 1; i++) seg({ x1: d.pts[i].x, y1: d.pts[i].y, x2: d.pts[i + 1].x, y2: d.pts[i + 1].y }, '#2d6cdf', 5);
       d.pts.forEach((p) => dot(p.x * ds, p.y * ds, '#2d6cdf'));
       const last = d.pts[d.pts.length - 1];
@@ -1182,6 +1252,48 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
   const hitWindow = (im) => hitOpening(windowsRef.current, im, false, 'win');
   const hitParking = (im) => { for (let i = parkingRef.current.length - 1; i >= 0; i--) { if (isPickable('park', i) && pointInRotatedRect(im.x, im.y, parkingRef.current[i])) return i; } return -1; };
   const hitPlatform = (im) => { for (let i = platsRef.current.length - 1; i >= 0; i--) { if (isPickable('plat', i) && pointInRotatedRect(im.x, im.y, platsRef.current[i])) return i; } return -1; };
+
+  // ---- hit-testing the registry-drawn types ----------------------------------------------------
+  //
+  // Driven by `geometry`, so a declaration is clickable the moment it exists: a polyline is hit
+  // near its run (widened by its real width), a point within its own radius. Ground is tested LAST
+  // and only if nothing else answered - it is a background area, and letting it swallow clicks
+  // would make everything drawn on top of it unreachable.
+  const mppRef = useRef(0.5); // nominal metres-per-pixel, kept for hit tests outside the draw
+  const hitRegistry = (im) => {
+    const mpp = scaleRef.current > 0 ? scaleRef.current : 0.5 / unit;
+    const names = Object.keys(PLAN_OBJECTS).filter((n) => !PLAN_OBJECTS[n].builtin);
+    const order = names.filter((n) => !PLAN_OBJECTS[n].under).concat(names.filter((n) => PLAN_OBJECTS[n].under));
+    for (const name of order) {
+      const spec = PLAN_OBJECTS[name];
+      const list = listByRef()[spec.ref] || [];
+      for (let i = list.length - 1; i >= 0; i--) {
+        if (!isPickable(spec.sel, i)) continue;
+        const o = list[i];
+        if (spec.geometry === 'point') {
+          const r = Math.max(6 / ds, (o.canopy || 1) / mpp);
+          if (Math.hypot(im.x - o.x, im.y - o.y) <= r) return { name, spec, idx: i };
+        } else if (spec.geometry === 'polyline') {
+          const pts = o.pts || [];
+          if (spec.under && pts.length >= 3) {
+            // An AREA is hit anywhere inside it (even-odd ray cast), not just near its outline.
+            let inside = false;
+            for (let a = 0, b = pts.length - 1; a < pts.length; b = a++) {
+              if ((pts[a].y > im.y) !== (pts[b].y > im.y)
+                && im.x < ((pts[b].x - pts[a].x) * (im.y - pts[a].y)) / (pts[b].y - pts[a].y) + pts[a].x) inside = !inside;
+            }
+            if (inside) return { name, spec, idx: i };
+          } else {
+            const half = Math.max(6 / ds, ((o.width || 1) / mpp) / 2);
+            for (let k = 0; k + 1 < pts.length; k++) {
+              if (dist2seg(im.x, im.y, { x1: pts[k].x, y1: pts[k].y, x2: pts[k + 1].x, y2: pts[k + 1].y }) <= half) return { name, spec, idx: i };
+            }
+          }
+        }
+      }
+    }
+    return null;
+  };
   // Nearest point on any wall to place an opening on — the projected centre + the wall's angle.
   const nearestWallHit = (im, reach) => {
     let best = (reach || 28) / ds; let hit = null;
@@ -1208,6 +1320,25 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
     draftRef.current = null; redraw();
   }, [commit, redraw]);
 
+  // finishPoly commits a run of points as ONE object of a registry type. The wall tool turns its run
+  // into many segments; a road, a hedge and a ground area are each a single object that OWNS its
+  // run, which is why they finish through here instead.
+  const finishPoly = useCallback((toolId) => {
+    const d = draftRef.current;
+    const name = Object.keys(PLAN_OBJECTS).find((k) => PLAN_OBJECTS[k].tool && PLAN_OBJECTS[k].tool.id === toolId);
+    const spec = name ? PLAN_OBJECTS[name] : null;
+    if (spec && d && d.pts && d.pts.length >= (spec.closed ? 3 : 2)) {
+      const obj = { pts: d.pts.map((q) => ({ x: q.x, y: q.y })) };
+      spec.fields.forEach((f) => { if (f.default !== undefined) obj[f.key] = f.default; });
+      const list = listByRef()[spec.ref] || [];
+      const at = list.length;
+      commit({ [spec.ref]: list.concat([obj]) });
+      setSelection(new Set([selKey(spec.sel, at)]));
+    }
+    draftRef.current = null; redraw();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [commit, redraw]);
+
   // xfObjects applies ONE transform to a snapshot of the selection and returns the new geometry,
   // keyed the same way. The drag preview and the commit both call this, so what you see while
   // dragging is by construction what gets saved.
@@ -1217,7 +1348,21 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
   // along its own axis; a footprint keeps its size in its own frame and gains the rotation; a camera
   // marker is mapped through OL's y-up frame and its heading turns with the plan.
   const xfObjects = (orig, xf) => {
-    const out = { segs: new Map(), doors: new Map(), wins: new Map(), stairs: new Map(), parks: new Map(), plats: new Map(), cams: new Map() };
+    const out = { segs: new Map(), doors: new Map(), wins: new Map(), stairs: new Map(), parks: new Map(), plats: new Map(), cams: new Map(), extra: {} };
+    // Registry-drawn types transform by their GEOMETRY: every point of a polyline is mapped, a
+    // point's position is mapped. A declaration added later moves, rotates and scales for free.
+    Object.keys(orig.extra || {}).forEach((refName) => {
+      const name = Object.keys(PLAN_OBJECTS).find((k) => PLAN_OBJECTS[k].ref === refName);
+      const spec = name ? PLAN_OBJECTS[name] : null;
+      if (!spec) return;
+      const m = new Map();
+      orig.extra[refName].forEach((o, i) => {
+        if (spec.geometry === 'polyline') m.set(i, { ...o, pts: (o.pts || []).map((q) => xfPoint(q, xf)) });
+        else if (spec.geometry === 'point') { const c = xfPoint({ x: o.x, y: o.y }, xf); m.set(i, { ...o, x: c.x, y: c.y }); }
+        else m.set(i, o);
+      });
+      out.extra[refName] = m;
+    });
     const degs = (xf.ang * 180) / Math.PI;
     orig.segs.forEach((o, i) => {
       const a = xfPoint({ x: o.x1, y: o.y1 }, xf); const b = xfPoint({ x: o.x2, y: o.y2 }, xf);
@@ -1254,7 +1399,7 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
   // beginMove snapshots the CURRENT geometry of everything in `keys`, so the drag can preview and
   // then commit by offsetting the originals — never by accumulating deltas, which would drift.
   const beginMove = (keys, im) => {
-    const orig = { segs: new Map(), doors: new Map(), wins: new Map(), stairs: new Map(), parks: new Map(), plats: new Map(), cams: new Map() };
+    const orig = { segs: new Map(), doors: new Map(), wins: new Map(), stairs: new Map(), parks: new Map(), plats: new Map(), cams: new Map(), extra: {} };
     const byId = {};
     placements.forEach((p) => { byId[p.id] = p; });
     keys.forEach((k) => {
@@ -1266,6 +1411,19 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
       else if (t2 === 'park' && parkingRef.current[i]) orig.parks.set(i, { ...parkingRef.current[i] });
       else if (t2 === 'plat' && platsRef.current[i]) orig.plats.set(i, { ...platsRef.current[i] });
       else if (t2 === 'cam' && byId[i]) orig.cams.set(i, { x: byId[i].x, y: byId[i].y, heading: byId[i].heading || 0 });
+      else {
+        // Registry-drawn types, snapshotted into `extra` keyed by their ref. One bucket rather than
+        // one field per type, so a declaration added later moves without an edit here.
+        const name = Object.keys(PLAN_OBJECTS).find((k) => PLAN_OBJECTS[k].sel === t2);
+        const spec = name ? PLAN_OBJECTS[name] : null;
+        if (spec && !spec.builtin) {
+          const o = (listByRef()[spec.ref] || [])[i];
+          if (o) {
+            if (!orig.extra[spec.ref]) orig.extra[spec.ref] = new Map();
+            orig.extra[spec.ref].set(i, JSON.parse(JSON.stringify(o)));
+          }
+        }
+      }
     });
     return orig;
   };
@@ -1390,6 +1548,16 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
     selOf('plat').forEach((i) => { const r = platsRef.current[i]; if (r) pts.push(...rectCorners(r)); });
     const byId = {}; placements.forEach((p) => { byId[p.id] = p; });
     selOf('cam').forEach((id) => { const p = byId[id]; if (p) pts.push({ x: p.x, y: h - p.y }); });
+    // Registry-drawn types contribute their bounds, computed from `geometry` alone.
+    Object.keys(PLAN_OBJECTS).forEach((name) => {
+      const spec = PLAN_OBJECTS[name];
+      if (spec.builtin) return;
+      selOf(spec.sel).forEach((i) => {
+        const o = (listByRef()[spec.ref] || [])[i];
+        const bb = o && boundsOfObject(name, o);
+        if (bb) pts.push({ x: bb.x1, y: bb.y1 }, { x: bb.x2, y: bb.y2 });
+      });
+    });
     return padBounds(boundsOfPoints(pts));
   };
 
@@ -1433,6 +1601,13 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
     const segs = new Set(selOf('seg')); const doors = new Set(selOf('door')); const wins = new Set(selOf('win'));
     const stairs = new Set(selOf('stair')); const parks = new Set(selOf('park')); const plats = new Set(selOf('plat'));
     const patch = {};
+    // Registry-drawn types delete through their own ref, in the same single commit.
+    Object.keys(PLAN_OBJECTS).forEach((name) => {
+      const spec = PLAN_OBJECTS[name];
+      if (spec.builtin) return;
+      const gone = new Set(selOf(spec.sel));
+      if (gone.size) patch[spec.ref] = (listByRef()[spec.ref] || []).filter((_, i) => !gone.has(i));
+    });
     if (segs.size) patch.segs = segsRef.current.filter((_, i) => !segs.has(i));
     if (doors.size) patch.doors = doorsRef.current.filter((_, i) => !doors.has(i));
     if (wins.size) patch.windows = windowsRef.current.filter((_, i) => !wins.has(i));
@@ -1530,6 +1705,12 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
     if (next.stairs.size) patch.stairs = stairsRef.current.map((x, i) => { const ns = next.stairs.get(i); return ns ? snapStairToPlatform(ns) : x; });
     if (next.parks.size) patch.parking = parkingRef.current.map((x, i) => next.parks.get(i) || x);
     if (next.plats.size) patch.platforms = platsRef.current.map((x, i) => next.plats.get(i) || x);
+    // Registry-drawn types write back through their own ref, so the same commit covers a road
+    // moved with a wall in one selection - one undo step for the whole gesture.
+    Object.keys(next.extra || {}).forEach((refName) => {
+      const m = next.extra[refName];
+      if (m && m.size) patch[refName] = (listByRef()[refName] || []).map((x, i) => m.get(i) || x);
+    });
     if (Object.keys(patch).length) commit(patch);
     next.cams.forEach((o, id) => {
       onMove(id, Math.max(0, Math.min(w, o.x)), Math.max(0, Math.min(h, o.y)));
@@ -1646,6 +1827,8 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
       const di = hitDoor(im); if (di >= 0) { commit({ doors: doorsRef.current.filter((_, k) => k !== di) }); return; }
       const wi = hitWindow(im); if (wi >= 0) { commit({ windows: windowsRef.current.filter((_, k) => k !== wi) }); return; }
       const i = nearestSeg(im); if (i >= 0) { commit({ segs: segsRef.current.filter((_, k) => k !== i) }); return; }
+      const rg = hitRegistry(im);
+      if (rg) { const list = listByRef()[rg.spec.ref] || []; commit({ [rg.spec.ref]: list.filter((_, k) => k !== rg.idx) }); return; }
       const si = hitStair(im); if (si >= 0) { commit({ stairs: stairsRef.current.filter((_, k) => k !== si) }); return; }
       const pi = hitParking(im); if (pi >= 0) { commit({ parking: parkingRef.current.filter((_, k) => k !== pi) }); return; }
       const li = hitPlatform(im); if (li >= 0) commit({ platforms: platsRef.current.filter((_, k) => k !== li) }); return;
@@ -1668,6 +1851,25 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
         setSelection(new Set([selKey('door', nd)]));
       }
       return;
+    }
+    // A tree is a single click: a point with the defaults its declaration carries.
+    if (tool === 'tree') {
+      const p = snapPt(im.x, im.y);
+      const spec = PLAN_OBJECTS.tree;
+      const obj = { x: p.x, y: p.y };
+      spec.fields.forEach((f) => { if (f.default !== undefined) obj[f.key] = f.default; });
+      const list = treesRef.current;
+      commit({ trees: list.concat([obj]) });
+      setSelection(new Set([selKey('tree', list.length)]));
+      return;
+    }
+    // Roads, hedges and ground areas are RUNS, drawn exactly like a wall: click corners, then
+    // double-click or Enter. Reusing the gesture means there is no new interaction to learn.
+    if (POLY_TOOLS.has(tool)) {
+      const p = snapPt(im.x, im.y);
+      if (!draftRef.current || !draftRef.current.pts) draftRef.current = { pts: [p], poly: tool };
+      else { const pts = draftRef.current.pts; const last = pts[pts.length - 1]; if (last.x !== p.x || last.y !== p.y) pts.push(p); }
+      cursorRef.current = p; redraw(); return;
     }
     if (tool === 'wall') { const p = snapPt(im.x, im.y); if (!draftRef.current || !draftRef.current.pts) draftRef.current = { pts: [p] }; else { const pts = draftRef.current.pts; const last = pts[pts.length - 1]; if (last.x !== p.x || last.y !== p.y) pts.push(p); } cursorRef.current = p; redraw(); return; }
     if (BOX_TOOLS.has(tool)) { const p = snapPt(im.x, im.y); draftRef.current = { start: p, cur: p, round: tool === 'round', stairs: tool === 'stairs', parking: tool === 'parking', platform: tool === 'platform' }; cursorRef.current = p; try { canvasRef.current.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ } redraw(); return; }
@@ -1702,6 +1904,9 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
     // parking row stays reachable.
     const hit = hitMarker(ol);
     let target = null;
+    // Registry-drawn types join the same precedence chain. Resolved up front so the built-in
+    // branch below can fall through to it rather than duplicating the ordering.
+    const rgHit = hit ? null : hitRegistry(im);
     if (hit) target = ['cam', hit.id];
     else {
       const dOnWall = hitDoor(im);
@@ -1716,6 +1921,7 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
       else if (si >= 0) target = ['stair', si];
       else if (pi >= 0) target = ['park', pi];
       else if (li >= 0) target = ['plat', li];
+      else if (rgHit) target = [rgHit.spec.sel, rgHit.idx];
     }
 
     if (target) {
@@ -1823,6 +2029,9 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
       hoverStairRef.current = taken2 ? -1 : hitStair(im);
       hoverParkRef.current = taken2 || hoverStairRef.current >= 0 ? -1 : hitParking(im);
       hoverPlatRef.current = taken2 || hoverStairRef.current >= 0 || hoverParkRef.current >= 0 ? -1 : hitPlatform(im);
+      const anyBuiltin = taken2 || hoverStairRef.current >= 0 || hoverParkRef.current >= 0 || hoverPlatRef.current >= 0;
+      const rg = anyBuiltin ? null : hitRegistry(im);
+      hoverExtraRef.current = rg ? { ref: rg.spec.ref, idx: rg.idx } : { ref: null, idx: -1 };
       cursorRef.current = null; redraw(); return;
     }
     if (DRAG_TOOLS.has(tool) || tool === 'door' || tool === 'window' || tool === 'setscale') { const p = snapPt(im.x, im.y); cursorRef.current = p; const d = draftRef.current; if (d && d.start) d.cur = p; redraw(); }
@@ -1853,6 +2062,17 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
       stairsRef.current.forEach((s, i) => { if (isPickable('stair', i) && overlaps(s)) found.push(selKey('stair', i)); });
       parkingRef.current.forEach((p, i) => { if (isPickable('park', i) && overlaps(p)) found.push(selKey('park', i)); });
       platsRef.current.forEach((p, i) => { if (isPickable('plat', i) && overlaps(p)) found.push(selKey('plat', i)); });
+      // Registry-drawn types are swept by their BOUNDS, which the registry can compute for any
+      // geometry - so a type added later joins the band with no edit here.
+      Object.keys(PLAN_OBJECTS).forEach((name) => {
+        const spec = PLAN_OBJECTS[name];
+        if (spec.builtin) return;
+        (listByRef()[spec.ref] || []).forEach((o, i) => {
+          if (!isPickable(spec.sel, i)) return;
+          const bb = boundsOfObject(name, o);
+          if (bb && bb.x1 <= rX && bb.x2 >= rx && bb.y1 <= rY && bb.y2 >= ry) found.push(selKey(spec.sel, i));
+        });
+      });
       // Markers are OL space (y up); the band is image space.
       placements.forEach((p) => { if (isPickable('cam', p.id) && inBox(p.x, h - p.y)) found.push(selKey('cam', p.id)); });
       setSelection((prev) => { const ns = mq.add ? new Set(prev) : new Set(); found.forEach((k) => ns.add(k)); return ns; });
@@ -1888,7 +2108,10 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
       draftRef.current = null; redraw();
     }
   };
-  const onDoubleClick = (e) => { if (tool === 'wall') { e.preventDefault(); finishWall(); } };
+  const onDoubleClick = (e) => {
+    if (tool === 'wall') { e.preventDefault(); finishWall(); }
+    else if (POLY_TOOLS.has(tool)) { e.preventDefault(); finishPoly(tool); }
+  };
   const onDrop = (e) => { e.preventDefault(); const raw = e.dataTransfer.getData('text/placement'); if (!raw) return; let payload; try { payload = JSON.parse(raw); } catch (_) { return; } const ol = evOL(e); onPlace(payload, ol.x, ol.y); if (onClearPlacing) onClearPlacing(); };
 
   useEffect(() => {
@@ -1951,6 +2174,7 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
         placements.forEach((p) => all.add(selKey('cam', p.id)));
         setSelection(all);
       } else if (e.key === 'Enter' && tool === 'wall') finishWall();
+      else if (e.key === 'Enter' && POLY_TOOLS.has(tool)) finishPoly(tool);
       else if (e.key === 'Escape') {
         // Esc backs out one level: cancel an in-progress wall run (drop the uncommitted corners so
         // the chain stops) or clear a selection. Enter or double-click is how you finish and keep a
@@ -1985,7 +2209,7 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
       window.removeEventListener('keyup', onKeyUp, true);
       window.removeEventListener('blur', onBlur);
     };
-  }, [mode, tool, selection, placements, deleteSelection, copySelection, cutSelection, pasteClipboard, finishWall, undo, redo, redraw, commit, clearSel, frameAll, frameOn, startModal, applyModal, cancelModal, confirmModal]);
+  }, [mode, tool, selection, placements, deleteSelection, copySelection, cutSelection, pasteClipboard, finishWall, finishPoly, undo, redo, redraw, commit, clearSel, frameAll, frameOn, startModal, applyModal, cancelModal, confirmModal]);
 
   // ---- the generic object accessors the inspector works through -------------------------------
   //
@@ -2033,6 +2257,12 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
     if (next.stairs.size) patch.stairs = stairsRef.current.map((o, i) => next.stairs.get(i) || o);
     if (next.parks.size) patch.parking = parkingRef.current.map((o, i) => next.parks.get(i) || o);
     if (next.plats.size) patch.platforms = platsRef.current.map((o, i) => next.plats.get(i) || o);
+    // Registry-drawn types write back through their own ref, so the same commit covers a road
+    // moved with a wall in one selection - one undo step for the whole gesture.
+    Object.keys(next.extra || {}).forEach((refName) => {
+      const m = next.extra[refName];
+      if (m && m.size) patch[refName] = (listByRef()[refName] || []).map((x, i) => m.get(i) || x);
+    });
     if (Object.keys(patch).length) commit(patch);
   };
 

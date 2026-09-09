@@ -1,7 +1,7 @@
 # MySeliaSan — Plan Editor Overhaul
 
-Status: **P1–P3 SHIPPED** (#250, #251, #252), 2026-09-09. **P4 BUILT, in review** — built and
-live-benched. Phase P5 remains planned; **P6 (coverage occlusion) is
+Status: **P1–P4 SHIPPED** (#250–#253), 2026-09-09. **P5 BUILT, in review** — built and
+live-benched. The register is complete; **P6 (coverage occlusion) is
 planned but deliberately sequenced last** and is a separate decision to take when P1–P5 are in.
 
 The plan editor is `FloorEditor` — `apps/myseliasan/views/react-webpack/src/views/components/floor_editor.js`.
@@ -404,7 +404,7 @@ that list, with the same numbers plus the ability to find, hide or lock any one 
 hand-written property blocks replaced by one registry-driven panel; hit tests, draw and band-select
 all respect hidden/locked); i18n ×4.
 
-### P5 — The outdoor kit
+### P5 — The outdoor kit — **BUILT, in review**
 
 Four new types. After P3 this is four registry entries plus their Go counterparts, not sixteen
 drawing routines.
@@ -466,8 +466,29 @@ than a diagram of fences.
 and the outdoor toolbar is already the longer of the two. (A campus with both is modelled as an
 outdoor area with buildings on it, which is what the twin tree already expresses.)
 
-*Touches:* `plan_objects.js` (4 entries), `report_floorgrid.go` (4 renderers + struct fields),
-`icons.js` (4 glyphs), i18n ×4, `apps/myseliasan/README.md`, the myseliasan manual.
+**The registry's promise held.** All four types are declared ENTIRELY in `plan_objects.js` — their
+`draw2d`, `svg2d` and `build3d` hooks are the only drawing code, and none of the three JS renderers
+needed a per-type edit. The 3D scene grew three PRIMITIVES (a flat area, an extruded ribbon, a tree)
+and each declaration says which it is. Go is the one surface that still needs its own renderer, and
+the parity test made that impossible to forget: adding the four types failed it by name until the
+compositor was taught about them.
+
+**A real defect the bench caught: two controls labelled "Width".** A road's own width is its
+carriageway (6 m); the transform block's width is its bounding box (the whole run, tens of metres).
+Whichever the operator reached for, the other was the one they meant. The type's own field wins now
+and the colliding bounding-box control is dropped — compared on the RENDERED label, because the
+collision is what the operator reads and it has to hold in every language.
+
+**Known, and left alone deliberately:** a blank outdoor area is 1200×800 px at the nominal 0.5 m
+cell, i.e. about 14 m across, so a 6 m road covers nearly half of it. That is geometrically honest
+rather than a bug — the defaults suit a real site, and setting the scale first is what the Set
+scale tool from P2 is for. Raising the nominal for outdoor areas would change the 3D size of every
+existing unscaled plan, which is not this phase's call to make.
+
+*Touches:* `plan_objects.js` (4 entries), `floor_editor.js` (registry-driven draw/hit/transform, no
+per-type code), `node_floor_view.js` and `floor_3d.js` (hook consumption),
+`report_floorgrid.go` (+ struct fields, a scale parameter, 4 renderers and a polygon/circle
+rasteriser), `icons.js` (4 glyphs), i18n ×4, `apps/myseliasan/README.md`.
 
 ### P6 — Coverage occlusion *(planned, sequenced last, separate go/no-go)*
 
@@ -517,8 +538,8 @@ without it. **Decide at the end of P5, not now.**
 | P1 Editor becomes a workspace (own tab) | — | **Shipped (#250)** |
 | P2 Viewport and navigation | P1 (styles the shell P1 creates) | **Shipped (#251)** |
 | P3 Object registry | — (independent; land after P2) | **Shipped (#252)** |
-| P4 Outliner and numeric inspector | P3 | **Built, in review** |
-| P5 Outdoor kit | P3 | **Planned** |
+| P4 Outliner and numeric inspector | P3 | **Shipped (#253)** |
+| P5 Outdoor kit | P3 | **Built, in review** |
 | P6 Coverage occlusion | P5 | **Planned — separate go/no-go after P5** |
 
 **P1 must precede P2.** Every piece of chrome P2 builds — dark viewport, menu row, status bar, dock

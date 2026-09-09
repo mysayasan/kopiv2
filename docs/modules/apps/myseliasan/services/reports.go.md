@@ -97,9 +97,10 @@ is fetched via `ISiteService.SiteFloorplans`, ordinal-sorted, and each gets its 
 (`H1` = `"<site> — <floor>"`) with:
 
 - `renderFloorPlan` — decrypts the plan image (`ISiteService.FloorImage`) and composites the
-  camera pins + the authored wall/door/window/stairs geometry via
+  camera pins + the authored wall/door/window/stairs/outdoor-kit geometry via
   `renderFloorPlacements`/`renderFloorGrid` (`report_floorplan.go.md`/
-  `report_floorgrid.go.md`), embedding the result via `doc.Image`. Any failure — no image,
+  `report_floorgrid.go.md`), passing `floor.Scale` through so road/tree/hedge/ground sizes
+  (real-world metres) print correctly, embedding the result via `doc.Image`. Any failure — no image,
   undecodable bytes — is surfaced as a note on the page (`"Floor plan image could not be
   shown: <reason>"`), never dropped silently: an absent plan is otherwise
   indistinguishable from "this floor has no plan".

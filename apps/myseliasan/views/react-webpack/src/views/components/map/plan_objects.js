@@ -97,6 +97,13 @@ export function boundsOf(geometry, o) {
   }
 }
 
+// Surface palettes, shared by the 2D canvas, the SVG view and the 3D scene so a road is the same
+// grey everywhere. They live beside the declarations that read them rather than in a renderer.
+const ROAD_SURFACE = { asphalt: '#4b5563', concrete: '#9ca3af', gravel: '#a8a29e', paved: '#78716c' };
+const ROAD_3D = { asphalt: 0x4b5563, concrete: 0x9ca3af, gravel: 0xa8a29e, paved: 0x78716c };
+const GROUND_FILL = { grass: 'rgba(132,204,22,0.22)', water: 'rgba(56,189,248,0.28)', gravel: 'rgba(168,162,158,0.30)', hardstanding: 'rgba(120,113,108,0.26)' };
+const GROUND_3D = { grass: 0x84cc16, water: 0x38bdf8, gravel: 0xa8a29e, hardstanding: 0x78716c };
+
 // ---- the registry -------------------------------------------------------------------------------
 //
 // `array`      the key this type occupies in the grid JSON. THE identifier — the Go parity test,
@@ -184,6 +191,189 @@ export const PLAN_OBJECTS = {
       { key: 'rise', type: 'length', min: 0.1, max: 6, step: 0.05, default: 0.6, label: 'grid.rise' },
     ],
     builtin: true,
+  },
+
+  // ---- the outdoor kit -------------------------------------------------------------------------
+  //
+  // These four are the first types declared ENTIRELY here: their drawing lives in `draw2d` (the
+  // editor canvas), `svg2d` (the read-only floor view) and `build3d` (the three.js scene), so none
+  // of the three renderers needed an edit to gain them. That is the promise the registry was built
+  // to make good on — four declarations rather than sixteen drawing routines.
+  //
+  // `view` carries what a renderer needs and a declaration should not have to know: `ds` (image px
+  // to screen px), `mpp` (metres per image pixel — always the NOMINAL scale, because geometry has
+  // to be drawn even on a plan nobody has scaled yet), and the selection/hover flags.
+
+  // A road is a POLYLINE CENTRELINE WITH A WIDTH, rendered as a ribbon.
+  //
+  // It must never live in `segments`: those extrude into WALLS, so a road stored there would become
+  // a six-metre wall down the middle of the site and destroy every camera view on the plan.
+  //
+  // One shape covers road, driveway, footpath and cycle lane — the difference is width and surface,
+  // which is why there is no separate type for each.
+  road: {
+    array: 'roads', sel: 'road', ref: 'roads',
+    geometry: 'polyline', collection: 'outdoor',
+    kinds: [KIND_OUTDOOR],
+    label: 'grid.roads',
+    tool: { id: 'road' },
+    fields: [
+      { key: 'width', type: 'length', min: 1, max: 30, step: 0.1, default: 6, label: 'grid.roadWidth' },
+      { key: 'surface', type: 'enum', options: ['asphalt', 'concrete', 'gravel', 'paved'], default: 'asphalt', label: 'grid.surface' },
+      { key: 'markings', type: 'enum', options: ['none', 'centre', 'lanes'], default: 'centre', label: 'grid.markings' },
+      { key: 'kerb', type: 'bool', default: true, label: 'grid.kerb' },
+    ],
+    draw2d(ctx, o, view) {
+      const pts = (o.pts || []).map((p) => ({ x: p.x * view.ds, y: p.y * view.ds }));
+      if (pts.length < 2) return;
+      const wpx = Math.max(2, ((o.width || 6) / view.mpp) * view.ds);
+      const path = () => { ctx.beginPath(); pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y))); };
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      if (o.kerb !== false) {
+        ctx.strokeStyle = view.sel ? '#2d6cdf' : 'rgba(71,85,105,0.55)';
+        ctx.lineWidth = wpx + 3;
+        path(); ctx.stroke();
+      }
+      ctx.strokeStyle = view.hov ? '#fca5a5' : (ROAD_SURFACE[o.surface] || ROAD_SURFACE.asphalt);
+      ctx.lineWidth = wpx;
+      path(); ctx.stroke();
+      // Markings make it read as a road rather than a grey band, and only when there is room.
+      if (o.markings && o.markings !== 'none' && wpx > 8) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+        ctx.lineWidth = Math.max(1, wpx * 0.045);
+        ctx.setLineDash(o.markings === 'lanes' ? [wpx * 0.5, wpx * 0.4] : [wpx * 0.9, wpx * 0.7]);
+        path(); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      if (view.sel) {
+        ctx.strokeStyle = '#2d6cdf'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
+        path(); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    },
+    svg2d(o, view, key) {
+      const pts = o.pts || [];
+      if (pts.length < 2) return null;
+      const d = pts.map((p, i) => (i ? 'L' : 'M') + p.x + ' ' + p.y).join(' ');
+      const wpx = Math.max(2, (o.width || 6) / view.mpp);
+      return { key, el: 'path', props: { d, stroke: ROAD_SURFACE[o.surface] || ROAD_SURFACE.asphalt, strokeWidth: wpx, fill: 'none', strokeLinecap: 'round', strokeLinejoin: 'round' } };
+    },
+    build3d(o) {
+      // A flat ribbon a few centimetres above the ground slab — NOT a wall.
+      const pts = o.pts || [];
+      if (pts.length < 2) return [];
+      return [{ kind: 'ribbon', pts, width: o.width || 6, height: o.kerb === false ? 0.02 : 0.12, color: ROAD_3D[o.surface] || ROAD_3D.asphalt }];
+    },
+  },
+
+  // A TREE is a point with a canopy radius, a total height and a CLEAR STEM.
+  //
+  // The clear stem is the field that earns the type. A camera mounted at 2.5 m may see UNDER a
+  // canopy whose stem is clear to 3 m, and that is precisely the argument installers have on site.
+  // Species drives the glyph only: no catalogue, no seasons, no growth model.
+  tree: {
+    array: 'trees', sel: 'tree', ref: 'trees',
+    geometry: 'point', collection: 'outdoor',
+    kinds: [KIND_OUTDOOR],
+    label: 'grid.trees',
+    tool: { id: 'tree' },
+    fields: [
+      { key: 'canopy', type: 'length', min: 0.5, max: 20, step: 0.1, default: 4.5, label: 'grid.canopy' },
+      { key: 'height', type: 'length', min: 1, max: 40, step: 0.5, default: 8, label: 'grid.treeHeight' },
+      { key: 'stem', type: 'length', min: 0, max: 12, step: 0.1, default: 2.2, label: 'grid.clearStem' },
+      { key: 'species', type: 'enum', options: ['broadleaf', 'conifer', 'palm'], default: 'broadleaf', label: 'grid.species' },
+    ],
+    draw2d(ctx, o, view) {
+      const x = o.x * view.ds; const y = o.y * view.ds;
+      const r = Math.max(4, ((o.canopy || 4.5) / view.mpp) * view.ds);
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fillStyle = view.hov ? 'rgba(239,68,68,0.18)' : view.sel ? 'rgba(45,108,223,0.18)' : 'rgba(22,163,74,0.16)';
+      ctx.fill();
+      ctx.strokeStyle = view.hov ? '#ef4444' : view.sel ? '#2d6cdf' : 'rgba(22,163,74,0.78)';
+      ctx.lineWidth = view.sel || view.hov ? 2 : 1.5;
+      ctx.setLineDash(o.species === 'conifer' ? [4, 3] : []);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // The trunk: a filled dot, so the tree has a POSITION and not only an extent.
+      ctx.beginPath(); ctx.arc(x, y, Math.max(2, r * 0.1), 0, Math.PI * 2);
+      ctx.fillStyle = view.sel ? '#2d6cdf' : '#4d7c0f'; ctx.fill();
+    },
+    svg2d(o, view, key) {
+      const r = Math.max(3, (o.canopy || 4.5) / view.mpp);
+      return { key, el: 'circle', props: { cx: o.x, cy: o.y, r, fill: 'rgba(22,163,74,0.16)', stroke: 'rgba(22,163,74,0.78)', strokeWidth: Math.max(1, r * 0.06) } };
+    },
+    build3d(o) {
+      return [{ kind: 'tree', x: o.x, y: o.y, canopy: o.canopy || 4.5, height: o.height || 8, stem: o.stem || 2.2, species: o.species || 'broadleaf' }];
+    },
+  },
+
+  // A HEDGE is a polyline with a width and a height — the low SOLID occluder that actually blocks a
+  // fence-line camera. Its own type rather than a wall with a height override, because the outliner
+  // has to group it as planting and "erase hedge" must not mean "erase wall".
+  hedge: {
+    array: 'hedges', sel: 'hedge', ref: 'hedges',
+    geometry: 'polyline', collection: 'outdoor',
+    kinds: [KIND_OUTDOOR],
+    label: 'grid.hedges',
+    tool: { id: 'hedge' },
+    fields: [
+      { key: 'width', type: 'length', min: 0.2, max: 5, step: 0.1, default: 0.8, label: 'grid.hedgeWidth' },
+      { key: 'height', type: 'length', min: 0.2, max: 6, step: 0.1, default: 1.6, label: 'grid.hedgeHeight' },
+    ],
+    draw2d(ctx, o, view) {
+      const pts = (o.pts || []).map((p) => ({ x: p.x * view.ds, y: p.y * view.ds }));
+      if (pts.length < 2) return;
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.strokeStyle = view.hov ? '#ef4444' : view.sel ? '#2d6cdf' : '#15803d';
+      ctx.lineWidth = Math.max(3, ((o.width || 0.8) / view.mpp) * view.ds);
+      ctx.beginPath(); pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y))); ctx.stroke();
+    },
+    svg2d(o, view, key) {
+      const pts = o.pts || [];
+      if (pts.length < 2) return null;
+      const d = pts.map((p, i) => (i ? 'L' : 'M') + p.x + ' ' + p.y).join(' ');
+      return { key, el: 'path', props: { d, stroke: '#15803d', strokeWidth: Math.max(2, (o.width || 0.8) / view.mpp), fill: 'none', strokeLinecap: 'round', strokeLinejoin: 'round' } };
+    },
+    build3d(o) {
+      const pts = o.pts || [];
+      if (pts.length < 2) return [];
+      return [{ kind: 'ribbon', pts, width: o.width || 0.8, height: o.height || 1.6, color: 0x2f7a34, solid: true }];
+    },
+  },
+
+  // GROUND is an area with a surface. Purely cosmetic and painted beneath everything else — it is
+  // what makes a site plan legible AS a site plan rather than a diagram of fences.
+  ground: {
+    array: 'ground', sel: 'gnd', ref: 'ground',
+    geometry: 'polyline', collection: 'outdoor',
+    kinds: [KIND_OUTDOOR],
+    label: 'grid.ground',
+    tool: { id: 'ground' },
+    under: true, // painted before every other object
+    closed: true, // the run closes back to its first point: this is an area, not a line
+    fields: [
+      { key: 'surface', type: 'enum', options: ['grass', 'water', 'gravel', 'hardstanding'], default: 'grass', label: 'grid.surface' },
+    ],
+    draw2d(ctx, o, view) {
+      const pts = (o.pts || []).map((p) => ({ x: p.x * view.ds, y: p.y * view.ds }));
+      if (pts.length < 3) return;
+      ctx.beginPath(); pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y))); ctx.closePath();
+      ctx.fillStyle = GROUND_FILL[o.surface] || GROUND_FILL.grass;
+      ctx.fill();
+      ctx.strokeStyle = view.hov ? '#ef4444' : view.sel ? '#2d6cdf' : 'rgba(71,85,105,0.38)';
+      ctx.lineWidth = view.sel || view.hov ? 2 : 1;
+      ctx.stroke();
+    },
+    svg2d(o, view, key) {
+      const pts = o.pts || [];
+      if (pts.length < 3) return null;
+      return { key, el: 'polygon', props: { points: pts.map((p) => p.x + ',' + p.y).join(' '), fill: GROUND_FILL[o.surface] || GROUND_FILL.grass, stroke: 'rgba(71,85,105,0.38)', strokeWidth: 1 } };
+    },
+    build3d(o) {
+      const pts = o.pts || [];
+      if (pts.length < 3) return [];
+      return [{ kind: 'area', pts, color: GROUND_3D[o.surface] || GROUND_3D.grass }];
+    },
   },
 };
 

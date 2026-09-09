@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"sort"
 	"strings"
 
 	"golang.org/x/image/font"
@@ -34,7 +35,42 @@ type floorGrid struct {
 	Stairs    []gridRect    `json:"stairs"`
 	Parking   []gridRect    `json:"parking"`
 	Platforms []gridRect    `json:"platforms"`
-	Walls     [][]float64   `json:"walls"` // legacy painted cells [col,row]
+	// The outdoor kit (model v3). Real-world dimensions here are METRES, unlike doors and windows
+	// whose widths are image pixels — which is why this pass needs the floor's scale.
+	Roads  []gridPolyline `json:"roads"`
+	Trees  []gridTree     `json:"trees"`
+	Hedges []gridPolyline `json:"hedges"`
+	Ground []gridPolyline `json:"ground"`
+	Walls  [][]float64    `json:"walls"` // legacy painted cells [col,row]
+}
+
+// gridPolyline is a run of points carrying a real-world width — a road centreline, a hedge, or the
+// outline of a ground area. Shared by three types because the geometry is the same; what differs is
+// how it is painted.
+type gridPolyline struct {
+	Pts      []gridPt `json:"pts"`
+	Width    float64  `json:"width"`
+	Height   float64  `json:"height"`
+	Surface  string   `json:"surface"`
+	Markings string   `json:"markings"`
+	Kerb     *bool    `json:"kerb"`
+}
+
+type gridPt struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+}
+
+// gridTree carries the three numbers that decide whether a camera can see past it: how wide the
+// canopy is, how tall it stands, and how far the stem is CLEAR — a camera at 2.5 m sees under a
+// canopy whose stem is clear to 3 m.
+type gridTree struct {
+	X       float64 `json:"x"`
+	Y       float64 `json:"y"`
+	Canopy  float64 `json:"canopy"`
+	Height  float64 `json:"height"`
+	Stem    float64 `json:"stem"`
+	Species string  `json:"species"`
 }
 
 type gridSeg struct {
@@ -80,11 +116,52 @@ var (
 	gridGlaze = color.RGBA{56, 189, 248, 255} // #38bdf8
 	gridDoor  = color.RGBA{180, 83, 9, 255}   // #b45309
 	gridWinFr = color.RGBA{3, 105, 161, 255}  // #0369a1 window frame
+	// The outdoor kit. These match the frontend's ROAD_SURFACE / GROUND_FILL palettes in
+	// map/plan_objects.js, so a road is the same grey in the report as it is on screen.
+	gridRoadAsphalt = color.RGBA{75, 85, 99, 255}
+	gridRoadConc    = color.RGBA{156, 163, 175, 255}
+	gridRoadGravel  = color.RGBA{168, 162, 158, 255}
+	gridRoadPaved   = color.RGBA{120, 113, 108, 255}
+	gridHedge       = color.RGBA{21, 128, 61, 255}
+	gridTreeStroke  = color.RGBA{22, 163, 74, 255}
+	gridGrass       = color.RGBA{132, 204, 22, 255}
+	gridWater       = color.RGBA{56, 189, 248, 255}
 )
+
+func roadColour(surface string) color.RGBA {
+	switch surface {
+	case "concrete":
+		return gridRoadConc
+	case "gravel":
+		return gridRoadGravel
+	case "paved":
+		return gridRoadPaved
+	default:
+		return gridRoadAsphalt
+	}
+}
+
+func groundColour(surface string) color.RGBA {
+	switch surface {
+	case "water":
+		return gridWater
+	case "gravel":
+		return gridRoadGravel
+	case "hardstanding":
+		return gridRoadPaved
+	default:
+		return gridGrass
+	}
+}
 
 // renderFloorGrid draws the authored geometry from a floor's Grid JSON onto dst. A blank
 // or unparseable Grid is a no-op (the plan is then just its image + pins).
-func renderFloorGrid(dst *image.RGBA, gridJSON string) {
+// scale is the floor's metres-per-pixel. The outdoor kit stores real-world sizes in METRES (a road
+// is 6 m wide, not 258 px), so this pass needs it to draw them — unlike walls, doors and windows,
+// which are already in image pixels. A scale of 0 means the plan was never scaled, and a NOMINAL
+// one is assumed so the geometry still appears: a road drawn at a guessed width is far better than
+// a survey report that silently omits the road.
+func renderFloorGrid(dst *image.RGBA, gridJSON string, scale float64) {
 	if strings.TrimSpace(gridJSON) == "" {
 		return
 	}
@@ -101,6 +178,39 @@ func renderFloorGrid(dst *image.RGBA, gridJSON string) {
 	}
 	wallW := math.Max(3, unit*0.22)
 	openings := append(append([]gridOpening{}, g.Doors...), g.Windows...)
+
+	// Metres per pixel. The nominal matches the editor's own fallback (a 0.5 m cell), so an
+	// unscaled plan prints at the same size it is drawn at on screen.
+	mpp := scale
+	if mpp <= 0 {
+		mpp = 0.5 / unit
+	}
+	m2px := func(m float64) float64 { return m / mpp }
+
+	// GROUND first: it is the surface everything else sits on.
+	for _, a := range g.Ground {
+		fillPolygon(dst, a.Pts, withAlpha(groundColour(a.Surface), 56))
+		strokePolyline(dst, a.Pts, 1, withAlpha(gridPark, 96), true)
+	}
+	// Roads next, under the structure but over the ground.
+	for _, r := range g.Roads {
+		w := r.Width
+		if w <= 0 {
+			w = 6
+		}
+		px := math.Max(2, m2px(w))
+		if r.Kerb == nil || *r.Kerb {
+			strokePolyline(dst, r.Pts, px+3, withAlpha(gridPark, 140), false)
+		}
+		strokePolyline(dst, r.Pts, px, roadColour(r.Surface), false)
+	}
+	for _, hg := range g.Hedges {
+		w := hg.Width
+		if w <= 0 {
+			w = 0.8
+		}
+		strokePolyline(dst, hg.Pts, math.Max(2, m2px(w)), gridHedge, false)
+	}
 
 	// Draw order matches the overlay: raised floors, parking, stairs sit UNDER the walls.
 	for _, p := range g.Platforms {
@@ -172,6 +282,95 @@ func renderFloorGrid(dst *image.RGBA, gridJSON string) {
 	// Windows: opaque frame body punched through the wall, a glazing bar, and jamb stops.
 	for _, d := range g.Windows {
 		drawWindow(dst, d, wallW)
+	}
+	// TREES last: a canopy sits OVER whatever it overhangs, which is exactly the point of
+	// drawing it — it is what the camera underneath cannot see through.
+	for _, tr := range g.Trees {
+		canopy := tr.Canopy
+		if canopy <= 0 {
+			canopy = 4.5
+		}
+		r := math.Max(3, m2px(canopy))
+		fillCircle(dst, tr.X, tr.Y, r, withAlpha(gridTreeStroke, 40))
+		strokeCircle(dst, tr.X, tr.Y, r, math.Max(1, r*0.06), gridTreeStroke)
+		fillCircle(dst, tr.X, tr.Y, math.Max(2, r*0.1), gridTreeStroke)
+	}
+}
+
+// strokePolyline draws a run of points as a thick line. `closed` joins the last point back to
+// the first, which is what makes a ground AREA an outline rather than an open run.
+func strokePolyline(dst *image.RGBA, pts []gridPt, width float64, col color.RGBA, closed bool) {
+	if len(pts) < 2 {
+		return
+	}
+	for i := 0; i < len(pts)-1; i++ {
+		drawThickLine(dst, pts[i].X, pts[i].Y, pts[i+1].X, pts[i+1].Y, width, col)
+	}
+	if closed {
+		last := pts[len(pts)-1]
+		drawThickLine(dst, last.X, last.Y, pts[0].X, pts[0].Y, width, col)
+	}
+}
+
+// fillPolygon fills an arbitrary polygon by even-odd scanline. The same reason the rest of this
+// file rasterises by hand: x/image/vector was found to bleed a translucent uniform outside the
+// intended shape, so the fill stays fully under our control.
+func fillPolygon(dst *image.RGBA, pts []gridPt, col color.RGBA) {
+	if len(pts) < 3 {
+		return
+	}
+	minY, maxY := pts[0].Y, pts[0].Y
+	for _, p := range pts {
+		if p.Y < minY {
+			minY = p.Y
+		}
+		if p.Y > maxY {
+			maxY = p.Y
+		}
+	}
+	b := dst.Bounds()
+	y0 := int(math.Max(float64(b.Min.Y), math.Floor(minY)))
+	y1 := int(math.Min(float64(b.Max.Y-1), math.Ceil(maxY)))
+	for y := y0; y <= y1; y++ {
+		var xs []float64
+		for i := 0; i < len(pts); i++ {
+			a := pts[i]
+			c := pts[(i+1)%len(pts)]
+			if (a.Y <= float64(y) && c.Y > float64(y)) || (c.Y <= float64(y) && a.Y > float64(y)) {
+				t := (float64(y) - a.Y) / (c.Y - a.Y)
+				xs = append(xs, a.X+t*(c.X-a.X))
+			}
+		}
+		sort.Float64s(xs)
+		for i := 0; i+1 < len(xs); i += 2 {
+			fillAxisRect(dst, xs[i], float64(y), xs[i+1]-xs[i], 1, col)
+		}
+	}
+}
+
+func fillCircle(dst *image.RGBA, cx, cy, r float64, col color.RGBA) {
+	if r <= 0 {
+		return
+	}
+	for y := int(math.Floor(cy - r)); y <= int(math.Ceil(cy+r)); y++ {
+		dy := float64(y) - cy
+		if math.Abs(dy) > r {
+			continue
+		}
+		hw := math.Sqrt(r*r - dy*dy)
+		fillAxisRect(dst, cx-hw, float64(y), hw*2, 1, col)
+	}
+}
+
+func strokeCircle(dst *image.RGBA, cx, cy, r, width float64, col color.RGBA) {
+	if r <= 0 {
+		return
+	}
+	steps := int(math.Max(24, math.Min(240, r*2)))
+	for i := 0; i < steps; i++ {
+		a0 := float64(i) / float64(steps) * 2 * math.Pi
+		a1 := float64(i+1) / float64(steps) * 2 * math.Pi
+		drawThickLine(dst, cx+r*math.Cos(a0), cy+r*math.Sin(a0), cx+r*math.Cos(a1), cy+r*math.Sin(a1), width, col)
 	}
 }
 

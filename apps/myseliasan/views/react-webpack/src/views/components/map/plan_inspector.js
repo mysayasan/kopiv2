@@ -126,6 +126,18 @@ export function PlanFields({ typeName, index, obj, scale, unit, siteKind, onPatc
   const resizable = spec.geometry === 'rect' || spec.geometry === 'segment' || spec.geometry === 'polyline';
   const rotatable = spec.geometry === 'rect' || spec.geometry === 'opening';
 
+  // Two controls labelled "Width" in one panel is a trap, and the outdoor kit walked straight into
+  // it: a road's OWN width is its carriageway (6 m), while the transform block's width is its
+  // bounding box (the whole run, tens of metres). Whichever the operator reached for, the other one
+  // was the one they meant.
+  //
+  // The type's own field wins — it is the property that means something about the object — and the
+  // bounding-box control for that axis is dropped. Compared on the RENDERED label rather than the
+  // key, because the collision is what the operator reads, and it has to hold in every language.
+  const ownLabels = new Set(spec.fields.map((f) => t(f.label)));
+  const showBoxW = resizable && !ownLabels.has(t('pi.width'));
+  const showBoxH = resizable && !ownLabels.has(t('pi.height'));
+
   return (
     <div className="pi-body">
       <div className="pi-group">
@@ -145,17 +157,17 @@ export function PlanFields({ typeName, index, obj, scale, unit, siteKind, onPatc
             onCommit={(v) => onTransform({ px: cx, py: cy, ang: ((v * Math.PI) / 180) - (obj.a || 0) })}
           />
         ) : null}
-        {resizable ? (
-          <>
-            <NumField
-              label={t('pi.width')} value={m(wPx)} unit={posUnit} digits={posDigits} step={scale > 0 ? 0.01 : 1}
-              onCommit={(v) => { const want = px(v); if (wPx > 0.001 && want > 0) onTransform({ px: cx, py: cy, sx: want / wPx, sy: 1, fa: obj.a || 0 }); }}
-            />
-            <NumField
-              label={t('pi.height')} value={m(hPx)} unit={posUnit} digits={posDigits} step={scale > 0 ? 0.01 : 1}
-              onCommit={(v) => { const want = px(v); if (hPx > 0.001 && want > 0) onTransform({ px: cx, py: cy, sx: 1, sy: want / hPx, fa: obj.a || 0 }); }}
-            />
-          </>
+        {showBoxW ? (
+          <NumField
+            label={t('pi.width')} value={m(wPx)} unit={posUnit} digits={posDigits} step={scale > 0 ? 0.01 : 1}
+            onCommit={(v) => { const want = px(v); if (wPx > 0.001 && want > 0) onTransform({ px: cx, py: cy, sx: want / wPx, sy: 1, fa: obj.a || 0 }); }}
+          />
+        ) : null}
+        {showBoxH ? (
+          <NumField
+            label={t('pi.height')} value={m(hPx)} unit={posUnit} digits={posDigits} step={scale > 0 ? 0.01 : 1}
+            onCommit={(v) => { const want = px(v); if (hPx > 0.001 && want > 0) onTransform({ px: cx, py: cy, sx: 1, sy: want / hPx, fa: obj.a || 0 }); }}
+          />
         ) : null}
       </div>
 
