@@ -22,7 +22,7 @@ authored before it:
 | Field | Meaning |
 |---|---|
 | `Segments []gridSeg` | Wall centre-lines (`X1,Y1`→`X2,Y2`). |
-| `Doors`/`Windows []gridOpening` | A centre `(Cx,Cy)` on a wall, width `W`, the wall's angle `A` (rad); `Hf`/`Sf` (doors only) pick the hinge end / swing side. |
+| `Doors`/`Windows []gridOpening` | A centre `(Cx,Cy)` on a wall, width `W`, the wall's angle `A` (rad); `Hf`/`Sf` (doors only) pick the hinge end / swing side; `Sill`/`Head` (windows only, real-world METRES) are the glazing's bottom/top — unused by the drawn window symbol itself, but exactly what `buildOccluders` (below) needs to decide whether a camera at a given mount height sees through it. |
 | `Stairs`/`Parking`/`Platforms []gridRect` | Axis-aligned footprints (`X1,Y1`-`X2,Y2`) rotated `A` about their centre; per-kind extras (`Dir`/`Steps`/`Height`/`Down` for stairs, `Bays` for parking, `Rise` for platforms). |
 | `Roads`/`Hedges`/`Ground []gridPolyline` | A point run (`Pts []gridPt`) plus `Width`/`Height`/`Surface`/`Markings`/`Kerb` — one shape shared by all three because the geometry is identical; only the paint differs. `Ground`'s run is drawn CLOSED (an outline, not an open line). Real-world metres, not pixels. |
 | `Trees []gridTree` | A point (`X,Y`) plus `Canopy`/`Height`/`Stem`/`Species`. `Stem` (the CLEAR height before the canopy starts) is the field that decides whether a camera below it can see past the tree — this is why the type exists rather than being folded into `Ground`. Real-world metres. |
@@ -91,6 +91,39 @@ so a canopy visibly covers whatever it overhangs:
   (line segments around the circumference), used for a tree's canopy.
 - `drawCenteredLabel`/`drawStairTreads`/`drawRectDividers` — small per-shape label/divider
   helpers.
+
+## Coverage occlusion (`buildOccluders`, `visibleFrom`)
+
+A printed wedge that shows a camera covering ground a wall stands in front of is worse than one
+that shows nothing, because it looks like an answer. `buildOccluders(g floorGrid, mountH, wallH,
+mpp float64) occluders` filters a floor's geometry down to what actually blocks **that camera at
+its own mount height** — the same rule `plan_geometry.js`'s `occluderSet` applies in the frontend:
+
+- a wall segment blocks unless `mountH >= wallH`; when it doesn't, doorways are carved out of every
+  wall unconditionally (`carveSegGo`) and a window is carved only when `mountH` falls strictly
+  between its `Sill` and `Head` (defaulting to 0.9/2.1 m when unset) — otherwise the wall is left
+  solid through the glazing.
+- a hedge (`gridPolyline`, turned into a chain of `gridSeg`) blocks while `mountH < Height` (default
+  1.6 m).
+- a tree canopy becomes an `occDisc{X, Y, R}` (`Canopy` metres → pixels via `mpp`) only when `mountH`
+  is strictly between `Stem` and `Height` (defaults 2.2/8 m) — below the clear stem or above the
+  crown, it is not returned at all.
+- roads/ground/parking/platforms never appear in an `occluders` value; they are flat.
+
+`occluders{Segs []gridSeg, Discs []occDisc}` is the resulting geometry. `visibleFrom(cx, cy, tx, ty,
+occ) bool` reports whether a target pixel is reachable from the camera past every one of them —
+`segmentsCross` (open-segment intersection, endpoints excluded) against each `Segs` entry,
+`segmentHitsDisc` (point-to-segment distance vs. radius, via the shared `distToSegSq`) against each
+`Discs` entry — and `drawFovWedge` (`report_floorplan.go.md`) calls it per pixel of the sector,
+skipping any pixel it returns false for.
+
+**Two implementations of one rule, deliberately.** `plan_geometry.js` sweeps rays and returns a
+polygon; this file tests each pixel of the sector directly instead of porting that sweep into a
+rasteriser that already works per pixel — the per-pixel test is the simpler and more exact of the
+two here. `report_floorgrid_parity_test.go`'s parity check still holds the two sides' ARRAY set
+together (it checks array names against `floorGrid` json tags, not individual fields like `Sill`/
+`Head`); it does not, and cannot, assert the two occlusion algorithms agree pixel-for-pixel — there
+is no cross-language bench for that yet.
 
 ## Notes
 

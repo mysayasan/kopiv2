@@ -37,7 +37,7 @@ func TestRenderFloorPlacements(t *testing.T) {
 		{X: 300, Y: 100, LastKnownName: "Sensor"},                          // marker at y=200
 		nil, // must be skipped
 	}
-	out, err := renderFloorPlacements(buf.Bytes(), grid, 0, placements)
+	out, err := renderFloorPlacements(buf.Bytes(), grid, 0, 0, placements)
 	if err != nil {
 		t.Fatalf("renderFloorPlacements() error = %v", err)
 	}

@@ -6,7 +6,7 @@ import { NodeCameraTile } from './node_manager';
 import { PLAN_OBJECTS, readModel } from './map/plan_objects';
 import { PTZRing } from './nodecam/ptz';
 import { nodeTone, TONES } from '../lib/fleet_status';
-import { carveSeg, rectCenter, rectSize } from './plan_geometry';
+import { carveSeg, rectCenter, rectSize, coveragePolygon } from './plan_geometry';
 import { showsAreaBar, siteGlyph } from './site_kinds';
 
 // FloorPlanGrid draws the AUTHORED geometry (walls, openings, stairs, raised floors, parking) over
@@ -129,12 +129,27 @@ function fovRadius(w, h) {
   return Math.max(50, Math.min(w, h) * 0.16);
 }
 
-// fovPath builds the SVG path (in image-pixel/viewBox coords, y-DOWN) for a camera's coverage
-// wedge: a fan from the marker spanning `fov` degrees, centred on `heading` (clockwise from up).
-function fovPath(p, w, h) {
+// fovPath builds the SVG path (in image-pixel/viewBox coords, y-DOWN) for what a camera can SEE:
+// the wedge clipped by every wall, window, hedge and canopy that blocks it at this camera's own
+// mount height. Through coveragePolygon, so this view and the editor cannot disagree.
+//
+// With no floor model it degrades to the plain fan it used to draw — a node drill-down that has not
+// loaded its geometry yet shows an unclipped wedge rather than nothing at all.
+function fovPath(p, w, h, floor) {
   const cx = p.x;
   const cy = h - p.y; // flip y into the SVG's top-left origin
   const r = fovRadius(w, h);
+  const model = floorOccluders(floor);
+  if (model) {
+    const poly = coveragePolygon(
+      { x: cx, y: cy, heading: p.heading || 0, fov: p.fov || 0 },
+      model,
+      { mountH: p.mountHeight > 0 ? p.mountHeight : 2.5, wallH: floor && floor.wallHeight > 0 ? floor.wallHeight : 2.7, mpp: model.mpp, range: r },
+    );
+    if (poly && poly.length > 1) {
+      return `M ${cx.toFixed(1)} ${cy.toFixed(1)}` + poly.map((q) => ` L ${q.x.toFixed(1)} ${q.y.toFixed(1)}`).join('') + ' Z';
+    }
+  }
   const half = (p.fov || 0) / 2;
   const N = 24;
   let d = `M ${cx.toFixed(1)} ${cy.toFixed(1)}`;
@@ -144,6 +159,20 @@ function fovPath(p, w, h) {
     d += ` L ${(cx + r * Math.sin(rad)).toFixed(1)} ${(cy - r * Math.cos(rad)).toFixed(1)}`;
   }
   return `${d} Z`;
+}
+
+// floorOccluders reads the arrays coverage cares about out of a floor's stored model, or null when
+// there is nothing authored to block anything.
+function floorOccluders(floor) {
+  if (!floor || !floor.grid) return null;
+  const parsed = readModel(floor.grid);
+  const a = parsed.arrays;
+  const unit = parsed.meta.unit || parsed.meta.cellPx || 20;
+  return {
+    segments: a.segments, doors: a.doors, windows: a.windows, hedges: a.hedges, trees: a.trees,
+    // Metres per pixel: the floor's own scale when it has one, else the editor's nominal 0.5m cell.
+    mpp: floor.scale > 0 ? floor.scale : 0.5 / unit,
+  };
 }
 
 const MINI_W = 340;
@@ -567,7 +596,7 @@ export function NodeFloorView({ node, floorplans, focusCameraId, onBack, onPlay 
           {/* Camera coverage wedges, drawn in image-pixel space and stretched to the plan. */}
           <svg className="floor-fov" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden="true">
             {placements.filter((p) => p.cameraId && (p.fov || 0) > 0).map((p) => (
-              <path key={`fov-${p.id}`} d={fovPath(p, w, h)} fill={tone.color} fillOpacity="0.16" stroke={tone.color} strokeOpacity="0.45" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+              <path key={`fov-${p.id}`} d={fovPath(p, w, h, floor)} fill={tone.color} fillOpacity="0.16" stroke={tone.color} strokeOpacity="0.45" strokeWidth="1" vectorEffect="non-scaling-stroke" />
             ))}
           </svg>
           {placements.map((p) => {
@@ -797,7 +826,7 @@ export function BuildingFloorView({ site, floorplans, nodesById = {}, notifByCam
           <svg className="floor-fov" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden="true">
             {placements.filter((p) => p.cameraId && (p.fov || 0) > 0).map((p) => {
               const c = toneFor(p).color;
-              return <path key={`fov-${p.id}`} d={fovPath(p, w, h)} fill={c} fillOpacity="0.16" stroke={c} strokeOpacity="0.45" strokeWidth="1" vectorEffect="non-scaling-stroke" />;
+              return <path key={`fov-${p.id}`} d={fovPath(p, w, h, floor)} fill={c} fillOpacity="0.16" stroke={c} strokeOpacity="0.45" strokeWidth="1" vectorEffect="non-scaling-stroke" />;
             })}
           </svg>
           {placements.map((p) => {

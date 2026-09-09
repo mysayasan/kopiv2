@@ -100,7 +100,10 @@ is fetched via `ISiteService.SiteFloorplans`, ordinal-sorted, and each gets its 
   camera pins + the authored wall/door/window/stairs/outdoor-kit geometry via
   `renderFloorPlacements`/`renderFloorGrid` (`report_floorplan.go.md`/
   `report_floorgrid.go.md`), passing `floor.Scale` through so road/tree/hedge/ground sizes
-  (real-world metres) print correctly, embedding the result via `doc.Image`. Any failure — no image,
+  (real-world metres) print correctly, and now also `floor.WallHeight` so each camera's
+  coverage wedge is clipped to what it can actually see at its own mount height rather than
+  drawn as a decorative cone through the walls (`report_floorgrid.go.md`'s coverage-occlusion
+  section), embedding the result via `doc.Image`. Any failure — no image,
   undecodable bytes — is surfaced as a note on the page (`"Floor plan image could not be
   shown: <reason>"`), never dropped silently: an absent plan is otherwise
   indistinguishable from "this floor has no plan".

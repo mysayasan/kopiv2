@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
 import * as THREE from 'three';
-import { sillOf, headOf, openingSpanOnSeg, remainingSpans, pointInRotatedRect, rectCorners } from './plan_geometry';
+import { sillOf, headOf, openingSpanOnSeg, remainingSpans, pointInRotatedRect, rectCorners, coveragePolygon } from './plan_geometry';
 import { PLAN_OBJECTS, readModel } from './map/plan_objects';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { useT } from '@shared';
@@ -21,6 +21,13 @@ import { nodeTone } from '../lib/fleet_status';
 const ASSUMED_LONG_SIDE_M = 20; // fallback real size of a plan's longer side when no scale is set
 const DEFAULT_WALL_H = 2.7; // metres — a storey
 const DEFAULT_MOUNT_H = 2.5; // metres — a wall-mounted camera
+
+// occModelFor pulls the arrays that block a view out of a floor's stored model. Shared shape with
+// the editor's, because coveragePolygon is the same function in both.
+function occModelFor(f) {
+  const a = readModel(f && f.grid).arrays;
+  return { segments: a.segments, doors: a.doors, windows: a.windows, hedges: a.hedges, trees: a.trees };
+}
 const DEFAULT_PITCH = 15; // degrees of downward tilt when a placement has none stored
 const FLOOR_GAP = 0.4; // metres of air between stacked floors
 
@@ -520,7 +527,37 @@ export default function Floor3D({ floors = [], activeIndex = 0, stacked = false,
             Math.max(baseY, apex.y - Math.sin(pitchRad) * rangeM),
             apex.z - Math.cos(headRad) * horiz,
           );
-          scene.add(coneToward(apex, target, p.fov, color));
+          // The coverage VOLUME, clipped by whatever blocks this camera at its own mount height —
+          // computed by the same coveragePolygon the 2D canvas draws, so the two cannot disagree
+          // about what a camera sees. A fan of triangles from the apex to the polygon's edge IS the
+          // clipped cone; a plain ConeGeometry could only ever pass through the walls.
+          const covPoly = coveragePolygon(
+            { x: p.x, y: h - p.y, heading: p.heading || 0, fov: p.fov },
+            occModelFor(f),
+            { mountH: p.mountHeight > 0 ? p.mountHeight : DEFAULT_MOUNT_H, wallH: wallH, mpp, range: rangeM / mpp },
+          );
+          if (covPoly && covPoly.length > 1) {
+            // The floor-level footprint of what is visible, lifted just off the slab, plus the walls
+            // of the volume back up to the lens. Drawn double-sided and depth-write-off, like the
+            // cone it replaces, so it reads as a translucent field rather than a solid.
+            const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false });
+            const verts = [];
+            const toW = (q) => new THREE.Vector3((q.x / w - 0.5) * fw, baseY + 0.02, (0.5 - q.y / h) * fh);
+            const originW = toW({ x: p.x, y: h - p.y });
+            for (let i = 0; i + 1 < covPoly.length; i++) {
+              const a = toW(covPoly[i]); const b = toW(covPoly[i + 1]);
+              // the visible ground patch
+              verts.push(originW.x, originW.y, originW.z, a.x, a.y, a.z, b.x, b.y, b.z);
+              // and the sheet from the lens down to its far edge
+              verts.push(apex.x, apex.y, apex.z, a.x, a.y, a.z, b.x, b.y, b.z);
+            }
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+            geo.computeVertexNormals();
+            scene.add(new THREE.Mesh(geo, mat));
+          } else {
+            scene.add(coneToward(apex, target, p.fov, color));
+          }
         }
         const line = new THREE.Line(
           new THREE.BufferGeometry().setFromPoints([apex, base]),

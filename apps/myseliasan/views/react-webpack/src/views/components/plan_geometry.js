@@ -225,3 +225,195 @@ export function carveSeg(s, openings, tol) {
   const at = (tt) => ({ x: s.x1 + (s.x2 - s.x1) * tt, y: s.y1 + (s.y2 - s.y1) * tt });
   return spans.map(([a, b]) => { const p = at(a); const q = at(b); return { x1: p.x, y1: p.y, x2: q.x, y2: q.y }; });
 }
+
+// ---- coverage occlusion -------------------------------------------------------------------------
+//
+// Until now a camera's coverage was a decorative CONE: it passed straight through walls, hedges and
+// tree canopies alike, in 2D, in 3D and in the printed survey report. The plan showed what a camera
+// was AIMED at and said nothing about what it could SEE, which is the question the whole plan
+// exists to answer.
+//
+// This computes the real thing: the wedge clipped by everything that blocks it, as one polygon that
+// every surface draws. It lives here, beside the geometry the editor and the 3D view already share,
+// for exactly the reason those do — four renderers must not each have their own opinion about what
+// a camera sees.
+//
+// HEIGHT IS THE HALF THAT MAKES IT HONEST. An occluder blocks a camera only at the camera's own
+// height, and every one of these cases is a real argument an installer has on site:
+//
+//   a wall            blocks, unless the camera is mounted ABOVE it (a mast over a compound wall)
+//   a window          blocks unless the camera's height falls between its sill and its head —
+//                     which is precisely what a sill and a head are FOR
+//   a doorway         never blocks: it is a hole in the wall
+//   a hedge           blocks while it is taller than the camera is mounted
+//   a tree canopy     blocks only between its CLEAR STEM and its total height. A camera at 2.5 m
+//                     sees under a canopy clear to 3 m, and over nothing at all.
+//
+// Everything else on a plan — roads, ground, parking bays, raised floors — is flat, and flat things
+// do not block a horizontal view.
+
+// occluderSet turns a floor model plus a camera's mount height into the geometry that actually
+// blocks THAT camera. Returns segments (walls, hedges) and discs (tree canopies).
+//
+// `model` is the parsed grid: { segments, doors, windows, hedges, trees }. `opts` carries the
+// mount height in metres, the wall height, and metres-per-pixel so real-world sizes can be compared
+// against pixel geometry.
+export function occluderSet(model, opts) {
+  const m = model || {};
+  const mountH = opts && opts.mountH > 0 ? opts.mountH : 2.5;
+  const wallH = opts && opts.wallH > 0 ? opts.wallH : 2.7;
+  const mpp = opts && opts.mpp > 0 ? opts.mpp : 0.02;
+  const segments = [];
+  const discs = [];
+
+  // Walls. A camera mounted at or above the wall head looks straight over it.
+  if (mountH < wallH) {
+    const doors = Array.isArray(m.doors) ? m.doors : [];
+    const windows = Array.isArray(m.windows) ? m.windows : [];
+    // A doorway is a hole, so it is carved out of the wall unconditionally. A window is carved only
+    // when the camera's height falls inside its glazing — otherwise the wall is solid there.
+    const seeThrough = doors.concat(windows.filter((wn) => {
+      const sill = sillOf(wn); const head = headOf(wn);
+      return mountH > sill && mountH < head;
+    }));
+    (Array.isArray(m.segments) ? m.segments : []).forEach((s) => {
+      carveSeg(s, seeThrough, 6).forEach((piece) => segments.push(piece));
+    });
+  }
+
+  // Hedges: a run of points, blocking while taller than the camera is mounted.
+  (Array.isArray(m.hedges) ? m.hedges : []).forEach((hg) => {
+    const hgt = hg.height > 0 ? hg.height : 1.6;
+    if (mountH >= hgt) return; // the camera looks over it
+    const pts = hg.pts || [];
+    for (let i = 0; i + 1 < pts.length; i++) {
+      segments.push({ x1: pts[i].x, y1: pts[i].y, x2: pts[i + 1].x, y2: pts[i + 1].y });
+    }
+  });
+
+  // Tree canopies. The clear stem is what decides it: below the stem the view passes underneath,
+  // above the crown it passes over, and only in between is there anything in the way.
+  (Array.isArray(m.trees) ? m.trees : []).forEach((tr) => {
+    const stem = tr.stem >= 0 ? tr.stem : 2.2;
+    const top = tr.height > 0 ? tr.height : 8;
+    if (mountH <= stem || mountH >= top) return;
+    const r = (tr.canopy > 0 ? tr.canopy : 4.5) / mpp; // metres -> image pixels
+    if (r > 0.5) discs.push({ x: tr.x, y: tr.y, r });
+  });
+
+  return { segments, discs };
+}
+
+// raySegment returns the distance along a ray (origin + t*dir, |dir| = 1) at which it first meets a
+// segment, or Infinity. Standard 2D ray/segment intersection.
+function raySegment(ox, oy, dx, dy, s) {
+  const ex = s.x2 - s.x1; const ey = s.y2 - s.y1;
+  const denom = dx * ey - dy * ex;
+  if (Math.abs(denom) < 1e-9) return Infinity; // parallel
+  const t = ((s.x1 - ox) * ey - (s.y1 - oy) * ex) / denom;
+  const u = ((s.x1 - ox) * dy - (s.y1 - oy) * dx) / denom;
+  if (t < 1e-6 || u < 0 || u > 1) return Infinity;
+  return t;
+}
+
+// rayDisc returns the distance at which a ray first enters a circle, or Infinity. A camera standing
+// INSIDE a canopy sees nothing through it, which is why an origin within the disc returns 0.
+function rayDisc(ox, oy, dx, dy, c) {
+  const fx = ox - c.x; const fy = oy - c.y;
+  const b = 2 * (fx * dx + fy * dy);
+  const cc = fx * fx + fy * fy - c.r * c.r;
+  if (cc < 0) return 0; // the origin is inside the canopy
+  const disc = b * b - 4 * cc;
+  if (disc < 0) return Infinity;
+  const sq = Math.sqrt(disc);
+  const t1 = (-b - sq) / 2;
+  if (t1 > 1e-6) return t1;
+  const t2 = (-b + sq) / 2;
+  return t2 > 1e-6 ? t2 : Infinity;
+}
+
+// visibilityPolygon casts the wedge and returns the region a camera can actually see, as a polygon
+// starting at the camera itself.
+//
+// An angular sweep rather than an exact plane-sweep: rays are cast at a fixed step AND at every
+// occluder endpoint (nudged either side, so a corner produces both the near hit and the far one
+// behind it, which is what gives a shadow its crisp edge). That is O(rays x occluders) — on a plan
+// with tens of occluders it is nothing, and it degrades gracefully rather than falling over on
+// degenerate input, which an exact sweep does not.
+//
+// `range` is in image pixels; the polygon is clipped to it, so the result is always bounded.
+export function visibilityPolygon(origin, headingRad, fovRad, range, occluders, stepRad) {
+  const out = [];
+  const half = fovRad / 2;
+  const a0 = headingRad - half;
+  const a1 = headingRad + half;
+  const segs = (occluders && occluders.segments) || [];
+  const discs = (occluders && occluders.discs) || [];
+  const step = stepRad > 0 ? stepRad : (Math.PI / 180) * 2;
+
+  const angles = [];
+  for (let a = a0; a < a1; a += step) angles.push(a);
+  angles.push(a1);
+  // Endpoint rays: the corners are where a shadow's edge is, and sampling alone would round them
+  // off. The epsilon pair is what makes the edge sharp instead of a staircase.
+  const EPS = 1e-4;
+  const consider = (px, py) => {
+    const a = Math.atan2(py - origin.y, px - origin.x);
+    [a - EPS, a, a + EPS].forEach((cand) => {
+      // Normalise into the wedge's own angular window before testing containment, so a wedge that
+      // straddles -pi/+pi is not silently emptied.
+      let d = cand - a0;
+      while (d < 0) d += Math.PI * 2;
+      while (d > Math.PI * 2) d -= Math.PI * 2;
+      if (d <= fovRad) angles.push(a0 + d);
+    });
+  };
+  segs.forEach((s) => { consider(s.x1, s.y1); consider(s.x2, s.y2); });
+  // A disc has no corners, so its silhouette edges are the two tangent points from the camera.
+  discs.forEach((c) => {
+    const dx = c.x - origin.x; const dy = c.y - origin.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist <= c.r) return; // standing inside it: there is no silhouette, only darkness
+    const base = Math.atan2(dy, dx);
+    const spread = Math.asin(Math.min(1, c.r / dist));
+    consider(origin.x + Math.cos(base - spread) * dist, origin.y + Math.sin(base - spread) * dist);
+    consider(origin.x + Math.cos(base + spread) * dist, origin.y + Math.sin(base + spread) * dist);
+  });
+
+  angles.sort((p, q) => p - q);
+
+  let prev = null;
+  angles.forEach((a) => {
+    if (prev !== null && Math.abs(a - prev) < 1e-9) return; // duplicate ray
+    prev = a;
+    const dx = Math.cos(a); const dy = Math.sin(a);
+    let best = range;
+    for (let i = 0; i < segs.length; i++) {
+      const t = raySegment(origin.x, origin.y, dx, dy, segs[i]);
+      if (t < best) best = t;
+    }
+    for (let i = 0; i < discs.length; i++) {
+      const t = rayDisc(origin.x, origin.y, dx, dy, discs[i]);
+      if (t < best) best = t;
+    }
+    out.push({ x: origin.x + dx * best, y: origin.y + dy * best });
+  });
+
+  return out;
+}
+
+// coveragePolygon is the one call every renderer makes: model + camera in, polygon out. Keeping the
+// assembly here (rather than in each renderer) is what stops the 2D canvas, the read-only view, the
+// 3D scene and the PDF from disagreeing about what a camera can see.
+//
+// `heading` is in DEGREES with 0 = up (north) and increasing clockwise — the editor's convention —
+// while the maths above works in standard radians with 0 = +x. That conversion happens once, here.
+export function coveragePolygon(cam, model, opts) {
+  const fovDeg = cam && cam.fov > 0 ? cam.fov : 0;
+  if (!(fovDeg > 0)) return null;
+  const headingRad = (((cam.heading || 0) - 90) * Math.PI) / 180;
+  const fovRad = (Math.min(360, fovDeg) * Math.PI) / 180;
+  const occ = occluderSet(model, opts);
+  const poly = visibilityPolygon({ x: cam.x, y: cam.y }, headingRad, fovRad, opts.range, occ, opts.stepRad);
+  return poly.length >= 2 ? poly : null;
+}

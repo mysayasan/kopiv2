@@ -11,6 +11,7 @@ import {
   DEF_SILL, DEF_HEAD, sillOf, headOf, carveSeg,
   IDENTITY_XF, xfPoint, xfLengthAlong, rectCenter, rectSize, rectFrom, rectCorners, pointInRotatedRect, boundsOfPoints,
   HANDLES, resizeFactors, frameOf, frameFromBox, handleWorld, rotateKnobWorld,
+  coveragePolygon,
 } from './plan_geometry';
 
 // three.js loads only when the operator flips to the 3D tab.
@@ -168,6 +169,9 @@ const GRID_SUBDIV = 4;
 // Stair step (tread) lines: how many the operator can set, and the default derived from a storey
 // height at a nominal ~0.18 m riser. 0 stored means "use the default".
 // Raised-floor default rise and its slider bounds, in metres. A low platform by default.
+// A wall-mounted camera when a placement carries no mount height. Shared with the 3D view, which
+// uses the same figure - coverage must not differ between the two.
+const DEFAULT_MOUNT_H = 2.5;
 const DEF_RISE = 0.6;
 const RISE_MIN = 0.1;
 const RISE_MAX = 6;
@@ -1100,6 +1104,12 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
 
     // camera / node markers (OL coords → flip y). FOV wedge for cameras.
     const rad = arcRadius(w, h);
+    // The occluder source for coverage: the LIVE model, so dragging a wall reshapes every wedge it
+    // blocks as you drag it.
+    const occModel = {
+      segments: segsRef.current, doors: doorsRef.current, windows: windowsRef.current,
+      hedges: hedgesRef.current, trees: treesRef.current,
+    };
     drawRegistry(false); // roads, hedges and trees over the structure
 
     placements.forEach((p) => {
@@ -1116,10 +1126,19 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
       const tone = nodeTone(nodesById[p.nodeId], nowSecRef.current) || TONES.idle;
       const isCam = !!p.cameraId;
       if (isCam && (p.fov || 0) > 0) {
-        const half = (p.fov || 0) / 2; const N = 22;
-        ctx.beginPath(); ctx.moveTo(sx, sy);
-        for (let i = 0; i <= N; i++) { const deg = hdg - half + (p.fov || 0) * (i / N); const a = (deg * Math.PI) / 180; ctx.lineTo(sx + rad * ds * Math.sin(a), sy - rad * ds * Math.cos(a)); }
-        ctx.closePath(); ctx.fillStyle = `${tone.color}28`; ctx.fill(); ctx.strokeStyle = `${tone.color}88`; ctx.lineWidth = 1; ctx.stroke();
+        // What the camera can SEE, not merely what it is aimed at: the wedge clipped by every wall,
+        // window, hedge and tree canopy that blocks it AT THIS CAMERA'S HEIGHT. Before this, the
+        // cone passed straight through a building and the plan said nothing about coverage at all.
+        const poly = coveragePolygon(
+          { x: px, y: h - py, heading: hdg, fov: p.fov },
+          occModel,
+          { mountH: p.mountHeight > 0 ? p.mountHeight : DEFAULT_MOUNT_H, wallH: +wallHeight || 2.7, mpp: mppNow, range: rad },
+        );
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        if (poly) poly.forEach((q) => ctx.lineTo(q.x * ds, q.y * ds));
+        ctx.closePath();
+        ctx.fillStyle = `${tone.color}28`; ctx.fill(); ctx.strokeStyle = `${tone.color}88`; ctx.lineWidth = 1; ctx.stroke();
       }
       const selected = isSel('cam', p.id);
       // A touch larger than the old bare disc, so a legible glyph fits inside it.

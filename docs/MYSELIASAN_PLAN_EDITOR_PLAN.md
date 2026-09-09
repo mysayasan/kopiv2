@@ -1,8 +1,10 @@
 # MySeliaSan — Plan Editor Overhaul
 
-Status: **P1–P4 SHIPPED** (#250–#253), 2026-09-09. **P5 BUILT, in review** — built and
-live-benched. The register is complete; **P6 (coverage occlusion) is
-planned but deliberately sequenced last** and is a separate decision to take when P1–P5 are in.
+Status: **P1–P5 SHIPPED** (#250–#254), 2026-09-09. **P6 BUILT, in review** — built and
+live-benched.
+
+**THE REGISTER IS COMPLETE.** Every phase in this document is built. There is no next item here:
+anything further is a new decision, not a continuation of this plan.
 
 The plan editor is `FloorEditor` — `apps/myseliasan/views/react-webpack/src/views/components/floor_editor.js`.
 It is the surface an operator authors a site on: walls, openings, stairs, raised floors, parking,
@@ -490,7 +492,7 @@ per-type code), `node_floor_view.js` and `floor_3d.js` (hook consumption),
 `report_floorgrid.go` (+ struct fields, a scale parameter, 4 renderers and a polygon/circle
 rasteriser), `icons.js` (4 glyphs), i18n ×4, `apps/myseliasan/README.md`.
 
-### P6 — Coverage occlusion *(planned, sequenced last, separate go/no-go)*
+### P6 — Coverage occlusion — **BUILT, in review**
 
 The one that makes an authored plan *mean* something: the camera wedge stops being a decorative
 cone and becomes a real visibility polygon.
@@ -507,7 +509,33 @@ capacity/coverage story becomes defensible to a customer. This is also the phase
 justifies drawing trees at all (§3.2).
 
 Sequenced last because it is the largest item and because P1–P5 are independently shippable
-without it. **Decide at the end of P5, not now.**
+without it. The go/no-go was taken after P5 and the answer was go.
+
+**What shipped.** `coveragePolygon` in `plan_geometry.js` — an angular sweep that casts rays at a
+fixed step AND at every occluder endpoint (nudged either side, which is what gives a shadow a crisp
+edge rather than a staircase). All three JS surfaces call it: the editor canvas fills the polygon
+instead of an arc, the read-only SVG view builds its path from it, and the 3D scene lofts a fan of
+triangles from the lens to the polygon's edge — which IS the clipped cone, where a `ConeGeometry`
+could only ever pass through the walls.
+
+**Height is the half that makes it honest**, and every case is a real argument on site: a wall
+blocks unless the camera is mounted above it; a window blocks unless the mount height falls between
+its **sill and its head** (which is what a sill and a head are FOR, and the Go compositor had never
+even parsed them); a doorway never blocks; a hedge blocks while taller than the mount; a canopy
+blocks only between its **clear stem** and its crown. Roads, ground, bays and raised floors are flat
+and do not block a horizontal view.
+
+**Two implementations of one rule, deliberately.** The frontend sweeps rays and returns a polygon;
+the Go compositor tests each pixel of the sector for visibility directly, because that rasteriser
+already works per pixel and porting an angular sweep into it would have been the harder and less
+exact of the two. That is a thing to stay uneasy about — so the bench asserts the printed report
+still renders with occlusion in it, and the parity test continues to hold the array set together.
+
+**Every one of the three bench failures on the way was the BENCH, not the app**, and each was
+confirmed by opening the screenshot rather than by reasoning: a wall placed outside the coverage
+radius entirely, a probe box sitting inside a tree's own green canopy fill, and another inside a
+hedge's 69 px-wide body. A pixel-tint probe cannot tell WHICH tint it is looking at, which is
+exactly how an occluder's own fill reads as coverage.
 
 ---
 
@@ -539,8 +567,8 @@ without it. **Decide at the end of P5, not now.**
 | P2 Viewport and navigation | P1 (styles the shell P1 creates) | **Shipped (#251)** |
 | P3 Object registry | — (independent; land after P2) | **Shipped (#252)** |
 | P4 Outliner and numeric inspector | P3 | **Shipped (#253)** |
-| P5 Outdoor kit | P3 | **Built, in review** |
-| P6 Coverage occlusion | P5 | **Planned — separate go/no-go after P5** |
+| P5 Outdoor kit | P3 | **Shipped (#254)** |
+| P6 Coverage occlusion | P5 | **Built, in review** |
 
 **P1 must precede P2.** Every piece of chrome P2 builds — dark viewport, menu row, status bar, dock
 zones — is sized for a full window; building it in the modal first means styling and benching it
