@@ -35,7 +35,28 @@ const Floor3D = lazy(() => import('./floor_3d'));
 // otherwise have fit.
 const MAX_W = 1100;
 const MAX_H = 620;
-const MIN_STAGE_H = 260; // never shrink the plan to a sliver, scroll instead
+const MIN_STAGE_H = 260; // never shrink the viewport to a sliver
+
+// The viewport's own palette.
+//
+// A dark surround with a light SHEET is the convention every drawing tool settles on (Figma,
+// Illustrator, a CAD paper-space): the dark frames the work and the sheet is the paper the plan is
+// ink on. It is also the low-risk choice — every stroke colour in this file was picked against a
+// light sheet and stays valid. The surround is deliberately NOT theme-aware: a viewport is dark in
+// both themes, the way a DCC app's is, and these are canvas pixels so they cannot be CSS tokens.
+const VIEW_SURROUND = '#1b2027';
+const VIEW_SHEET = '#f7f8fa';
+const GRID_MINOR = 'rgba(100,116,139,0.16)';
+const GRID_MAJOR = 'rgba(100,116,139,0.34)';
+const GRID_EDGE = 'rgba(15,23,33,0.35)';
+// Snap indicator: what the pointer actually caught, so a snap is visible rather than inferred.
+const SNAP_COLOR = '#22c55e';
+
+// Snap modes, in the order the magnet cycles them. 'off' is a mode rather than a separate toggle so
+// one control answers "is it snapping, and to what" — and Ctrl inverts whatever is set, which is
+// how a drawing tool lets you place something free for one click without changing your setting.
+const SNAP_MODES = ['grid', 'vertex', 'edge', 'midpoint', 'off'];
+const SNAP_ICO = { grid: 'grid2', vertex: 'map-pin', edge: 'wall', midpoint: 'circle', off: 'x' };
 
 // The toolbar is built from what the place actually IS. Drawing geometry (a run of segments, a
 // rectangle, an ellipse) is common to every kind — a wall and a fence are the same line, an
@@ -96,8 +117,8 @@ function markerIcon(name, color, onReady) {
 }
 
 const TOOLSETS = {
-  [KIND_BUILDING]: ['select', 'wall', 'room', 'round', 'door', 'window', 'stairs', 'platform', 'erase'],
-  [KIND_OUTDOOR]: ['select', 'wall', 'room', 'round', 'door', 'parking', 'erase'],
+  [KIND_BUILDING]: ['select', 'wall', 'room', 'round', 'door', 'window', 'stairs', 'platform', 'setscale', 'erase'],
+  [KIND_OUTDOOR]: ['select', 'wall', 'room', 'round', 'door', 'parking', 'setscale', 'erase'],
 };
 // Per-kind icon + label for the tools whose MEANING shifts with the place. The tool id stays the
 // same (`wall` draws segments, `door` cuts an opening) — only what the operator is told changes.
@@ -120,6 +141,7 @@ const DEFAULT_FACE = {
   stairs: { icon: 'stairs', key: 'grid.stairs', hint: 'grid.stairsHint' },
   parking: { icon: 'parking', key: 'grid.parking', hint: 'grid.parkingHint' },
   platform: { icon: 'platform', key: 'grid.platform', hint: 'grid.platformHint' },
+  setscale: { icon: 'sliders', key: 'grid.setScale', hint: 'grid.setScaleHint' },
   erase: { icon: 'trash', key: 'grid.erase', hint: 'grid.eraseHint' },
 };
 const faceOf = (kind, id) => (TOOL_FACE[kind] && TOOL_FACE[kind][id]) || DEFAULT_FACE[id] || { icon: 'cursor', key: id, hint: id };
@@ -191,7 +213,7 @@ function normStair(a, b, dir) { return { x1: Math.min(a.x, b.x), y1: Math.min(a.
 // tall box climbs up the screen, wide box climbs to the right. The operator can rotate afterwards.
 function defaultStairDir(a, b) { return Math.abs(b.y - a.y) >= Math.abs(b.x - a.x) ? 'n' : 'e'; }
 
-export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], nodesById = {}, placing, onPlace, onClearPlacing, onMove, onAim, onRemove, onSaveModel, onToast, busy }) {
+export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], nodesById = {}, placing, onPlace, onClearPlacing, onMove, onAim, onRemove, onSaveModel, onToast, onStatus, busy }) {
   const t = useT();
   const editorRef = useRef(null); // the editor surface; floating panels are positioned within it
   const canvasRef = useRef(null);
@@ -212,6 +234,15 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
   const hoverParkRef = useRef(-1); // parking-row index under the erase cursor
   const hoverPlatRef = useRef(-1); // raised-floor index under the erase cursor
   const cursorRef = useRef(null);
+  // Where the pointer is, in image space, for the status bar's readout ONLY.
+  //
+  // Separate from cursorRef on purpose: cursorRef is drawing state - it is the SNAPPED point, it is
+  // deliberately nulled by the erase tool, and it is only maintained for the tools that draw. The
+  // readout has to work under every tool, including Select, which is the one the editor opens on.
+  // Sharing the ref would have meant either a dead readout or changing what the canvas draws.
+  const hoverPosRef = useRef(null);
+  const panRef = useRef(null); // an in-flight viewport pan: { x, y, tx, ty }
+  const spaceRef = useRef(false); // space held = pan with the left button, for a trackpad with no middle click
   const saveTimer = useRef(null);
   const placingRef = useRef(placing); placingRef.current = placing;
   // See the note on `tool`: only the select branch places, so carrying something has to mean
@@ -231,6 +262,9 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
   }, [placing]);
   const [, tick] = useState(0);
   const redraw = useCallback(() => tick((n) => n + 1), []);
+  // While space is held (or a pan is in flight) the pointer says so: a grab hand beats a crosshair
+  // that no longer does what a crosshair does.
+  const panCursor = spaceRef.current ? (panRef.current ? 'grabbing' : 'grab') : placingCursorCss;
   const nowSecRef = useRef(Math.floor(Date.now() / 1000));
 
   const [mode, setMode] = useState('2d');
@@ -286,37 +320,82 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
     // Re-observe when the canvas remounts (e.g. after switching to 3D and back) so it keeps fitting.
   }, [mode]);
 
-  // Display scale = the auto-fit scale (plan → available space) times a user zoom multiplier. Zoom 1
-  // is "fit"; above 1 the canvas grows past the viewport and the wrap shows scrollbars.
-  const [zoom, setZoom] = useState(1);
-  const clampZoom = (z) => Math.min(6, Math.max(0.25, z));
-  const fitScale = Math.min(stage.w / w, stage.h / h, 2);
-  const ds = fitScale * zoom;
-  const cssW = Math.round(w * ds);
-  const cssH = Math.round(h * ds);
+  // ---- the viewport -----------------------------------------------------------------------------
+  //
+  // The canvas now FILLS the stage and the plan is drawn through a view transform
+  // (image → screen: sx = x*scale + tx). It used to be the other way round: the canvas element was
+  // sized to the whole plan and the wrapper's SCROLLBARS did the panning. That is why there was no
+  // middle-mouse pan, why zoom could only grow about the viewport centre, and why zooming had to
+  // fix up scrollLeft/scrollTop afterwards.
+  //
+  // One transform replaces all of it, and it is what lets the wheel zoom about the CURSOR — the
+  // thing that makes a viewport feel like a viewport rather than a scrolling document.
+  const MIN_SCALE = 0.05;
+  const MAX_SCALE = 12;
+  const clampScale = (z) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, z));
+  // fitView centres the whole plan in the stage with a small margin — the "frame all" answer, and
+  // the view the editor opens on.
+  const fitView = useCallback((sw, sh) => {
+    const pad = 24;
+    const sc = Math.min((sw - pad * 2) / w, (sh - pad * 2) / h, 2);
+    const scale = clampScale(sc > 0 ? sc : 1);
+    return { scale, tx: (sw - w * scale) / 2, ty: (sh - h * scale) / 2 };
+  }, [w, h]);
+  const [view, setView] = useState(() => fitView(MAX_W, MAX_H));
+  const viewRef = useRef(view); viewRef.current = view;
+  const ds = view.scale;
+  const cssW = Math.max(1, Math.round(stage.w));
+  const cssH = Math.max(1, Math.round(stage.h));
 
-  // Ctrl/⌘ + wheel zooms (a native non-passive listener so it can suppress the page/scroll default);
-  // a plain wheel is left alone so it scrolls the overflowing canvas normally.
+  // Frame the plan whenever the stage is resized before the operator has taken control of the view
+  // (opening the editor, switching back from 3D, resizing the window). Once they pan or zoom, their
+  // view is theirs and a resize must not yank it back.
+  const touchedRef = useRef(false);
+  useLayoutEffect(() => {
+    if (touchedRef.current) return;
+    setView(fitView(stage.w, stage.h));
+  }, [stage.w, stage.h, fitView]);
+
+  // zoomAbout keeps one screen point pinned while the scale changes — the cursor for a wheel zoom,
+  // the stage centre for the toolbar buttons.
+  const zoomAbout = useCallback((factor, px, py) => {
+    touchedRef.current = true;
+    setView((v) => {
+      const next = clampScale(v.scale * factor);
+      const k = next / v.scale;
+      return { scale: next, tx: px - (px - v.tx) * k, ty: py - (py - v.ty) * k };
+    });
+  }, []);
+  // The wheel zooms about the cursor. Ctrl/⌘+wheel does the same (existing muscle memory), and
+  // both suppress the page default — the canvas fills the stage now, so there is nothing to scroll.
   useEffect(() => {
     const el = canvasRef.current;
     if (!el) return undefined;
-    const onWheel = (e) => { if (!(e.ctrlKey || e.metaKey)) return; e.preventDefault(); setZoom((z) => clampZoom(z * (e.deltaY < 0 ? 1.1 : 1 / 1.1))); };
+    const onWheel = (e) => {
+      e.preventDefault();
+      const r = el.getBoundingClientRect();
+      zoomAbout(e.deltaY < 0 ? 1.12 : 1 / 1.12, e.clientX - r.left, e.clientY - r.top);
+    };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
     // Re-bind when the canvas remounts (e.g. after switching to 3D and back).
-  }, [mode]);
-  // Keep the viewport centre fixed across a zoom change, so zooming grows/shrinks around the middle
-  // of what you are looking at rather than the top-left corner.
-  const prevZoomRef = useRef(zoom);
-  useLayoutEffect(() => {
-    const el = wrapRef.current;
-    if (el && prevZoomRef.current && prevZoomRef.current !== zoom) {
-      const r = zoom / prevZoomRef.current;
-      el.scrollLeft = (el.scrollLeft + el.clientWidth / 2) * r - el.clientWidth / 2;
-      el.scrollTop = (el.scrollTop + el.clientHeight / 2) * r - el.clientHeight / 2;
-    }
-    prevZoomRef.current = zoom;
-  }, [zoom]);
+  }, [mode, zoomAbout]);
+
+  // frameOn fits the view to an image-space box - the shared answer for "frame all" (the plan) and
+  // "frame selected" (whatever is held).
+  const frameOn = useCallback((box) => {
+    if (!box || !(box.x2 > box.x1) || !(box.y2 > box.y1)) return;
+    touchedRef.current = true;
+    const pad = 40;
+    const sw = Math.max(1, stage.w); const sh = Math.max(1, stage.h);
+    const sc = clampScale(Math.min((sw - pad * 2) / (box.x2 - box.x1), (sh - pad * 2) / (box.y2 - box.y1)));
+    setView({
+      scale: sc,
+      tx: sw / 2 - ((box.x1 + box.x2) / 2) * sc,
+      ty: sh / 2 - ((box.y1 + box.y2) / 2) * sc,
+    });
+  }, [stage.w, stage.h]);
+  const frameAll = useCallback(() => { touchedRef.current = false; setView(fitView(stage.w, stage.h)); }, [fitView, stage.w, stage.h]);
 
   const [cellMeters, setCellMeters] = useState(() => { const s = floor && floor.scale > 0 ? floor.scale : 0; return s > 0 ? +(s * unit).toFixed(2) : 0.5; });
   const [wallHeight, setWallHeight] = useState(() => (floor && floor.wallHeight > 0 ? floor.wallHeight : 2.7));
@@ -475,6 +554,36 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
   const undo = useCallback(() => { if (!histRef.current.length) return; futRef.current.push(snapshot()); restore(histRef.current.pop()); draftRef.current = null; redraw(); scheduleSave(); }, [redraw, scheduleSave]);
   const redo = useCallback(() => { if (!futRef.current.length) return; histRef.current.push(snapshot()); restore(futRef.current.pop()); redraw(); scheduleSave(); }, [redraw, scheduleSave]);
   // Re-save when scale/height change (but not on first mount).
+  // finishSetScale turns "this run is 4.2 m" into the plan's metres-per-pixel.
+  //
+  // Scale defaults to UNSET (0), and the model is split on which side of that line each field sits:
+  // door and window widths are pixels, sills and stair heights are metres. Every metre field is
+  // dead until a plan has a scale, and the only way to give it one was a spinner labelled "each
+  // cell" that asked the operator to do this arithmetic in their head.
+  //
+  // It sets `cellMeters` rather than a scale directly, because the cell is what the rest of the
+  // editor is expressed in - so one answer here moves the grid, the readouts and the 3D view
+  // together.
+  const finishSetScale = useCallback((a, b) => {
+    draftRef.current = null;
+    const px = Math.hypot(b.x - a.x, b.y - a.y);
+    if (px < 2) { redraw(); return; } // a click, not a measurement
+    const answer = window.prompt(t('grid.setScalePrompt'), '');
+    if (answer === null) { redraw(); return; }
+    const metres = parseFloat(String(answer).replace(',', '.'));
+    if (!(metres > 0)) {
+      if (onToast) onToast(t('grid.setScaleBad'), 'error');
+      redraw();
+      return;
+    }
+    const perPx = metres / px;          // metres per image pixel
+    const cell = +(perPx * unit).toFixed(3); // …expressed as the metre cell the editor works in
+    setCellMeters(cell);
+    if (onToast) onToast(t('grid.setScaleDone', { m: metres.toFixed(2), cell: cell.toFixed(2) }), 'success');
+    redraw();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unit, onToast, t, redraw]);
+
   const firstRef = useRef(true);
   useEffect(() => { if (firstRef.current) { firstRef.current = false; return; } if (segsRef.current.length || stairsRef.current.length) scheduleSave(); /* eslint-disable-next-line */ }, [cellMeters, wallHeight]);
 
@@ -482,38 +591,97 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
   // but drawing and snapping happen at unit/GRID_SUBDIV, so a marker locks onto a much finer lattice
   // without changing what a cell means in metres.
   const snap = unit / GRID_SUBDIV;
+
+  // ---- snapping ---------------------------------------------------------------------------------
+  //
+  // Snapping used to be invisible and compulsory: always on, always the grid (with a silent
+  // endpoint preference), no way to see what it caught and no way to turn it off for one click.
+  // Now it is a mode the operator sets, Ctrl inverts it for as long as it is held, and whatever was
+  // caught is drawn.
+  //
+  // The modes are cumulative in usefulness rather than exclusive: 'vertex', 'edge' and 'midpoint'
+  // each still fall back to the grid when nothing is in range, because a drawing tool that snaps to
+  // nothing when there is no geometry nearby is just a tool that does not snap.
+  const [snapMode, setSnapMode] = useState('grid');
+  const snapModeRef = useRef(snapMode); snapModeRef.current = snapMode;
+  // Ctrl held = invert. From a snapping mode it means "let me place this freely"; from 'off' it
+  // means "just this once, snap".
+  const snapInvertRef = useRef(false);
+  const lastSnapRef = useRef(null); // { x, y, kind } - what the pointer last caught, for the indicator
+
   const snapPt = useCallback((x, y) => {
     const st = unit / GRID_SUBDIV;
-    const mr = st * 0.75; let best = null; let bestD = mr;
-    segsRef.current.forEach((s) => { [[s.x1, s.y1], [s.x2, s.y2]].forEach(([ex, ey]) => { const d = Math.hypot(ex - x, ey - y); if (d < bestD) { bestD = d; best = { x: ex, y: ey }; } }); });
-    if (best) return best;
-    return { x: Math.max(0, Math.min(w, Math.round(x / st) * st)), y: Math.max(0, Math.min(h, Math.round(y / st) * st)) };
+    const inverted = snapInvertRef.current;
+    const mode = snapModeRef.current;
+    const active = inverted ? (mode === 'off' ? 'grid' : 'off') : mode;
+    if (active === 'off') { lastSnapRef.current = null; return { x, y }; }
+    const reach = st * 0.9;
+    let best = null; let bestD = reach;
+    const take = (px, py, kind) => { const d = Math.hypot(px - x, py - y); if (d < bestD) { bestD = d; best = { x: px, y: py, kind }; } };
+    if (active === 'vertex' || active === 'grid') {
+      // 'grid' keeps the endpoint preference the editor always had - joining a wall to the one you
+      // just drew is the single most common thing anyone does here, and losing it would be a
+      // regression dressed up as a feature.
+      segsRef.current.forEach((sg) => { take(sg.x1, sg.y1, 'vertex'); take(sg.x2, sg.y2, 'vertex'); });
+    }
+    if (active === 'midpoint') {
+      segsRef.current.forEach((sg) => take((sg.x1 + sg.x2) / 2, (sg.y1 + sg.y2) / 2, 'midpoint'));
+    }
+    if (active === 'edge') {
+      segsRef.current.forEach((sg) => {
+        const vx = sg.x2 - sg.x1; const vy = sg.y2 - sg.y1; const len2 = vx * vx + vy * vy;
+        if (len2 < 1e-6) return;
+        let t = ((x - sg.x1) * vx + (y - sg.y1) * vy) / len2;
+        t = Math.max(0, Math.min(1, t));
+        take(sg.x1 + t * vx, sg.y1 + t * vy, 'edge');
+      });
+    }
+    if (best) { lastSnapRef.current = best; return { x: best.x, y: best.y }; }
+    const gx = Math.max(0, Math.min(w, Math.round(x / st) * st));
+    const gy = Math.max(0, Math.min(h, Math.round(y / st) * st));
+    lastSnapRef.current = { x: gx, y: gy, kind: 'grid' };
+    return { x: gx, y: gy };
   }, [unit, w, h]);
 
   // ---- drawing ----
   const draw = useCallback(() => {
     const cv = canvasRef.current; if (!cv) return;
     const ctx = cv.getContext('2d');
+    // The canvas is the VIEWPORT now, not the plan. Paint the surround, then translate into view
+    // space so every `x * ds` below lands where the pan puts it. Line widths and handle sizes stay
+    // in screen pixels, which is what we want: a handle is 7px whatever the zoom.
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, cssW, cssH);
-    if (imgRef.current) { ctx.globalAlpha = 0.45; ctx.drawImage(imgRef.current, 0, 0, cssW, cssH); ctx.globalAlpha = 1; }
-    else { ctx.fillStyle = '#f1f5f9'; ctx.fillRect(0, 0, cssW, cssH); }
+    ctx.fillStyle = VIEW_SURROUND;
+    ctx.fillRect(0, 0, cssW, cssH);
+    ctx.setTransform(1, 0, 0, 1, Math.round(view.tx), Math.round(view.ty));
+    const planW = w * ds; const planH = h * ds;
+    // The plan's own sheet, so the drawing area is legible against the surround.
+    ctx.fillStyle = VIEW_SHEET;
+    ctx.fillRect(0, 0, planW, planH);
+    if (imgRef.current) { ctx.globalAlpha = 0.45; ctx.drawImage(imgRef.current, 0, 0, planW, planH); ctx.globalAlpha = 1; }
     // Drafting grid: faint minor lines on the fine snap step, stronger lines on the metre cell —
     // so the lattice reads clearly and an object is easy to line up. Minor lines are dropped once
     // they would be denser than a few pixels apart (zoomed out), to keep the canvas legible.
     const step = unit / GRID_SUBDIV;
     ctx.lineWidth = 1;
+    // The lattice belongs to the PLAN, so it stops at the plan's edge rather than running out over
+    // the surround. When the canvas was the plan those were the same thing.
     if (step * ds >= 4) {
-      ctx.strokeStyle = 'rgba(100,116,139,0.16)';
+      ctx.strokeStyle = GRID_MINOR;
       ctx.beginPath();
-      for (let x = 0; x <= w; x += step) { ctx.moveTo(Math.round(x * ds) + 0.5, 0); ctx.lineTo(Math.round(x * ds) + 0.5, cssH); }
-      for (let y = 0; y <= h; y += step) { ctx.moveTo(0, Math.round(y * ds) + 0.5); ctx.lineTo(cssW, Math.round(y * ds) + 0.5); }
+      for (let x = 0; x <= w; x += step) { ctx.moveTo(Math.round(x * ds) + 0.5, 0); ctx.lineTo(Math.round(x * ds) + 0.5, planH); }
+      for (let y = 0; y <= h; y += step) { ctx.moveTo(0, Math.round(y * ds) + 0.5); ctx.lineTo(planW, Math.round(y * ds) + 0.5); }
       ctx.stroke();
     }
-    ctx.strokeStyle = 'rgba(100,116,139,0.34)';
+    ctx.strokeStyle = GRID_MAJOR;
     ctx.beginPath();
-    for (let x = 0; x <= w; x += unit) { ctx.moveTo(Math.round(x * ds) + 0.5, 0); ctx.lineTo(Math.round(x * ds) + 0.5, cssH); }
-    for (let y = 0; y <= h; y += unit) { ctx.moveTo(0, Math.round(y * ds) + 0.5); ctx.lineTo(cssW, Math.round(y * ds) + 0.5); }
+    for (let x = 0; x <= w; x += unit) { ctx.moveTo(Math.round(x * ds) + 0.5, 0); ctx.lineTo(Math.round(x * ds) + 0.5, planH); }
+    for (let y = 0; y <= h; y += unit) { ctx.moveTo(0, Math.round(y * ds) + 0.5); ctx.lineTo(planW, Math.round(y * ds) + 0.5); }
     ctx.stroke();
+    // A border on the sheet: without it the plan has no edge once it is smaller than the viewport.
+    ctx.strokeStyle = GRID_EDGE; ctx.lineWidth = 1;
+    ctx.strokeRect(0.5, 0.5, Math.round(planW) - 1, Math.round(planH) - 1);
 
     const seg = (s, color, wd) => { ctx.strokeStyle = color; ctx.lineWidth = wd; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(s.x1 * ds, s.y1 * ds); ctx.lineTo(s.x2 * ds, s.y2 * ds); ctx.stroke(); };
     const dot = (x, y, color, r = 3) => { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); };
@@ -854,11 +1022,37 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
       ctx.strokeStyle = '#2d6cdf'; ctx.lineWidth = 4; ctx.strokeRect(rx * ds, ry * ds, rw * ds, rh * ds); ctx.fillStyle = 'rgba(45,108,223,0.12)'; ctx.fillRect(rx * ds, ry * ds, rw * ds, rh * ds);
       label(cur.x * ds, cur.y * ds, `${(rw * scaleRef.current).toFixed(1)} × ${(rh * scaleRef.current).toFixed(1)} m`);
     } else if (cur && DRAG_TOOLS.has(toolRef.current)) dot(cur.x * ds, cur.y * ds, 'rgba(45,108,223,0.7)', 4);
-  }, [cssW, cssH, w, h, unit, ds, placements, selection, wallHeight, kind, t]);
+
+    // The set-scale rubber band: a plain measured line, with its pixel length, waiting to be told
+    // what that length is in metres.
+    if (d && d.scaleFrom && cur) {
+      ctx.setLineDash([6, 4]);
+      seg({ x1: d.scaleFrom.x, y1: d.scaleFrom.y, x2: cur.x, y2: cur.y }, SNAP_COLOR, 2);
+      ctx.setLineDash([]);
+      dot(d.scaleFrom.x * ds, d.scaleFrom.y * ds, SNAP_COLOR, 4);
+      dot(cur.x * ds, cur.y * ds, SNAP_COLOR, 4);
+      label(cur.x * ds, cur.y * ds, scaleRef.current > 0
+        ? `${(Math.hypot(cur.x - d.scaleFrom.x, cur.y - d.scaleFrom.y) * scaleRef.current).toFixed(2)} m`
+        : `${Math.round(Math.hypot(cur.x - d.scaleFrom.x, cur.y - d.scaleFrom.y))} px`);
+    }
+
+    // The snap indicator: a ring on what the pointer actually caught. Snapping used to be
+    // invisible, so a marker that jumped looked like a bug rather than a feature doing its job.
+    const sn = lastSnapRef.current;
+    if (sn && cur && (DRAG_TOOLS.has(toolRef.current) || toolRef.current === 'setscale')) {
+      const sx = sn.x * ds; const sy = sn.y * ds;
+      ctx.strokeStyle = SNAP_COLOR; ctx.lineWidth = 1.5;
+      if (sn.kind === 'vertex') { ctx.strokeRect(sx - 4.5, sy - 4.5, 9, 9); }
+      else if (sn.kind === 'midpoint') { ctx.beginPath(); ctx.moveTo(sx, sy - 5); ctx.lineTo(sx + 5, sy); ctx.lineTo(sx, sy + 5); ctx.lineTo(sx - 5, sy); ctx.closePath(); ctx.stroke(); }
+      else if (sn.kind === 'edge') { ctx.beginPath(); ctx.moveTo(sx - 6, sy); ctx.lineTo(sx + 6, sy); ctx.moveTo(sx, sy - 6); ctx.lineTo(sx, sy + 6); ctx.stroke(); }
+      else { ctx.beginPath(); ctx.arc(sx, sy, 4.5, 0, Math.PI * 2); ctx.stroke(); }
+    }
+  }, [cssW, cssH, w, h, unit, ds, view.tx, view.ty, snapMode, placements, selection, wallHeight, kind, t]);
   useEffect(() => { if (mode === '2d') draw(); });
 
   // ---- geometry helpers on the canvas ----
-  const evImg = (e) => { const r = canvasRef.current.getBoundingClientRect(); return { x: (e.clientX - r.left) / ds, y: (e.clientY - r.top) / ds }; }; // image space (top-left)
+  // Screen → image, undoing the whole view transform (pan included).
+  const evImg = (e) => { const r = canvasRef.current.getBoundingClientRect(); const v = viewRef.current; return { x: ((e.clientX - r.left) - v.tx) / v.scale, y: ((e.clientY - r.top) - v.ty) / v.scale }; };
   const evOL = (e) => { const p = evImg(e); return { x: p.x, y: h - p.y }; }; // OL space (bottom-left) for cameras
   const hitMarker = (ol) => { let best = 14 / ds; let hit = null; placements.forEach((p) => { const d = Math.hypot(p.x - ol.x, p.y - ol.y); if (d < best) { best = d; hit = p; } }); return hit; };
   const nearestSeg = (im) => { let idx = -1; let best = 8 / ds; segsRef.current.forEach((s, i) => { const dd = dist2seg(im.x, im.y, s); if (dd < best) { best = dd; idx = i; } }); return idx; };
@@ -1218,9 +1412,137 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
     setSelection(new Set());
   }, [selection, selOf, commit, onRemove]);
 
+  // commitMove turns a finished transform - a drag, or a modal G/R/S - into the model. Shared, so
+  // the keyboard path cannot drift from the mouse path: same preview, same geometry, same undo step.
+  const commitMove = (d) => {
+    if (!d || !d.moved) { redraw(); return; }
+    // Exactly the geometry the preview was drawing - same function, same transform.
+    const next = xfObjects(d.orig, d.xf);
+    // Plan geometry lands in one commit (one undo step for the whole gesture); markers persist
+    // through the parent, one call each.
+    const patch = {};
+    if (next.segs.size) patch.segs = segsRef.current.map((s, i) => next.segs.get(i) || s);
+    // Openings re-seat onto the nearest wall on drop, so a dragged (or pasted-then-dragged) door
+    // or window locks flush into a wall instead of floating where it was released.
+    if (next.doors.size) patch.doors = doorsRef.current.map((x, i) => { const nd = next.doors.get(i); return nd ? snapOpeningToWall(nd) : x; });
+    if (next.wins.size) patch.windows = windowsRef.current.map((x, i) => { const nw = next.wins.get(i); return nw ? snapOpeningToWall(nw) : x; });
+    // A dragged stair locks fully onto the raised floor it was dropped on, so it rests on the slab
+    // rather than half-overhanging it.
+    if (next.stairs.size) patch.stairs = stairsRef.current.map((x, i) => { const ns = next.stairs.get(i); return ns ? snapStairToPlatform(ns) : x; });
+    if (next.parks.size) patch.parking = parkingRef.current.map((x, i) => next.parks.get(i) || x);
+    if (next.plats.size) patch.platforms = platsRef.current.map((x, i) => next.plats.get(i) || x);
+    if (Object.keys(patch).length) commit(patch);
+    next.cams.forEach((o, id) => {
+      onMove(id, Math.max(0, Math.min(w, o.x)), Math.max(0, Math.min(h, o.y)));
+      // A rotation turns what a camera is pointing at, so its heading turns with it.
+      if (d.xf.ang) onAim(id, { heading: ((o.heading % 360) + 360) % 360 });
+    });
+    redraw();
+  };
+
+  // ---- modal transforms (G / R / S) --------------------------------------------------------------
+  //
+  // Press G, move the mouse, the selection follows; type a number for an exact value; X or Y locks
+  // an axis; Enter or a click confirms, Esc puts it back. R rotates, S scales.
+  //
+  // They are ACCELERATORS, never the only way: every one of these is still a drag on a handle, and
+  // the status bar says so. That is the whole compromise with Blender's keymap - take the speed,
+  // refuse the modality that makes it hostile to someone who has never used it.
+  //
+  // They reuse moveRef, so the live preview, the selection frame and the commit path are the drag's
+  // - there is no second implementation to drift.
+  const startModal = useCallback((kind2) => {
+    if (!selection.size) return;
+    const fr = selFrame();
+    if (!fr) return;
+    const cur = cursorRef.current || { x: fr.cx, y: fr.cy };
+    moveRef.current = {
+      mode: kind2, modal: true, handle: 'se', frame: fr,
+      anchor: { x: fr.cx, y: fr.cy },
+      sx: cur.x, sy: cur.y, moved: false,
+      xf: { ...IDENTITY_XF },
+      orig: beginMove(selection, cur),
+      axis: null, typed: '',
+    };
+    redraw();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selection, redraw]);
+
+  // applyModal recomputes the transform from either the typed number (exact) or the pointer.
+  const applyModal = useCallback((im) => {
+    const d = moveRef.current;
+    if (!d || !d.modal) return;
+    const typed = parseFloat(d.typed);
+    const hasTyped = d.typed !== '' && Number.isFinite(typed);
+    if (d.mode === 'move') {
+      let tx; let ty;
+      if (hasTyped) {
+        // A typed distance is in METRES when the plan has a scale - that is the whole point of
+        // being able to type it. With no scale it can only mean pixels, and the status bar's
+        // readout says which you are getting.
+        const px = scaleRef.current > 0 ? typed / scaleRef.current : typed;
+        tx = d.axis === 'y' ? 0 : px;
+        ty = d.axis === 'x' ? 0 : (d.axis === 'y' ? px : 0);
+      } else if (im) {
+        tx = Math.round((im.x - d.sx) / snap) * snap;
+        ty = Math.round((im.y - d.sy) / snap) * snap;
+        if (d.axis === 'x') ty = 0; else if (d.axis === 'y') tx = 0;
+      } else return;
+      d.xf = { ...IDENTITY_XF, tx, ty };
+      d.moved = !!(tx || ty);
+    } else if (d.mode === 'rotate') {
+      let ang;
+      if (hasTyped) ang = (typed * Math.PI) / 180;
+      else if (im) ang = Math.atan2(im.y - d.anchor.y, im.x - d.anchor.x) - Math.atan2(d.sy - d.anchor.y, d.sx - d.anchor.x);
+      else return;
+      d.xf = { ...IDENTITY_XF, px: d.anchor.x, py: d.anchor.y, ang };
+      d.moved = !!ang;
+    } else {
+      let f;
+      if (hasTyped) f = typed;
+      else if (im) {
+        const d0 = Math.hypot(d.sx - d.anchor.x, d.sy - d.anchor.y) || 1;
+        f = Math.hypot(im.x - d.anchor.x, im.y - d.anchor.y) / d0;
+      } else return;
+      if (!(f > 0.01)) f = 0.01;
+      d.xf = { ...IDENTITY_XF, px: d.anchor.x, py: d.anchor.y, sx: d.axis === 'y' ? 1 : f, sy: d.axis === 'x' ? 1 : f, fa: d.frame ? d.frame.a || 0 : 0 };
+      d.moved = f !== 1;
+    }
+    redraw();
+  }, [snap, redraw]);
+
+  const cancelModal = useCallback(() => { moveRef.current = null; redraw(); }, [redraw]);
+  const confirmModal = useCallback(() => { const d = moveRef.current; moveRef.current = null; commitMove(d);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [redraw]);
+
   const onPointerDown = (e) => {
+    // Middle-mouse, or space held, pans the viewport whatever tool is active. This is the gesture
+    // the scrollbar model could not offer at all, and it has to work from inside every tool - you
+    // pan to see where you are drawing, without putting the pencil down.
+    if (e.button === 1 || spaceRef.current) {
+      e.preventDefault();
+      panRef.current = { x: e.clientX, y: e.clientY, tx: viewRef.current.tx, ty: viewRef.current.ty };
+      touchedRef.current = true;
+      try { canvasRef.current.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+      redraw();
+      return;
+    }
+    // A modal transform is confirmed by a click, the way it is in every tool that has them.
+    if (moveRef.current && moveRef.current.modal) { e.preventDefault(); confirmModal(); return; }
     if (e.button !== 0) return; e.preventDefault();
     const im = evImg(e);
+    // The set-scale tool measures a run the operator already knows the length of, then asks for it.
+    // Everything in metres downstream - every numeric field P3 adds, the 3D view, coverage - is
+    // dead until a plan has one, and until now there was no way to give it one but a spinner
+    // labelled "each cell".
+    if (tool === 'setscale') {
+      const p = snapPt(im.x, im.y);
+      const d = draftRef.current;
+      if (!d || !d.scaleFrom) { draftRef.current = { scaleFrom: p }; cursorRef.current = p; redraw(); return; }
+      finishSetScale(d.scaleFrom, p);
+      return;
+    }
     if (tool === 'erase') {
       const di = hitDoor(im); if (di >= 0) { commit({ doors: doorsRef.current.filter((_, k) => k !== di) }); return; }
       const wi = hitWindow(im); if (wi >= 0) { commit({ windows: windowsRef.current.filter((_, k) => k !== wi) }); return; }
@@ -1319,6 +1641,30 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
     cap(); redraw();
   };
   const onPointerMove = (e) => {
+    if (panRef.current) {
+      const pn = panRef.current;
+      setView((v) => ({ ...v, tx: pn.tx + (e.clientX - pn.x), ty: pn.ty + (e.clientY - pn.y) }));
+      return;
+    }
+    // Ctrl inverts the snap setting for as long as it is held; the readout has to follow, so a
+    // redraw is owed whenever it changes under the pointer.
+    if (snapInvertRef.current !== (e.ctrlKey || e.metaKey)) snapInvertRef.current = e.ctrlKey || e.metaKey;
+    // The readout follows the pointer under EVERY tool, so it is updated before any of the
+    // tool-specific branches below get a chance to return early.
+    //
+    // Under Select nothing else asks for a repaint, so the readout would sit stale without one -
+    // but a repaint per mouse move is wasteful. Tick only when the DISPLAYED value would actually
+    // change, which is at the precision the status bar prints.
+    const prevHover = hoverPosRef.current;
+    hoverPosRef.current = evImg(e);
+    if (!moveRef.current && !draftRef.current) {
+      const q = scaleRef.current > 0 ? 0.01 / scaleRef.current : 1; // one printed step, in image units
+      if (!prevHover
+        || Math.round(prevHover.x / q) !== Math.round(hoverPosRef.current.x / q)
+        || Math.round(prevHover.y / q) !== Math.round(hoverPosRef.current.y / q)) redraw();
+    }
+    // A modal transform follows the pointer with NO button held - that is what makes it modal.
+    if (moveRef.current && moveRef.current.modal) { const p = hoverPosRef.current; cursorRef.current = p; applyModal(p); return; }
     const im = evImg(e);
     if (povRef.current) {
       // Aiming/widening a camera on the canvas. The heading is the bearing from the camera to the
@@ -1380,35 +1726,17 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
       hoverPlatRef.current = taken2 || hoverStairRef.current >= 0 || hoverParkRef.current >= 0 ? -1 : hitPlatform(im);
       cursorRef.current = null; redraw(); return;
     }
-    if (DRAG_TOOLS.has(tool) || tool === 'door' || tool === 'window') { const p = snapPt(im.x, im.y); cursorRef.current = p; const d = draftRef.current; if (d && d.start) d.cur = p; redraw(); }
+    if (DRAG_TOOLS.has(tool) || tool === 'door' || tool === 'window' || tool === 'setscale') { const p = snapPt(im.x, im.y); cursorRef.current = p; const d = draftRef.current; if (d && d.start) d.cur = p; redraw(); }
   };
   const onPointerUp = (e) => {
+    // A modal transform owns the pointer until it is confirmed or cancelled; the button coming back
+    // up is not the end of it.
+    if (moveRef.current && moveRef.current.modal) return;
+    if (panRef.current) { panRef.current = null; try { canvasRef.current.releasePointerCapture(e.pointerId); } catch (_) { /* ignore */ } redraw(); return; }
     if (povRef.current) { povRef.current = null; redraw(); return; } // the save is already debounced by onAim
     if (moveRef.current) {
       const d = moveRef.current; moveRef.current = null;
-      if (!d.moved) { redraw(); return; }
-      // Exactly the geometry the preview was drawing — same function, same transform.
-      const next = xfObjects(d.orig, d.xf);
-      // Plan geometry lands in one commit (one undo step for the whole gesture); markers persist
-      // through the parent, one call each.
-      const patch = {};
-      if (next.segs.size) patch.segs = segsRef.current.map((s, i) => next.segs.get(i) || s);
-      // Openings re-seat onto the nearest wall on drop, so a dragged (or pasted-then-dragged) door
-      // or window locks flush into a wall instead of floating where it was released.
-      if (next.doors.size) patch.doors = doorsRef.current.map((x, i) => { const nd = next.doors.get(i); return nd ? snapOpeningToWall(nd) : x; });
-      if (next.wins.size) patch.windows = windowsRef.current.map((x, i) => { const nw = next.wins.get(i); return nw ? snapOpeningToWall(nw) : x; });
-      // A dragged stair locks fully onto the raised floor it was dropped on, so it rests on the slab
-      // rather than half-overhanging it.
-      if (next.stairs.size) patch.stairs = stairsRef.current.map((x, i) => { const ns = next.stairs.get(i); return ns ? snapStairToPlatform(ns) : x; });
-      if (next.parks.size) patch.parking = parkingRef.current.map((x, i) => next.parks.get(i) || x);
-      if (next.plats.size) patch.platforms = platsRef.current.map((x, i) => next.plats.get(i) || x);
-      if (Object.keys(patch).length) commit(patch);
-      next.cams.forEach((o, id) => {
-        onMove(id, Math.max(0, Math.min(w, o.x)), Math.max(0, Math.min(h, o.y)));
-        // A rotation turns what a camera is pointing at, so its heading turns with it.
-        if (d.xf.ang) onAim(id, { heading: ((o.heading % 360) + 360) % 360 });
-      });
-      redraw(); return;
+      commitMove(d); return;
     }
     if (marqueeRef.current) {
       const mq = marqueeRef.current; marqueeRef.current = null;
@@ -1466,6 +1794,41 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
     const onKey = (e) => {
       if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
       if (mode !== '2d') return;
+      // A modal transform swallows the keyboard while it runs: digits build an exact value, X and Y
+      // lock an axis, Enter confirms, Esc puts everything back. Handled FIRST so a stray Home or a
+      // tool shortcut cannot fire underneath a transform in progress.
+      const md = moveRef.current;
+      if (md && md.modal) {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); cancelModal(); return; }
+        if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); confirmModal(); return; }
+        if (e.key === 'x' || e.key === 'X') { e.preventDefault(); md.axis = md.axis === 'x' ? null : 'x'; applyModal(cursorRef.current); return; }
+        if (e.key === 'y' || e.key === 'Y') { e.preventDefault(); md.axis = md.axis === 'y' ? null : 'y'; applyModal(cursorRef.current); return; }
+        if (e.key === 'Backspace') { e.preventDefault(); md.typed = md.typed.slice(0, -1); applyModal(cursorRef.current); return; }
+        if (/^[0-9.-]$/.test(e.key)) { e.preventDefault(); md.typed += e.key; applyModal(cursorRef.current); return; }
+        return; // everything else is inert until the transform ends
+      }
+      // The accelerators themselves. Bare letters, so they never collide with the Ctrl shortcuts
+      // below, and only with something selected - otherwise there is nothing to transform.
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && selection.size) {
+        if (e.key === 'g' || e.key === 'G') { e.preventDefault(); startModal('move'); return; }
+        if (e.key === 'r' || e.key === 'R') { e.preventDefault(); startModal('rotate'); return; }
+        if (e.key === 's' || e.key === 'S') { e.preventDefault(); startModal('scale'); return; }
+      }
+      // Viewport navigation. Deliberately the keys every 3D and drawing tool already uses, so
+      // nobody has to learn ours: Home frames everything, "." frames what is held, and space is a
+      // held modifier that turns the left button into a pan for trackpads with no middle click.
+      if (e.key === ' ' || e.code === 'Space') { if (!spaceRef.current) { spaceRef.current = true; redraw(); } e.preventDefault(); return; }
+      if (e.key === 'Home') { e.preventDefault(); frameAll(); return; }
+      if (e.key === '.') {
+        e.preventDefault();
+        const b = selectionBounds();
+        if (b) frameOn(b); else frameAll();
+        return;
+      }
+      // Cycle the snap magnet. A single key because it is changed mid-draw, and Ctrl-invert covers
+      // the one-off case without touching the setting at all.
+      if (e.key === 'm' || e.key === 'M') { e.preventDefault(); setSnapMode((cur) => SNAP_MODES[(SNAP_MODES.indexOf(cur) + 1) % SNAP_MODES.length]); return; }
+      if ((e.key === 'Control' || e.key === 'Meta') && !snapInvertRef.current) { snapInvertRef.current = true; redraw(); }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (selection.size) { e.preventDefault(); deleteSelection(); }
       } else if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) {
@@ -1503,11 +1866,25 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
       else if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); if (e.shiftKey) redo(); else undo(); }
       else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) { e.preventDefault(); redo(); }
     };
-    // Capture phase: this runs before the host dialog's (bubble-phase) window Escape handler, so a
+    // Space and Ctrl are held modifiers, so their release matters as much as their press.
+    const onKeyUp = (e) => {
+      if (e.key === ' ' || e.code === 'Space') { spaceRef.current = false; redraw(); }
+      if (e.key === 'Control' || e.key === 'Meta') { snapInvertRef.current = false; redraw(); }
+    };
+    // Capture phase: this runs before the host's (bubble-phase) window Escape handler, so a
     // consumed Escape never reaches it. Delete/Ctrl+Z are unaffected (they don't stop propagation).
     window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [mode, tool, selection, placements, deleteSelection, copySelection, cutSelection, pasteClipboard, finishWall, undo, redo, redraw, commit, clearSel]);
+    window.addEventListener('keyup', onKeyUp, true);
+    // A window that loses focus never delivers the keyup, so a held modifier would stick on: come
+    // back to the tab and the left button is still panning for no visible reason.
+    const onBlur = () => { spaceRef.current = false; snapInvertRef.current = false; panRef.current = null; redraw(); };
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('keyup', onKeyUp, true);
+      window.removeEventListener('blur', onBlur);
+    };
+  }, [mode, tool, selection, placements, deleteSelection, copySelection, cutSelection, pasteClipboard, finishWall, undo, redo, redraw, commit, clearSel, frameAll, frameOn, startModal, applyModal, cancelModal, confirmModal]);
 
   const sel = selId ? placements.find((p) => p.id === selId) : null;
   const selStairObj = selStair >= 0 ? stairsRef.current[selStair] : null;
@@ -1565,6 +1942,51 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
   const patchWindow = (patch) => { windowsRef.current = windowsRef.current.map((d, i) => (i === selWin ? { ...d, ...patch } : d)); redraw(); scheduleSave(); };
   const setBays = (n) => { parkingRef.current = parkingRef.current.map((p, i) => (i === selPark ? { ...p, bays: n } : p)); redraw(); scheduleSave(); };
   const setRise = (m) => { platsRef.current = platsRef.current.map((p, i) => (i === selPlat ? { ...p, rise: m } : p)); redraw(); scheduleSave(); };
+  // ---- the status bar ---------------------------------------------------------------------------
+  //
+  // Reported UP to the host, which owns the strip along the bottom of the window. The editor is the
+  // only thing that knows the tool, the selection, where the pointer is and what the magnet caught,
+  // and the host is the only thing with somewhere to put it.
+  //
+  // The cursor position is in METRES when the plan has a scale and pixels when it does not - saying
+  // "3.4" with no idea what a pixel is worth would be a fabricated number, and the set-scale tool
+  // exists precisely so that stops being the answer.
+  const statusRef = useRef('');
+  useEffect(() => {
+    if (!onStatus) return;
+    const cur = hoverPosRef.current;
+    const md = moveRef.current;
+    const effSnap = snapInvertRef.current ? (snapMode === 'off' ? 'grid' : 'off') : snapMode;
+    const next = {
+      tool: t(faceOf(kind, tool).key),
+      selection: selection.size,
+      snap: t(`grid.snap.${effSnap}`),
+      snapOn: effSnap !== 'off',
+      zoom: Math.round(view.scale * 100),
+      pos: cur ? (scale > 0
+        ? `${(cur.x * scale).toFixed(2)}, ${(cur.y * scale).toFixed(2)} m`
+        : `${Math.round(cur.x)}, ${Math.round(cur.y)} px`) : '',
+      // The accelerators are advertised here rather than hidden in a keymap nobody opens - the
+      // discoverability half of "G/R/S are accelerators, never the only way". While one is RUNNING
+      // the strip becomes its readout instead: what you are doing, what you have typed, and how to
+      // get out. A modal state with nothing on screen saying so is the thing that makes a modal
+      // keymap hostile, and it is cheap to avoid.
+      hint: mode !== '2d' ? '' : (md && md.modal
+        ? t('grid.modalHint', {
+          op: t(`grid.modal.${md.mode}`),
+          value: md.typed !== '' ? md.typed : '…',
+          unit: md.mode === 'move' ? (scale > 0 ? 'm' : 'px') : (md.mode === 'rotate' ? '°' : '×'),
+          axis: md.axis ? md.axis.toUpperCase() : t('grid.modalFree'),
+        })
+        : t('grid.statusHint')),
+      modal: !!(md && md.modal),
+    };
+    const sig = JSON.stringify(next);
+    if (sig === statusRef.current) return;
+    statusRef.current = sig;
+    onStatus(next);
+  });
+
   const draftFloor = { ...floor, grid: JSON.stringify(modelJSON()), scale, wallHeight: +wallHeight || 0 };
   const toolHint = (id) => t(faceOf(kind, id).hint);
   // Tool buttons are icon-only (label in the tooltip) so the vertical palette stays narrow. Both the
@@ -1757,11 +2179,21 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
           </div>
           {draftRef.current && draftRef.current.pts ? <button type="button" className="fd-tool" onClick={finishWall} title={t('grid.finish')} aria-label={t('grid.finish')}><Ico n="check-ok" sz={14} /></button> : null}
           <span className="fd-toolbar-sep" />
+          {/* The snap magnet. One control answers "is it snapping, and to what" - and it says so in
+              the status bar as well, because a mode you cannot see is the mode this editor had. */}
+          <button type="button" className={`fd-tool${snapMode === 'off' ? '' : ' active'}`} onClick={() => setSnapMode((cur) => SNAP_MODES[(SNAP_MODES.indexOf(cur) + 1) % SNAP_MODES.length])} title={t('grid.snapCycle', { mode: t(`grid.snap.${snapMode}`) })} aria-label={t('grid.snapCycle', { mode: t(`grid.snap.${snapMode}`) })}><Ico n={SNAP_ICO[snapMode] || 'grid2'} sz={14} /></button>
+          <span className="fd-toolbar-sep" />
           <div className="fe-toolbar-row">
-            <button type="button" className="fd-tool" onClick={() => setZoom((z) => clampZoom(z / 1.2))} disabled={zoom <= 0.25} title={t('grid.zoomOut')} aria-label={t('grid.zoomOut')}><Ico n="zoom-out" sz={14} /></button>
-            <button type="button" className="fd-tool" onClick={() => setZoom((z) => clampZoom(z * 1.2))} disabled={zoom >= 6} title={t('grid.zoomIn')} aria-label={t('grid.zoomIn')}><Ico n="zoom-in" sz={14} /></button>
+            <button type="button" className="fd-tool" onClick={() => zoomAbout(1 / 1.2, stage.w / 2, stage.h / 2)} disabled={view.scale <= MIN_SCALE + 1e-6} title={t('grid.zoomOut')} aria-label={t('grid.zoomOut')}><Ico n="zoom-out" sz={14} /></button>
+            <button type="button" className="fd-tool" onClick={() => zoomAbout(1.2, stage.w / 2, stage.h / 2)} disabled={view.scale >= MAX_SCALE - 1e-6} title={t('grid.zoomIn')} aria-label={t('grid.zoomIn')}><Ico n="zoom-in" sz={14} /></button>
           </div>
-          <button type="button" className="fd-tool fe-zoom-readout" onClick={() => setZoom(1)} title={t('grid.zoomFit')}>{Math.round(zoom * 100)}%</button>
+          <div className="fe-toolbar-row">
+            <button type="button" className="fd-tool" onClick={frameAll} title={t('grid.frameAll')} aria-label={t('grid.frameAll')}><Ico n="grid4" sz={14} /></button>
+            <button type="button" className="fd-tool" onClick={() => { const b = selectionBounds(); if (b) frameOn(b); else frameAll(); }} disabled={!selection.size} title={t('grid.frameSel')} aria-label={t('grid.frameSel')}><Ico n="search" sz={14} /></button>
+          </div>
+          {/* The readout is now the true view scale, and clicking it frames the plan. Zoom is no
+              longer a multiple of "fit", so a percentage of fit would mean nothing. */}
+          <button type="button" className="fd-tool fe-zoom-readout" onClick={frameAll} title={t('grid.zoomFit')}>{Math.round(view.scale * 100)}%</button>
         </>
       ) : null}
     </>
@@ -1785,9 +2217,12 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
         {leftEls.length ? <div className="fe-dock fe-dock-left">{leftEls}</div> : null}
         <div className="floor-editor-stage">
           {mode === '2d' ? (
-            <div className="floor-editor-canvas-wrap" ref={wrapRef} style={{ overflow: zoom > 1 ? 'auto' : 'hidden' }} onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }} onDrop={onDrop}>
-              <canvas ref={canvasRef} width={cssW} height={cssH} className={`grid-canvas tool-${tool}${placing ? ' placing' : ''}`} style={{ width: cssW, height: cssH, touchAction: 'none', cursor: placingCursorCss }}
-                onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerLeave={() => { cursorRef.current = null; hoverRef.current = -1; if (!moveRef.current) redraw(); }} onDoubleClick={onDoubleClick} />
+            // The canvas IS the viewport: it fills the stage and the plan moves inside it. No
+            // scrollbars - panning is the middle button (or space-drag), which is why the wrap no
+            // longer switches its overflow on zoom.
+            <div className="floor-editor-canvas-wrap" ref={wrapRef} onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }} onDrop={onDrop}>
+              <canvas ref={canvasRef} width={cssW} height={cssH} className={`grid-canvas tool-${tool}${placing ? ' placing' : ''}`} style={{ width: cssW, height: cssH, touchAction: 'none', cursor: panCursor }}
+                onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerLeave={() => { cursorRef.current = null; hoverPosRef.current = null; hoverRef.current = -1; if (!moveRef.current) redraw(); }} onDoubleClick={onDoubleClick} />
             </div>
           ) : (
             <div className="grid-3d-wrap">
@@ -1817,5 +2252,6 @@ FloorEditor.propTypes = {
   onRemove: PropTypes.func,
   onSaveModel: PropTypes.func,
   onToast: PropTypes.func,
+  onStatus: PropTypes.func,
   busy: PropTypes.bool,
 };

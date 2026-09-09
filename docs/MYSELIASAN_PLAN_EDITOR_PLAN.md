@@ -1,7 +1,7 @@
 # MySeliaSan — Plan Editor Overhaul
 
-Status: **P1 BUILT, in review** (2026-09-09) — built and live-benched, not yet merged.
-Phases P2–P5 remain planned; **P6 (coverage occlusion) is
+Status: **P1 SHIPPED** (#250, 2026-09-09). **P2 BUILT, in review** — built and live-benched.
+Phases P3–P5 remain planned; **P6 (coverage occlusion) is
 planned but deliberately sequenced last** and is a separate decision to take when P1–P5 are in.
 
 The plan editor is `FloorEditor` — `apps/myseliasan/views/react-webpack/src/views/components/floor_editor.js`.
@@ -243,7 +243,7 @@ the plan we're arguing about"), and an installer can put **two areas side by sid
 `map/inspector.js` (dialog → link), `floor_editor.js` (autosave flush), `fleet-map.css`,
 `map-workspace.css`, a `chev-left` glyph in the shared icon set, i18n ×4. No Go change.
 
-### P2 — Viewport and navigation
+### P2 — Viewport and navigation — **BUILT, in review**
 
 The "stops looking like a toy" pass. Mostly CSS and input handling; no model change.
 
@@ -281,7 +281,22 @@ can see *what* it caught.
 exact value; `Enter` confirms, `Esc` cancels). Advertised in the status bar. Dragging keeps working
 unchanged — this is additive.
 
-*Touches:* `floor_editor.js`, `fleet-map.css`, i18n ×4.
+**Deviation, taken deliberately:** the chrome was to be scoped to `.floor-editor`. Doing only that
+produced a half-lit window — a light header and a light node palette butted against a dark dock and
+a dark viewport — which read as an unfinished screen rather than an application. The dark now covers
+the whole `.pw-shell`: header, area bar, palette, status bar. It still does not leak, which is what
+the original wording was protecting: every rule is scoped under `.pw-frame`, and the rest of
+myseliasan stays theme-aware.
+
+**Two defects this phase produced, both found only by measuring:** the status bar's background and
+then its text lost the cascade to base rules of equal specificity that appear later in
+`fleet-map.css`, giving first a light bar and then dark-on-dark text. Neither looks like a bug — an
+unreadable strip reads as an empty one — so the bench measures contrast against the surface each
+label actually sits on, and every override is scoped under `.pw-frame` rather than relying on
+source order.
+
+*Touches:* `floor_editor.js`, `plan_workspace.js` (renders the status bar), `fleet-map.css`,
+i18n ×4.
 
 ### P3 — The object registry
 
@@ -473,8 +488,8 @@ without it. **Decide at the end of P5, not now.**
 
 | Phase | Depends on | Status |
 |---|---|---|
-| P1 Editor becomes a workspace (own tab) | — | **Built, in review** |
-| P2 Viewport and navigation | P1 (styles the shell P1 creates) | **Planned** |
+| P1 Editor becomes a workspace (own tab) | — | **Shipped (#250)** |
+| P2 Viewport and navigation | P1 (styles the shell P1 creates) | **Built, in review** |
 | P3 Object registry | — (independent; land after P2) | **Planned** |
 | P4 Outliner and numeric inspector | P3 | **Planned** |
 | P5 Outdoor kit | P3 | **Planned** |

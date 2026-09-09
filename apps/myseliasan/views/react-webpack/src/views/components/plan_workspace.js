@@ -79,6 +79,9 @@ export function PlanWorkspace({ site, nodes = [], initialPick, initialFloorId, o
   const [placing, setPlacing] = useState(initialPick || null); // { nodeId, cameraId, name }
   const [placedIndex, setPlacedIndex] = useState({}); // "nodeId::cameraId" -> { siteName, floorName, floorId, … }
   const [editSite, setEditSite] = useState(false);
+  // What the editor is doing right now, for the status bar. The editor owns the facts; this owns
+  // the strip they are shown in.
+  const [status, setStatus] = useState(null);
   const fileInputRef = useRef(null);
   const dragGhostRef = useRef(null);
   const dragGhostLabelRef = useRef(null);
@@ -512,19 +515,29 @@ export function PlanWorkspace({ site, nodes = [], initialPick, initialFloorId, o
                 onRemove={deletePlacement}
                 onSaveModel={saveModel}
                 onToast={onToast}
+                onStatus={setStatus}
                 busy={busy}
               />
             )}
           </div>
         </div>
 
-        {/* The status bar. It is a placeholder for the real one (tool, selection, cursor position,
-            snap mode) that the viewport phase builds — but the strip has to exist now so the shell
-            that phase is designed into is the shell that ships. */}
+        {/* The status bar, fed by the editor. Left to right: where you are, what you are doing,
+            and what the mouse and keyboard will do next - so the accelerators are advertised
+            rather than hidden in a keymap nobody opens. */}
         <footer className="bld-foot pw-status">
           <span className="pw-status-cell">{building.name}</span>
           {activeFloor && areaBar ? <span className="pw-status-cell">{activeFloor.name}</span> : null}
-          <span className="bld-foot-hint">{t('bld.autosaveHint')}</span>
+          {status ? (
+            <>
+              <span className="pw-status-cell pw-status-tool"><Ico n="cursor" sz={11} /> {status.tool}</span>
+              {status.selection > 0 ? <span className="pw-status-cell">{t('fed.objectsSelected', { n: status.selection })}</span> : null}
+              {status.pos ? <span className="pw-status-cell pw-status-num">{status.pos}</span> : null}
+              <span className={`pw-status-cell pw-status-snap${status.snapOn ? ' on' : ''}`}><Ico n="grid2" sz={11} /> {status.snap}</span>
+              <span className="pw-status-cell pw-status-num">{status.zoom}%</span>
+            </>
+          ) : null}
+          <span className="bld-foot-hint">{status && status.hint ? status.hint : t('bld.autosaveHint')}</span>
         </footer>
       </div>
 
