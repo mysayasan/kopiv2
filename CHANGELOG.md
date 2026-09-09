@@ -136,6 +136,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-09-09 — myseliasan 1.94.0 (1ff333b)
+
+### Added
+
+- **myseliasan**: A camera's coverage wedge stops being a decorative cone that passes straight through walls, trees and hedges, and becomes the real visibility polygon: `coveragePolygon` (`plan_geometry.js`, built from a new `occluderSet`/`visibilityPolygon`) sweeps rays at a fixed angular step plus one at every occluder endpoint (nudged either side, which is what gives a shadow edge crisp rather than staircased) to clip the wedge by everything that actually blocks that camera at ITS OWN mount height. A wall blocks unless the camera is mounted above it; a window blocks unless the mount height falls between its sill and its head (fields the frontend already stored but the Go compositor had never parsed); a doorway never blocks; a hedge blocks while taller than the mount; a tree canopy blocks only between its clear stem and its crown; roads, ground, parking bays and raised floors are flat and never block. All three JS surfaces call the one function: the plan editor canvas fills the polygon instead of an arc, the read-only `node_floor_view.js` drill-down builds its SVG path from it (falling back to the old unclipped fan when a floor's model has not loaded yet), and `floor_3d.js` lofts a fan of triangles from the lens to the polygon's edge in place of a plain cone. The Go PDF compositor (`report_floorgrid.go`'s new `buildOccluders`/`visibleFrom`, called from `report_floorplan.go`'s `drawFovWedge`) enforces the identical height rules independently, testing each pixel of the printed sector for a clear line of sight rather than porting the ray sweep into a rasteriser that already works per pixel - so the Site & Asset Inventory PDF's coverage wedge now shows what a camera can actually see, not merely what it is aimed at. This is phase P6, the final phase, of docs/MYSELIASAN_PLAN_EDITOR_PLAN.md.
 ## 2026-09-09 — myseliasan 1.93.0, core 1.116.0 (c245f80)
 
 ### Added
