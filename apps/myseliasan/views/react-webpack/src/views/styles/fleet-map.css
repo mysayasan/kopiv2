@@ -473,7 +473,80 @@ button.mp-event-main:hover .mp-event-title { text-decoration: underline; }
 .fed-inspector .grid-field > span { flex: 0 0 74px; }
 .fed-inspector .grid-field input[type="range"] { flex: 1 1 auto; min-width: 0; }
 .fed-inspector .grid-field em { font-style: normal; min-width: 42px; text-align: right; color: var(--text-primary); font-variant-numeric: tabular-nums; }
-.fed-remove { align-self: flex-start; margin-top: 4px; }
+.fed-remove { align-self: flex-start; margin-top: 4px; }
+
+/* The numeric inspector (the N-panel).
+ *
+ * Every property is a TYPED INPUT first, with a slider beside it only where dragging is the nicer
+ * gesture. The panel it replaces was sliders and nothing else - there was no way to type a number
+ * anywhere in this editor, which is most of why it read as a toy rather than a survey tool.
+ *
+ * Two columns and a full-width slider under them, so the labels line up down the panel and a value
+ * can be read at a glance without hunting along a row. */
+.pi-body { display: flex; flex-direction: column; gap: 10px; }
+.pi-group { display: flex; flex-direction: column; gap: 5px; }
+.pi-group-t { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fe-ink-dim, var(--text-faint)); margin-bottom: 1px; }
+.pi-field {
+  display: grid; grid-template-columns: 1fr 72px auto; align-items: center;
+  gap: 6px; font-size: 0.78rem; color: var(--fe-ink-dim, var(--text-secondary));
+}
+.pi-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The control has to state every property the app's broad `input` rule would otherwise own - that
+ * rule assumes a light surface and a 38px form field, neither of which is right in a tool panel. */
+.pi-num {
+  width: 72px; min-height: 0; padding: 4px 6px;
+  border: 1px solid var(--fe-panel-edge, var(--border-soft)); border-radius: 4px;
+  background: #1b2027; color: #e8edf4;
+  font: inherit; font-size: 0.78rem; text-align: right; font-variant-numeric: tabular-nums;
+}
+.pi-num:focus { outline: none; border-color: var(--fe-accent, var(--accent)); }
+.pi-unit { font-style: normal; font-size: 0.7rem; color: var(--fe-ink-dim, var(--text-faint)); min-width: 18px; }
+.pi-select {
+  grid-column: 2 / span 2; width: auto; min-height: 0; padding: 4px 6px;
+  border: 1px solid var(--fe-panel-edge, var(--border-soft)); border-radius: 4px;
+  background: #1b2027; color: #e8edf4; font: inherit; font-size: 0.78rem;
+}
+/* The slider spans the row under its own field, so it never squeezes the number it belongs to. */
+.pi-slider { grid-column: 1 / -1; width: 100%; margin: 0; }
+.pi-check { grid-template-columns: 1fr auto; }
+.pi-check input[type="checkbox"] { width: auto; min-height: 0; margin: 0; }
+
+/* The outliner: everything on the plan, as a list.
+ *
+ * What it replaces was a TALLY - "Walls 42, Doors 3" - a count rather than a list, so nothing on a
+ * plan could be found, hidden or locked without hunting for it on the canvas. */
+.fe-panel.fe-outliner { width: 220px; max-width: calc(100% - 24px); padding: 7px 8px 8px; }
+.ol-tree { display: flex; flex-direction: column; gap: 7px; max-height: 46vh; overflow-y: auto; }
+.ol-empty { font-size: 0.76rem; color: var(--fe-ink-dim, var(--text-faint)); padding: 4px 2px; }
+.ol-group { display: flex; flex-direction: column; gap: 2px; }
+.ol-group-head { display: flex; align-items: center; gap: 5px; padding: 2px 0 3px; border-bottom: 1px solid var(--fe-panel-edge, var(--border-subtle)); }
+.ol-group-name { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fe-ink-dim, var(--text-faint)); flex: 1 1 auto; }
+.ol-count { font-size: 0.68rem; color: var(--fe-ink-dim, var(--text-faint)); font-variant-numeric: tabular-nums; }
+.ol-type { display: flex; flex-direction: column; gap: 1px; }
+.ol-type-name { display: none; } /* the row labels already name the type; this is the hook for a future collapse */
+.ol-row { display: flex; align-items: center; gap: 2px; border-radius: 3px; }
+.ol-row.sel { background: var(--fe-accent, var(--accent)); }
+.ol-row.sel .ol-name, .ol-row.sel .ol-sub { color: #fff; }
+/* Hidden reads as absent, locked as untouchable. Two different states, two different signals -
+ * dimming both would make them indistinguishable at a glance. */
+.ol-row.hidden .ol-pick { opacity: 0.42; }
+.ol-row.locked .ol-name { font-style: italic; }
+.ol-pick {
+  flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 5px;
+  border: 0; background: none; padding: 3px 4px; cursor: pointer;
+  font: inherit; font-size: 0.75rem; color: var(--fe-ink, var(--text-secondary)); text-align: start;
+}
+.ol-row:not(.sel) .ol-pick:hover { background: #2f3742; border-radius: 3px; }
+.ol-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ol-sub { flex: 0 0 auto; font-size: 0.68rem; color: var(--fe-ink-dim, var(--text-faint)); font-variant-numeric: tabular-nums; }
+.ol-eye, .ol-lock {
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border: 0; border-radius: 3px;
+  background: none; color: var(--fe-ink-dim, var(--text-faint)); cursor: pointer;
+}
+.ol-eye:hover, .ol-lock:hover { background: #3a444f; color: #fff; }
+.ol-eye.off { opacity: 0.35; }
+.ol-lock.on { color: #f59e0b; }
 /* A row of small toggle buttons in the inspector (e.g. a door's hinge/swing mirrors). The active
    one reads as pressed so the current hand is obvious at a glance. */
 .fe-btn-row { display: flex; gap: 6px; flex-wrap: wrap; }

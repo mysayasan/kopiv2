@@ -5,6 +5,8 @@ import { apiBase } from '../lib/helpers';
 import { nodeTone, TONES } from '../lib/fleet_status';
 import { KIND_BUILDING, KIND_OUTDOOR, normKind } from './site_kinds';
 import { PLAN_OBJECTS, readModel, writeModel } from './map/plan_objects';
+import { PlanFields } from './map/plan_inspector';
+import { PlanOutliner, loadOutlinerState, saveOutlinerState } from './map/plan_outliner';
 import {
   DEF_SILL, DEF_HEAD, sillOf, headOf, carveSeg,
   IDENTITY_XF, xfPoint, xfLengthAlong, rectCenter, rectSize, rectFrom, rectCorners, pointInRotatedRect, boundsOfPoints,
@@ -272,8 +274,41 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
   // The tool palette and the properties inspector are both dockable panels. Each can dock to the
   // left or right edge — dropping both on the same side stacks them in one column — or float freely.
   // Drag a panel by its grip; where you drop it (near the left/right edge, or the middle) decides.
-  const [dock, setDock] = useState({ toolbar: 'left', props: 'right' }); // 'left' | 'right' | 'float'
-  const [floatPos, setFloatPos] = useState({ toolbar: null, props: null });
+  const [dock, setDock] = useState({ toolbar: 'left', outliner: 'right', props: 'right' }); // 'left' | 'right' | 'float'
+  const [floatPos, setFloatPos] = useState({ toolbar: null, outliner: null, props: null });
+  // ---- outliner view state ----------------------------------------------------------------------
+  //
+  // Which objects are hidden and which are locked, as sets of selection keys. VIEW state, not model
+  // state: hiding the parking rows to get at the walls underneath is one operator's working
+  // preference while drawing, not a fact about the building, and writing it into the shared model
+  // would push it onto everyone who opens the plan afterwards - the PDF report included.
+  //
+  // Per floor, in localStorage, and a browser that blocks site data simply shows everything.
+  const floorId = floor && floor.id;
+  const [hidden, setHidden] = useState(() => new Set(loadOutlinerState(floorId).hidden));
+  const [locked, setLocked] = useState(() => new Set(loadOutlinerState(floorId).locked));
+  const hiddenRef = useRef(hidden); hiddenRef.current = hidden;
+  const lockedRef = useRef(locked); lockedRef.current = locked;
+  useEffect(() => {
+    const st = loadOutlinerState(floorId);
+    setHidden(new Set(st.hidden)); setLocked(new Set(st.locked));
+  }, [floorId]);
+  useEffect(() => { saveOutlinerState(floorId, hidden, locked); }, [floorId, hidden, locked]);
+  // Hiding or locking something that is currently HELD drops it from the selection. Otherwise the
+  // inspector would go on editing a row the operator has just put out of reach, and a drag would
+  // move something they cannot see.
+  useEffect(() => {
+    setSelection((prev) => {
+      if (!prev.size) return prev;
+      const next = new Set([...prev].filter((k) => !hidden.has(k) && !locked.has(k)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [hidden, locked]);
+  // A hidden or locked object cannot be picked, and a hidden one is not drawn. Both are asked by
+  // key, so a type added to the registry is covered without an edit.
+  const isHidden = useCallback((tag, i) => hiddenRef.current.has(`${tag}:${i}`), []);
+  const isPickable = useCallback((tag, i) => !hiddenRef.current.has(`${tag}:${i}`) && !lockedRef.current.has(`${tag}:${i}`), []);
+
   const [tool, setTool] = useState('select'); // select | wall | room | round | door | window | stairs | parking | erase
   // Arriving with something to place (dragged in from the map's tray) switches to select and
   // holds there. Only the select branch of the pointer handler actually PLACES, so with a drawing
@@ -412,6 +447,20 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
   const [wallHeight, setWallHeight] = useState(() => (floor && floor.wallHeight > 0 ? floor.wallHeight : 2.7));
   const scale = cellMeters > 0 ? cellMeters / unit : 0;
   const scaleRef = useRef(scale); scaleRef.current = scale;
+
+  // Is that scale REAL, or the nominal one the editor assumes so its grid means something?
+  //
+  // FloorPlan.Scale defaults to 0 = UNSET, but cellMeters above falls back to 0.5 m regardless -
+  // so `scale` is never zero and every metre readout on an unscaled plan has been a guess printed
+  // as a fact. A survey drawing that says "1.50 m" when nobody ever told it how big the plan is, is
+  // worse than one that says "129 px", because it looks like an answer.
+  //
+  // The nominal stays (the grid, the 3D view and coverage all need SOMETHING), but anything shown
+  // to an operator asks this first. `setscale`, and typing in the cell-size box, are the two ways
+  // it becomes known.
+  const [scaleKnown, setScaleKnown] = useState(() => !!(floor && floor.scale > 0));
+  const shownScale = scaleKnown ? scale : 0;
+  const shownScaleRef = useRef(shownScale); shownScaleRef.current = shownScale;
 
   // There are five kinds of thing that can be selected; clearing them one at a time at every call
   const clearSel = useCallback(() => setSelection(new Set()), []);
@@ -612,6 +661,7 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
     const perPx = metres / px;          // metres per image pixel
     const cell = +(perPx * unit).toFixed(3); // …expressed as the metre cell the editor works in
     setCellMeters(cell);
+    setScaleKnown(true);
     if (onToast) onToast(t('grid.setScaleDone', { m: metres.toFixed(2), cell: cell.toFixed(2) }), 'success');
     redraw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -716,6 +766,8 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
     ctx.strokeStyle = GRID_EDGE; ctx.lineWidth = 1;
     ctx.strokeRect(0.5, 0.5, Math.round(planW) - 1, Math.round(planH) - 1);
 
+    // What the outliner has hidden, read once for the whole frame.
+    const hid = hiddenRef.current;
     const seg = (s, color, wd) => { ctx.strokeStyle = color; ctx.lineWidth = wd; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(s.x1 * ds, s.y1 * ds); ctx.lineTo(s.x2 * ds, s.y2 * ds); ctx.stroke(); };
     const dot = (x, y, color, r = 3) => { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); };
 
@@ -723,6 +775,7 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
     const mv = moveRef.current;
     const pv = mv && mv.moved ? xfObjects(mv.orig, mv.xf) : null;
     segsRef.current.forEach((s, i) => {
+      if (hid.has(`seg:${i}`)) return; // hidden in the outliner
       let ss = s;
       if (pv && pv.segs.has(i)) ss = pv.segs.get(i);
       const hov = toolRef.current === 'erase' && i === hoverRef.current;
@@ -738,6 +791,7 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
     // on an outdoor site the same opening is a GATE, drawn as posts with a barred leaf, because a
     // swing arc through a fence line reads as a door into nothing.
     doorsRef.current.forEach((d, i) => {
+      if (hid.has(`door:${i}`)) return; // hidden in the outliner
       const hov = toolRef.current === 'erase' && i === hoverDoorRef.current;
       const sel = isSel('door', i);
       if (pv && pv.doors.has(i)) d = pv.doors.get(i);
@@ -791,6 +845,7 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
     // faces and the glazing between them). No swing, because a window is an opening you see through
     // rather than pass through — which is exactly why it matters to a camera's sight line.
     windowsRef.current.forEach((d, i) => {
+      if (hid.has(`win:${i}`)) return; // hidden in the outliner
       const hov = toolRef.current === 'erase' && i === hoverWinRef.current;
       const sel = isSel('win', i);
       if (pv && pv.wins.has(i)) d = pv.wins.get(i);
@@ -833,6 +888,7 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
     // raised floors — a footprint that sits higher, shown as a hatched slab with its rise labelled,
     // so it reads as a platform you step up onto (and reach by stairs). Drawn before parking/markers.
     platsRef.current.forEach((p, i) => {
+      if (hid.has(`plat:${i}`)) return; // hidden in the outliner
       const hov = toolRef.current === 'erase' && i === hoverPlatRef.current;
       const sel = isSel('plat', i);
       if (pv && pv.plats.has(i)) p = pv.plats.get(i);
@@ -860,6 +916,7 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
     // parking — a row of bays: the footprint outline plus the stall divider lines. Drawn under the
     // wall/fence layer's colours but above the plan image, so it reads as ground marking.
     parkingRef.current.forEach((p, i) => {
+      if (hid.has(`park:${i}`)) return; // hidden in the outliner
       const hov = toolRef.current === 'erase' && i === hoverParkRef.current;
       const sel = isSel('park', i);
       if (pv && pv.parks.has(i)) p = pv.parks.get(i);
@@ -892,6 +949,7 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
 
     // stairs — footprint + a chosen number of step (tread) lines across the run + an ascent arrow.
     stairsRef.current.forEach((s, i) => {
+      if (hid.has(`stair:${i}`)) return; // hidden in the outliner
       const hov = toolRef.current === 'erase' && i === hoverStairRef.current;
       const sel = isSel('stair', i);
       if (pv && pv.stairs.has(i)) s = pv.stairs.get(i);
@@ -981,6 +1039,7 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
     // camera / node markers (OL coords → flip y). FOV wedge for cameras.
     const rad = arcRadius(w, h);
     placements.forEach((p) => {
+      if (hid.has(`cam:${p.id}`)) return; // hidden in the outliner
       // Markers live in OL space (y UP) while the drag delta is image space (y DOWN), so the
       // vertical offset is subtracted here and again when the move is persisted.
       const o = pv && pv.cams.get(p.id);
@@ -1038,22 +1097,26 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
 
     // wall draft preview + measurement
     const label = (mx, my, text) => { ctx.font = '600 12px system-ui, sans-serif'; const pad = 4; const tw = ctx.measureText(text).width; ctx.fillStyle = 'rgba(15,23,33,0.85)'; ctx.fillRect(mx + 8, my - 20, tw + pad * 2, 18); ctx.fillStyle = '#fff'; ctx.fillText(text, mx + 8 + pad, my - 7); };
-    const mOf = (a, b) => (Math.hypot(b.x - a.x, b.y - a.y) * scaleRef.current).toFixed(1);
+    // Measurements shown while drawing use the KNOWN scale, so an unscaled plan measures in pixels
+    // rather than in metres nobody has established. See the scaleKnown note.
+    const sc = shownScaleRef.current;
+    const mUnit = sc > 0 ? 'm' : 'px';
+    const mOf = (a, b) => (Math.hypot(b.x - a.x, b.y - a.y) * (sc > 0 ? sc : 1)).toFixed(sc > 0 ? 1 : 0);
     const d = draftRef.current; const cur = cursorRef.current;
     if (d && d.pts) {
       for (let i = 0; i < d.pts.length - 1; i++) seg({ x1: d.pts[i].x, y1: d.pts[i].y, x2: d.pts[i + 1].x, y2: d.pts[i + 1].y }, '#2d6cdf', 5);
       d.pts.forEach((p) => dot(p.x * ds, p.y * ds, '#2d6cdf'));
       const last = d.pts[d.pts.length - 1];
-      if (cur && last) { seg({ x1: last.x, y1: last.y, x2: cur.x, y2: cur.y }, 'rgba(45,108,223,0.6)', 4); label(cur.x * ds, cur.y * ds, `${mOf(last, cur)} m`); }
+      if (cur && last) { seg({ x1: last.x, y1: last.y, x2: cur.x, y2: cur.y }, 'rgba(45,108,223,0.6)', 4); label(cur.x * ds, cur.y * ds, `${mOf(last, cur)} ${mUnit}`); }
     } else if (d && d.round && d.start && cur) {
       const cx = (d.start.x + cur.x) / 2; const cy = (d.start.y + cur.y) / 2; const rx = Math.abs(cur.x - d.start.x) / 2; const ry = Math.abs(cur.y - d.start.y) / 2;
       ctx.beginPath(); ctx.ellipse(cx * ds, cy * ds, rx * ds, ry * ds, 0, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(45,108,223,0.12)'; ctx.fill(); ctx.strokeStyle = '#2d6cdf'; ctx.lineWidth = 4; ctx.stroke();
-      label(cur.x * ds, cur.y * ds, `${(rx * 2 * scaleRef.current).toFixed(1)} × ${(ry * 2 * scaleRef.current).toFixed(1)} m`);
+      label(cur.x * ds, cur.y * ds, `${(rx * 2 * (sc > 0 ? sc : 1)).toFixed(sc > 0 ? 1 : 0)} × ${(ry * 2 * (sc > 0 ? sc : 1)).toFixed(sc > 0 ? 1 : 0)} ${mUnit}`);
     } else if (d && d.start && cur) {
       const rx = Math.min(d.start.x, cur.x); const ry = Math.min(d.start.y, cur.y); const rw = Math.abs(cur.x - d.start.x); const rh = Math.abs(cur.y - d.start.y);
       ctx.strokeStyle = '#2d6cdf'; ctx.lineWidth = 4; ctx.strokeRect(rx * ds, ry * ds, rw * ds, rh * ds); ctx.fillStyle = 'rgba(45,108,223,0.12)'; ctx.fillRect(rx * ds, ry * ds, rw * ds, rh * ds);
-      label(cur.x * ds, cur.y * ds, `${(rw * scaleRef.current).toFixed(1)} × ${(rh * scaleRef.current).toFixed(1)} m`);
+      label(cur.x * ds, cur.y * ds, `${(rw * (sc > 0 ? sc : 1)).toFixed(sc > 0 ? 1 : 0)} × ${(rh * (sc > 0 ? sc : 1)).toFixed(sc > 0 ? 1 : 0)} ${mUnit}`);
     } else if (cur && DRAG_TOOLS.has(toolRef.current)) dot(cur.x * ds, cur.y * ds, 'rgba(45,108,223,0.7)', 4);
 
     // The set-scale rubber band: a plain measured line, with its pixel length, waiting to be told
@@ -1064,9 +1127,9 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
       ctx.setLineDash([]);
       dot(d.scaleFrom.x * ds, d.scaleFrom.y * ds, SNAP_COLOR, 4);
       dot(cur.x * ds, cur.y * ds, SNAP_COLOR, 4);
-      label(cur.x * ds, cur.y * ds, scaleRef.current > 0
-        ? `${(Math.hypot(cur.x - d.scaleFrom.x, cur.y - d.scaleFrom.y) * scaleRef.current).toFixed(2)} m`
-        : `${Math.round(Math.hypot(cur.x - d.scaleFrom.x, cur.y - d.scaleFrom.y))} px`);
+      // The set-scale rubber band always measures in PIXELS: metres are the answer it is about to
+      // be given, so showing a metre value here would be showing the guess it exists to replace.
+      label(cur.x * ds, cur.y * ds, `${Math.round(Math.hypot(cur.x - d.scaleFrom.x, cur.y - d.scaleFrom.y))} px`);
     }
 
     // The snap indicator: a ring on what the pointer actually caught. Snapping used to be
@@ -1080,17 +1143,20 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
       else if (sn.kind === 'edge') { ctx.beginPath(); ctx.moveTo(sx - 6, sy); ctx.lineTo(sx + 6, sy); ctx.moveTo(sx, sy - 6); ctx.lineTo(sx, sy + 6); ctx.stroke(); }
       else { ctx.beginPath(); ctx.arc(sx, sy, 4.5, 0, Math.PI * 2); ctx.stroke(); }
     }
-  }, [cssW, cssH, w, h, unit, ds, view.tx, view.ty, snapMode, placements, selection, wallHeight, kind, t]);
+  }, [cssW, cssH, w, h, unit, ds, view.tx, view.ty, snapMode, shownScale, placements, selection, wallHeight, kind, t]);
   useEffect(() => { if (mode === '2d') draw(); });
 
   // ---- geometry helpers on the canvas ----
   // Screen → image, undoing the whole view transform (pan included).
   const evImg = (e) => { const r = canvasRef.current.getBoundingClientRect(); const v = viewRef.current; return { x: ((e.clientX - r.left) - v.tx) / v.scale, y: ((e.clientY - r.top) - v.ty) / v.scale }; };
   const evOL = (e) => { const p = evImg(e); return { x: p.x, y: h - p.y }; }; // OL space (bottom-left) for cameras
-  const hitMarker = (ol) => { let best = 14 / ds; let hit = null; placements.forEach((p) => { const d = Math.hypot(p.x - ol.x, p.y - ol.y); if (d < best) { best = d; hit = p; } }); return hit; };
-  const nearestSeg = (im) => { let idx = -1; let best = 8 / ds; segsRef.current.forEach((s, i) => { const dd = dist2seg(im.x, im.y, s); if (dd < best) { best = dd; idx = i; } }); return idx; };
+  // Every hit test skips what the outliner has hidden or locked. That IS what those toggles mean:
+  // hidden things are not there to click, and a locked one is deliberately click-through so the
+  // thing underneath it can be reached.
+  const hitMarker = (ol) => { let best = 14 / ds; let hit = null; placements.forEach((p) => { if (!isPickable('cam', p.id)) return; const d = Math.hypot(p.x - ol.x, p.y - ol.y); if (d < best) { best = d; hit = p; } }); return hit; };
+  const nearestSeg = (im) => { let idx = -1; let best = 8 / ds; segsRef.current.forEach((s, i) => { if (!isPickable('seg', i)) return; const dd = dist2seg(im.x, im.y, s); if (dd < best) { best = dd; idx = i; } }); return idx; };
   // Topmost stair whose footprint contains the point (last drawn wins, matching paint order).
-  const hitStair = (im) => { for (let i = stairsRef.current.length - 1; i >= 0; i--) { if (pointInRotatedRect(im.x, im.y, stairsRef.current[i])) return i; } return -1; };
+  const hitStair = (im) => { for (let i = stairsRef.current.length - 1; i >= 0; i--) { if (isPickable('stair', i) && pointInRotatedRect(im.x, im.y, stairsRef.current[i])) return i; } return -1; };
   // Openings are small targets sitting on a wall; both are hit the same way.
   // An opening is clicked on the SYMBOL it draws, not just the point it was dropped on. Project the
   // pointer into the opening's own frame (u along the wall, n across it) and test a box that covers
@@ -1111,11 +1177,11 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
     }
     return Math.abs(ln) <= m + 5 / ds;
   };
-  const hitOpening = (list, im, swings) => { for (let i = list.length - 1; i >= 0; i--) { if (pointInOpening(im, list[i], swings)) return i; } return -1; };
-  const hitDoor = (im) => hitOpening(doorsRef.current, im, kind === KIND_BUILDING);
-  const hitWindow = (im) => hitOpening(windowsRef.current, im, false);
-  const hitParking = (im) => { for (let i = parkingRef.current.length - 1; i >= 0; i--) { if (pointInRotatedRect(im.x, im.y, parkingRef.current[i])) return i; } return -1; };
-  const hitPlatform = (im) => { for (let i = platsRef.current.length - 1; i >= 0; i--) { if (pointInRotatedRect(im.x, im.y, platsRef.current[i])) return i; } return -1; };
+  const hitOpening = (list, im, swings, tag) => { for (let i = list.length - 1; i >= 0; i--) { if (isPickable(tag, i) && pointInOpening(im, list[i], swings)) return i; } return -1; };
+  const hitDoor = (im) => hitOpening(doorsRef.current, im, kind === KIND_BUILDING, 'door');
+  const hitWindow = (im) => hitOpening(windowsRef.current, im, false, 'win');
+  const hitParking = (im) => { for (let i = parkingRef.current.length - 1; i >= 0; i--) { if (isPickable('park', i) && pointInRotatedRect(im.x, im.y, parkingRef.current[i])) return i; } return -1; };
+  const hitPlatform = (im) => { for (let i = platsRef.current.length - 1; i >= 0; i--) { if (isPickable('plat', i) && pointInRotatedRect(im.x, im.y, platsRef.current[i])) return i; } return -1; };
   // Nearest point on any wall to place an opening on — the projected centre + the wall's angle.
   const nearestWallHit = (im, reach) => {
     let best = (reach || 28) / ds; let hit = null;
@@ -1779,14 +1845,16 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
       // otherwise dragging a band across a large car park would miss the thing you drew it over.
       const overlaps = (r) => Math.min(r.x1, r.x2) <= rX && Math.max(r.x1, r.x2) >= rx && Math.min(r.y1, r.y2) <= rY && Math.max(r.y1, r.y2) >= ry;
       const found = [];
-      segsRef.current.forEach((s, i) => { if (inBox(s.x1, s.y1) || inBox(s.x2, s.y2) || inBox((s.x1 + s.x2) / 2, (s.y1 + s.y2) / 2)) found.push(selKey('seg', i)); });
-      doorsRef.current.forEach((d, i) => { if (inBox(d.cx, d.cy)) found.push(selKey('door', i)); });
-      windowsRef.current.forEach((d, i) => { if (inBox(d.cx, d.cy)) found.push(selKey('win', i)); });
-      stairsRef.current.forEach((s, i) => { if (overlaps(s)) found.push(selKey('stair', i)); });
-      parkingRef.current.forEach((p, i) => { if (overlaps(p)) found.push(selKey('park', i)); });
-      platsRef.current.forEach((p, i) => { if (overlaps(p)) found.push(selKey('plat', i)); });
+      // A band must not sweep up what a click could not reach - otherwise hiding or locking a row
+      // stops it being clickable and leaves it selectable, which is worse than neither.
+      segsRef.current.forEach((s, i) => { if (isPickable('seg', i) && (inBox(s.x1, s.y1) || inBox(s.x2, s.y2) || inBox((s.x1 + s.x2) / 2, (s.y1 + s.y2) / 2))) found.push(selKey('seg', i)); });
+      doorsRef.current.forEach((d, i) => { if (isPickable('door', i) && inBox(d.cx, d.cy)) found.push(selKey('door', i)); });
+      windowsRef.current.forEach((d, i) => { if (isPickable('win', i) && inBox(d.cx, d.cy)) found.push(selKey('win', i)); });
+      stairsRef.current.forEach((s, i) => { if (isPickable('stair', i) && overlaps(s)) found.push(selKey('stair', i)); });
+      parkingRef.current.forEach((p, i) => { if (isPickable('park', i) && overlaps(p)) found.push(selKey('park', i)); });
+      platsRef.current.forEach((p, i) => { if (isPickable('plat', i) && overlaps(p)) found.push(selKey('plat', i)); });
       // Markers are OL space (y up); the band is image space.
-      placements.forEach((p) => { if (inBox(p.x, h - p.y)) found.push(selKey('cam', p.id)); });
+      placements.forEach((p) => { if (isPickable('cam', p.id) && inBox(p.x, h - p.y)) found.push(selKey('cam', p.id)); });
       setSelection((prev) => { const ns = mq.add ? new Set(prev) : new Set(); found.forEach((k) => ns.add(k)); return ns; });
       redraw(); return;
     }
@@ -1919,17 +1987,62 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
     };
   }, [mode, tool, selection, placements, deleteSelection, copySelection, cutSelection, pasteClipboard, finishWall, undo, redo, redraw, commit, clearSel, frameAll, frameOn, startModal, applyModal, cancelModal, confirmModal]);
 
+  // ---- the generic object accessors the inspector works through -------------------------------
+  //
+  // One selected object of ANY registry type, plus the two verbs that change it. Adding a type in
+  // P5 gets a working inspector through these without an edit here - which is the reason the
+  // registry landed before this phase.
+  const LIST_BY_REF = () => listByRef();
+  const soleTyped = (() => {
+    if (selection.size !== 1) return null;
+    const key = [...selection][0];
+    const c = key.indexOf(':'); const tag = key.slice(0, c); const idx = Number(key.slice(c + 1));
+    const name = Object.keys(PLAN_OBJECTS).find((k) => PLAN_OBJECTS[k].sel === tag);
+    if (!name || PLAN_OBJECTS[name].sel === 'seg') return null; // a wall has no fields of its own
+    const list = LIST_BY_REF()[PLAN_OBJECTS[name].ref] || [];
+    const obj = list[idx];
+    return obj ? { name, idx, obj, spec: PLAN_OBJECTS[name] } : null;
+  })();
+
+  // patchObject merges fields into one object and commits it - one undo step, whatever the type.
+  const patchObject = (name, idx, patch) => {
+    const spec = PLAN_OBJECTS[name]; if (!spec) return;
+    const list = LIST_BY_REF()[spec.ref] || [];
+    commit({ [spec.ref]: list.map((o, i) => (i === idx ? { ...o, ...patch } : o)) });
+  };
+  // patchObjectLive is the same edit WITHOUT a history entry, for a slider being dragged: one undo
+  // step per gesture rather than one per pixel. pushHistory on grab, this while moving.
+  const patchObjectLive = (name, idx, patch) => {
+    const spec = PLAN_OBJECTS[name]; if (!spec) return;
+    const set = REF_SETTERS[spec.ref]; if (!set) return;
+    const list = LIST_BY_REF()[spec.ref] || [];
+    set(list.map((o, i) => (i === idx ? { ...o, ...patch } : o)));
+    redraw(); scheduleSave();
+  };
+  // transformObject routes a typed X / rotation / width through the SAME affine step a drag or a
+  // G/R/S transform uses, so the mouse and the keyboard cannot disagree about what a transform means.
+  const transformObject = (name, idx, partial) => {
+    const spec = PLAN_OBJECTS[name]; if (!spec) return;
+    const xf = { ...IDENTITY_XF, ...partial };
+    const orig = beginMove(new Set([selKey(spec.sel, idx)]), { x: 0, y: 0 });
+    const next = xfObjects(orig, xf);
+    const patch = {};
+    if (next.segs.size) patch.segs = segsRef.current.map((o, i) => next.segs.get(i) || o);
+    if (next.doors.size) patch.doors = doorsRef.current.map((o, i) => next.doors.get(i) || o);
+    if (next.wins.size) patch.windows = windowsRef.current.map((o, i) => next.wins.get(i) || o);
+    if (next.stairs.size) patch.stairs = stairsRef.current.map((o, i) => next.stairs.get(i) || o);
+    if (next.parks.size) patch.parking = parkingRef.current.map((o, i) => next.parks.get(i) || o);
+    if (next.plats.size) patch.platforms = platsRef.current.map((o, i) => next.plats.get(i) || o);
+    if (Object.keys(patch).length) commit(patch);
+  };
+
   const sel = selId ? placements.find((p) => p.id === selId) : null;
   const selStairObj = selStair >= 0 ? stairsRef.current[selStair] : null;
   const selDoorObj = selDoor >= 0 ? doorsRef.current[selDoor] : null;
   const selWinObj = selWin >= 0 ? windowsRef.current[selWin] : null;
   const selParkObj = selPark >= 0 ? parkingRef.current[selPark] : null;
   const selPlatObj = selPlat >= 0 ? platsRef.current[selPlat] : null;
-  const rotateStair = () => { if (selStair < 0) return; const next = stairsRef.current.map((s, i) => (i === selStair ? { ...s, dir: rotateDir(s.dir) } : s)); commit({ stairs: next }); };
-  const setSteps = (n) => { stairsRef.current = stairsRef.current.map((s, i) => (i === selStair ? { ...s, steps: n } : s)); redraw(); scheduleSave(); };
-  const setStairH = (m) => { stairsRef.current = stairsRef.current.map((s, i) => (i === selStair ? { ...s, height: m } : s)); redraw(); scheduleSave(); };
   // Flip a stair between going UP and going DOWN (a descent to a lower level / basement).
-  const toggleStairDown = () => { if (selStair < 0) return; commit({ stairs: stairsRef.current.map((s, i) => (i === selStair ? { ...s, down: !s.down } : s)) }); };
   // A stair's effective step count: its own setting, or a default from the storey height.
   // The raised floor a stair SITS ON, or null: the one whose footprint contains the stair's CENTRE.
   // Using the centre (not any overlap) means a stair only rests on a platform when it is deliberately
@@ -1968,13 +2081,6 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
   // Step lines default to the climb height (a stair resting on a high platform is a shorter flight),
   // unless the operator has set a count.
   const stairSteps = (s) => Math.max(STAIR_MIN_STEPS, Math.min(STAIR_MAX_STEPS, s.steps || Math.round(stairClimbH(s) / 0.18)));
-  // Slider drags update in place (no per-tick history); pushHistory once on grab keeps it undoable.
-  const setDoorWidth = (px) => { doorsRef.current = doorsRef.current.map((d, i) => (i === selDoor ? { ...d, w: px } : d)); redraw(); scheduleSave(); };
-  // Toggle a door's hinge-side (hf) or swing-side (sf) mirror. One history step per flip, so it undoes.
-  const toggleDoor = (key) => { if (selDoor < 0) return; commit({ doors: doorsRef.current.map((d, i) => (i === selDoor ? { ...d, [key]: !d[key] } : d)) }); };
-  const patchWindow = (patch) => { windowsRef.current = windowsRef.current.map((d, i) => (i === selWin ? { ...d, ...patch } : d)); redraw(); scheduleSave(); };
-  const setBays = (n) => { parkingRef.current = parkingRef.current.map((p, i) => (i === selPark ? { ...p, bays: n } : p)); redraw(); scheduleSave(); };
-  const setRise = (m) => { platsRef.current = platsRef.current.map((p, i) => (i === selPlat ? { ...p, rise: m } : p)); redraw(); scheduleSave(); };
   // ---- the status bar ---------------------------------------------------------------------------
   //
   // Reported UP to the host, which owns the strip along the bottom of the window. The editor is the
@@ -1996,8 +2102,8 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
       snap: t(`grid.snap.${effSnap}`),
       snapOn: effSnap !== 'off',
       zoom: Math.round(view.scale * 100),
-      pos: cur ? (scale > 0
-        ? `${(cur.x * scale).toFixed(2)}, ${(cur.y * scale).toFixed(2)} m`
+      pos: cur ? (shownScale > 0
+        ? `${(cur.x * shownScale).toFixed(2)}, ${(cur.y * shownScale).toFixed(2)} m`
         : `${Math.round(cur.x)}, ${Math.round(cur.y)} px`) : '',
       // The accelerators are advertised here rather than hidden in a keymap nobody opens - the
       // discoverability half of "G/R/S are accelerators, never the only way". While one is RUNNING
@@ -2008,7 +2114,7 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
         ? t('grid.modalHint', {
           op: t(`grid.modal.${md.mode}`),
           value: md.typed !== '' ? md.typed : '…',
-          unit: md.mode === 'move' ? (scale > 0 ? 'm' : 'px') : (md.mode === 'rotate' ? '°' : '×'),
+          unit: md.mode === 'move' ? (shownScale > 0 ? 'm' : 'px') : (md.mode === 'rotate' ? '°' : '×'),
           axis: md.axis ? md.axis.toUpperCase() : t('grid.modalFree'),
         })
         : t('grid.statusHint')),
@@ -2108,73 +2214,45 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
           <button type="button" className="quiet danger-text fed-remove" onClick={deleteSelection}><span className="btn-icon"><Ico n="trash" sz={13} /> {t('grid.erase')}</span></button>
           <button type="button" className="quiet fed-remove" onClick={clearSel}>{t('fed.deselect')}</button>
         </div>
-      ) : selStairObj ? (
+      ) : soleTyped ? (
         <div className="fed-inspector">
-          <div className="fed-inspector-title"><Ico n="stairs" sz={13} /> {t('grid.stairs')}</div>
-          <div className="grid-readout">
-            <div><span>{t('grid.ascent')}</span><strong>{{ n: '↑', e: '→', s: '↓', w: '←' }[selStairObj.dir] || '↑'}</strong></div>
-            {stairBaseH(selStairObj) > 0 ? <div><span>{t('grid.restsOn')}</span><strong>+{stairBaseH(selStairObj).toFixed(2)} m</strong></div> : null}
+          {/* ONE panel for every registry type. It replaces five hand-written blocks that were
+              sliders and nothing else - there was no way to type a number anywhere in this editor,
+              which is most of why it read as a toy. A type declares its fields once and gets a
+              working inspector; P5's outdoor kit needs no edit here at all. */}
+          <div className="fed-inspector-title">
+            <Ico n={faceOf(kind, soleTyped.spec.tool ? soleTyped.spec.tool.id : 'select').icon} sz={13} />
+            {' '}{t(soleTyped.spec.label)}
           </div>
-          {/* Height: the flight's OWN climb, kept whether it sits on the floor or on a raised floor,
-              so a stair on a platform is the same flight, just lifted. Steps: its tread-line count. */}
-          <label className="grid-field"><span>{t('grid.height')}</span><input type="range" min={STAIR_MIN_H} max={STAIR_MAX_H} step="0.05" value={stairClimbH(selStairObj)} onPointerDown={pushHistory} onChange={(e) => setStairH(+e.target.value)} /><em>{stairClimbH(selStairObj).toFixed(2)} m</em></label>
-          <label className="grid-field"><span>{t('grid.steps')}</span><input type="range" min={STAIR_MIN_STEPS} max={STAIR_MAX_STEPS} step="1" value={stairSteps(selStairObj)} onPointerDown={pushHistory} onChange={(e) => setSteps(+e.target.value)} /><em>{stairSteps(selStairObj)}</em></label>
-          <button type="button" className={`quiet fed-remove${selStairObj.down ? ' active' : ''}`} onClick={toggleStairDown}><span className="btn-icon"><Ico n={selStairObj.down ? 'arr-down' : 'arr-up'} sz={13} /> {selStairObj.down ? t('grid.goesDown') : t('grid.goesUp')}</span></button>
-          <button type="button" className="quiet fed-remove" onClick={rotateStair}><span className="btn-icon"><Ico n="rotate-cw" sz={13} /> {t('grid.rotateAscent')}</span></button>
-          <button type="button" className="quiet danger-text fed-remove" onClick={deleteSelection}><span className="btn-icon"><Ico n="trash" sz={13} /> {t('grid.erase')}</span></button>
-        </div>
-      ) : selDoorObj ? (
-        <div className="fed-inspector">
-          <div className="fed-inspector-title"><Ico n={faceOf(kind, 'door').icon} sz={13} /> {t(faceOf(kind, 'door').key)}</div>
-          <label className="grid-field"><span>{t('grid.doorWidth')}</span><input type="range" min={Math.round(unit * 0.5)} max={Math.round(unit * 6)} step="1" value={Math.round(selDoorObj.w)} onPointerDown={pushHistory} onChange={(e) => setDoorWidth(+e.target.value)} /><em>{scale > 0 ? `${(selDoorObj.w * scale).toFixed(2)} m` : `${Math.round(selDoorObj.w)} px`}</em></label>
-          {/* A door's hand: which end the hinge is on, and which way it swings. Only a building door
-              draws a leaf and swing, so the flips are shown there — a gate is a symmetric barred
-              opening with no hand to set. */}
-          {kind === KIND_BUILDING ? (
-            <div className="fe-btn-row">
-              <button type="button" className={`quiet fed-remove${selDoorObj.hf ? ' active' : ''}`} onClick={() => toggleDoor('hf')}><span className="btn-icon"><Ico n="flip-h" sz={13} /> {t('grid.flipHinge')}</span></button>
-              <button type="button" className={`quiet fed-remove${selDoorObj.sf ? ' active' : ''}`} onClick={() => toggleDoor('sf')}><span className="btn-icon"><Ico n="flip-v" sz={13} /> {t('grid.flipSwing')}</span></button>
-            </div>
+          {/* Readouts that are DERIVED rather than editable stay: a stair's resting height comes
+              from the platform under it, and a bay's width from the row divided by its count. */}
+          {soleTyped.name === 'stair' && stairBaseH(soleTyped.obj) > 0 ? (
+            <div className="grid-readout"><div><span>{t('grid.restsOn')}</span><strong>+{stairBaseH(soleTyped.obj).toFixed(2)} m</strong></div></div>
           ) : null}
-          <button type="button" className="quiet danger-text fed-remove" onClick={deleteSelection}><span className="btn-icon"><Ico n="trash" sz={13} /> {t('grid.erase')}</span></button>
-        </div>
-      ) : selWinObj ? (
-        <div className="fed-inspector">
-          <div className="fed-inspector-title"><Ico n="window" sz={13} /> {t('grid.window')}</div>
-          <label className="grid-field"><span>{t('grid.doorWidth')}</span><input type="range" min={Math.round(unit * 0.5)} max={Math.round(unit * 8)} step="1" value={Math.round(selWinObj.w)} onPointerDown={pushHistory} onChange={(e) => patchWindow({ w: +e.target.value })} /><em>{scale > 0 ? `${(selWinObj.w * scale).toFixed(2)} m` : `${Math.round(selWinObj.w)} px`}</em></label>
-          {/* Sill and head are what make a window a window rather than a door: wall remains below
-              and above, which is exactly what decides whether a camera can see through it. */}
-          <label className="grid-field"><span>{t('grid.sill')}</span><input type="range" min="0" max="2.5" step="0.05" value={sillOf(selWinObj)} onPointerDown={pushHistory} onChange={(e) => patchWindow({ sill: +e.target.value })} /><em>{sillOf(selWinObj).toFixed(2)} m</em></label>
-          <label className="grid-field"><span>{t('grid.head')}</span><input type="range" min="0.5" max="4" step="0.05" value={headOf(selWinObj)} onPointerDown={pushHistory} onChange={(e) => patchWindow({ head: +e.target.value })} /><em>{headOf(selWinObj).toFixed(2)} m</em></label>
-          <button type="button" className="quiet danger-text fed-remove" onClick={deleteSelection}><span className="btn-icon"><Ico n="trash" sz={13} /> {t('grid.erase')}</span></button>
-        </div>
-      ) : selParkObj ? (
-        <div className="fed-inspector">
-          <div className="fed-inspector-title"><Ico n="parking" sz={13} /> {t('grid.parking')}</div>
-          <label className="grid-field"><span>{t('grid.bays')}</span><input type="range" min="1" max="60" step="1" value={Math.max(1, selParkObj.bays || 1)} onPointerDown={pushHistory} onChange={(e) => setBays(+e.target.value)} /><em>{Math.max(1, selParkObj.bays || 1)}</em></label>
-          <div className="grid-readout"><div><span>{t('grid.bayWidth')}</span><strong>{scale > 0 ? `${(((baysAcrossX(selParkObj) ? selParkObj.x2 - selParkObj.x1 : selParkObj.y2 - selParkObj.y1) * scale) / Math.max(1, selParkObj.bays || 1)).toFixed(2)} m` : '—'}</strong></div></div>
-          <button type="button" className="quiet danger-text fed-remove" onClick={deleteSelection}><span className="btn-icon"><Ico n="trash" sz={13} /> {t('grid.erase')}</span></button>
-        </div>
-      ) : selPlatObj ? (
-        <div className="fed-inspector">
-          <div className="fed-inspector-title"><Ico n="platform" sz={13} /> {t('grid.platform')}</div>
-          {/* Rise: how far this floor sits above the surrounding floor. Combine with a stair to reach it. */}
-          <label className="grid-field"><span>{t('grid.rise')}</span><input type="range" min={RISE_MIN} max={RISE_MAX} step="0.05" value={selPlatObj.rise > 0 ? selPlatObj.rise : DEF_RISE} onPointerDown={pushHistory} onChange={(e) => setRise(+e.target.value)} /><em>{(selPlatObj.rise > 0 ? selPlatObj.rise : DEF_RISE).toFixed(2)} m</em></label>
+          {soleTyped.name === 'parking' ? (
+            <div className="grid-readout"><div><span>{t('grid.bayWidth')}</span><strong>{shownScale > 0 ? `${(((baysAcrossX(soleTyped.obj) ? soleTyped.obj.x2 - soleTyped.obj.x1 : soleTyped.obj.y2 - soleTyped.obj.y1) * shownScale) / Math.max(1, soleTyped.obj.bays || 1)).toFixed(2)} m` : '—'}</strong></div></div>
+          ) : null}
+          <PlanFields
+            typeName={soleTyped.name}
+            index={soleTyped.idx}
+            obj={soleTyped.obj}
+            scale={shownScale}
+            unit={unit}
+            siteKind={kind}
+            onPatch={(patch) => patchObject(soleTyped.name, soleTyped.idx, patch)}
+            onPatchLive={(patch) => patchObjectLive(soleTyped.name, soleTyped.idx, patch)}
+            onTransform={(xf) => transformObject(soleTyped.name, soleTyped.idx, xf)}
+          />
           <button type="button" className="quiet danger-text fed-remove" onClick={deleteSelection}><span className="btn-icon"><Ico n="trash" sz={13} /> {t('grid.erase')}</span></button>
         </div>
       ) : (
         <div className="fed-inspector">
-          <label className="grid-field"><span>{t('grid.cellSize')}</span><span className="grid-input-row"><input type="number" min="0.1" step="0.1" value={cellMeters} onChange={(e) => setCellMeters(Math.max(0, +e.target.value || 0))} /><em>{t('grid.metres')}</em></span></label>
+          <label className="grid-field"><span>{t('grid.cellSize')}</span><span className="grid-input-row"><input type="number" min="0.1" step="0.1" value={cellMeters} onChange={(e) => { setCellMeters(Math.max(0, +e.target.value || 0)); setScaleKnown(true); }} /><em>{t('grid.metres')}</em></span></label>
           <label className="grid-field"><span>{t('grid.wallHeight')}</span><span className="grid-input-row"><input type="number" min="0.5" step="0.1" value={wallHeight} onChange={(e) => setWallHeight(Math.max(0, +e.target.value || 0))} /><em>{t('grid.metres')}</em></span></label>
-          <div className="grid-readout">
-            <div><span>{t(kind === KIND_OUTDOOR ? 'grid.fences' : 'grid.walls')}</span><strong>{segsRef.current.length}</strong></div>
-            {doorsRef.current.length ? <div><span>{t(kind === KIND_OUTDOOR ? 'grid.gates' : 'grid.doors')}</span><strong>{doorsRef.current.length}</strong></div> : null}
-            {windowsRef.current.length ? <div><span>{t('grid.windows')}</span><strong>{windowsRef.current.length}</strong></div> : null}
-            {stairsRef.current.length ? <div><span>{t('grid.stairs')}</span><strong>{stairsRef.current.length}</strong></div> : null}
-            {parkingRef.current.length ? <div><span>{t('grid.bays')}</span><strong>{parkingRef.current.reduce((n, p) => n + Math.max(1, p.bays || 1), 0)}</strong></div> : null}
-            {platsRef.current.length ? <div><span>{t('grid.platforms')}</span><strong>{platsRef.current.length}</strong></div> : null}
-            <div><span>{t('map.cameras')}</span><strong>{placements.filter((p) => p.cameraId).length}</strong></div>
-          </div>
+          {/* The tally that used to live here - "Walls 42, Doors 3" - is gone. It was a COUNT where
+              a LIST was wanted, and the outliner beside this panel is now that list: the same
+              numbers, plus the ability to find, hide or lock any one of them. Two of them would
+              just be the same facts twice. */}
           <p className="grid-hint">{t('fed.placeHint')}</p>
         </div>
       )}
@@ -2186,7 +2264,7 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
     const floating = dock[name] === 'float';
     const pos = floatPos[name] || { x: 12, y: 12 };
     return (
-      <div key={name} className={`fe-panel ${name === 'toolbar' ? 'fe-toolbar' : 'fe-inspector'}${floating ? ' fe-float' : ''}`} style={floating ? { left: pos.x, top: pos.y } : undefined}>
+      <div key={name} className={`fe-panel ${name === 'toolbar' ? 'fe-toolbar' : name === 'outliner' ? 'fe-outliner' : 'fe-inspector'}${floating ? ' fe-float' : ''}`} style={floating ? { left: pos.x, top: pos.y } : undefined}>
         {children}
       </div>
     );
@@ -2238,8 +2316,41 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
     </>
   )) : null;
 
-  const items = { toolbar: toolbarPanel, props: propsPanel };
-  const names = mode === '2d' ? ['toolbar', 'props'] : ['toolbar'];
+  // The outliner: everything on the plan, as a list. Its own dockable panel, so it can sit beside
+  // the inspector, swap sides with it, or float.
+  const outlinerPanel = mode === '2d' ? panelWrap('outliner', (
+    <>
+      <div className="fe-float-bar">{grip('outliner')}<span className="fe-float-hint">{t('ol.title')}</span></div>
+      <PlanOutliner
+        lists={listByRef()}
+        placements={placements}
+        nodesById={nodesById}
+        selection={selection}
+        scale={shownScale}
+        siteKind={kind}
+        hidden={hidden}
+        locked={locked}
+        onSelect={(key, add) => {
+          // Click selects; shift/ctrl-click adds. The canvas and the list are one selection.
+          setSelection((prev) => {
+            if (!add) return new Set([key]);
+            const ns = new Set(prev);
+            if (ns.has(key)) ns.delete(key); else ns.add(key);
+            return ns;
+          });
+        }}
+        onToggleHidden={(key) => setHidden((prev) => { const ns = new Set(prev); if (ns.has(key)) ns.delete(key); else ns.add(key); return ns; })}
+        onToggleLocked={(key) => setLocked((prev) => { const ns = new Set(prev); if (ns.has(key)) ns.delete(key); else ns.add(key); return ns; })}
+        onToggleCollection={(which, keys, on) => {
+          const setter = which === 'hidden' ? setHidden : setLocked;
+          setter((prev) => { const ns = new Set(prev); keys.forEach((k) => (on ? ns.add(k) : ns.delete(k))); return ns; });
+        }}
+      />
+    </>
+  )) : null;
+
+  const items = { toolbar: toolbarPanel, outliner: outlinerPanel, props: propsPanel };
+  const names = mode === '2d' ? ['toolbar', 'outliner', 'props'] : ['toolbar'];
   const leftEls = names.filter((n) => dock[n] === 'left').map((n) => items[n]);
   const rightEls = names.filter((n) => dock[n] === 'right').map((n) => items[n]);
   const floatEls = names.filter((n) => dock[n] === 'float').map((n) => items[n]);
