@@ -3,7 +3,7 @@ import PropTypes from 'prop-types';
 import { useT, Ico } from '@shared';
 import {
   KIND_BUILDING, KIND_OUTDOOR, KIND_POINT, KIND_ORDER, KIND_ICO,
-  normKind, multiPlan, hasPlans, iconsFor, defaultIconFor,
+  normKind, multiPlan, hasDrawablePlan, iconsFor, defaultIconFor,
 } from './site_kinds';
 
 // Re-exported so the existing callers keep working now that the palette is per-kind.
@@ -46,7 +46,7 @@ export function AssetWizard({ busy, onCreate, onCancel }) {
     //  - outdoor : exactly one ground plan.
     //  - building: one plan, or the areas the operator listed.
     let plans = [];
-    if (hasPlans(kind)) {
+    if (hasDrawablePlan(kind)) {
       if (askAreas && multi) plans = trimmedAreas;
       else plans = [kind === KIND_OUTDOOR ? t('bld.areaGrounds') : t('bld.areaMain')];
     }
@@ -192,7 +192,9 @@ export function SiteDialog({ initialName, initialIcon, kind, busy, onSave, onDel
           {onDelete ? <button type="button" className="danger-text site-dialog-delete" onClick={onDelete} disabled={busy}>{t('map.deleteAsset')}</button> : null}
           <span className="site-dialog-spacer" />
           <button type="button" className="quiet" onClick={onCancel} disabled={busy}>{t('map.cancel')}</button>
-          <button type="button" onClick={() => onSave(name.trim(), icon)} disabled={!canSave}>{t('fd.save')}</button>
+          {/* Same borrowed-label bug as the basemap dialog had: this saves a name and a glyph,
+              not a plan. */}
+          <button type="button" onClick={() => onSave(name.trim(), icon)} disabled={!canSave}>{t('map.saveAsset')}</button>
         </div>
       </div>
     </div>

@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
-import { useT, Ico } from '@shared';
+import { useT, Ico, icoSvg } from '@shared';
 import { apiBase } from '../lib/helpers';
 import { nodeTone, TONES } from '../lib/fleet_status';
 import { KIND_BUILDING, KIND_OUTDOOR, normKind } from './site_kinds';
@@ -49,6 +49,52 @@ const MIN_STAGE_H = 260; // never shrink the plan to a sliver, scroll instead
 //              (Site-plan convention: fences and gates, parking bays, hardstanding — see README.)
 //
 // A point asset (junction, pole) has no plan at all, so it never reaches this editor.
+// placingCursor turns the marker's own icon into the mouse cursor, so what you are carrying is
+// visible on the pointer rather than inferred from a banner. Drawn twice: a thick white pass
+// underneath as a halo (the plan can be any colour), then the accent-coloured icon on top.
+//
+// 24px with a centred hotspot - browsers ignore cursor images much bigger than 32px, and the
+// hotspot has to be the icon's middle because that is where the marker will land.
+// An appliance is a BOARD - a mini PC or a Pi - whatever it happens to manage. Kind used to
+// pick the glyph, which made a recorder look like a camera and a door controller look like a
+// door: the icon showed what the box WATCHES rather than what it IS, and a camera pin and its
+// recorder's pin were then indistinguishable on the same plan. Kind is still on the row, in
+// the name, and in the inspector.
+const APPLIANCE_ICON = 'board';
+function placingCursor(iconName) {
+  const inner = icoSvg[iconName] || icoSvg.cpu || '';
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round">`
+    + `<g stroke="#ffffff" stroke-width="5">${inner}</g>`
+    + `<g stroke="#2d6cdf" stroke-width="2">${inner}</g></svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 12 12, crosshair`;
+}
+
+// The canvas cannot draw an SVG element, so each marker glyph is rasterised ONCE into an <img>
+// from the same shared icon set the tree, the read-only floor view and the placing cursor use.
+// Without this the editor drew bare coloured discs while every other surface drew the icon - the
+// same pin looking like two different things depending on which screen you were on, and what you
+// dropped never looking like what you carried.
+//
+// Keyed by name+colour and cached for the life of the page; a miss kicks off a load and asks for a
+// redraw when it arrives, so the first frame degrades to the plain disc rather than blocking.
+const markerIcons = new Map();
+function markerIcon(name, color, onReady) {
+  const key = `${name}|${color}`;
+  const hit = markerIcons.get(key);
+  if (hit) return hit.ok ? hit.img : null;
+  const inner = icoSvg[name] || '';
+  if (!inner) { markerIcons.set(key, { ok: false }); return null; }
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" `
+    + `stroke="${color}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+  const img = new Image();
+  const entry = { img, ok: false };
+  markerIcons.set(key, entry);
+  img.onload = () => { entry.ok = true; if (onReady) onReady(); };
+  img.onerror = () => { entry.ok = false; };
+  img.src = `data:image/svg+xml,${encodeURIComponent(svg)}`;
+  return null;
+}
+
 const TOOLSETS = {
   [KIND_BUILDING]: ['select', 'wall', 'room', 'round', 'door', 'window', 'stairs', 'platform', 'erase'],
   [KIND_OUTDOOR]: ['select', 'wall', 'room', 'round', 'door', 'parking', 'erase'],
@@ -168,6 +214,21 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
   const cursorRef = useRef(null);
   const saveTimer = useRef(null);
   const placingRef = useRef(placing); placingRef.current = placing;
+  // See the note on `tool`: only the select branch places, so carrying something has to mean
+  // select. Done as an effect rather than at the drop, because a pick can also arrive with the
+  // editor already open (the palette on the left, or a second drag).
+  useEffect(() => {
+    if (!placing) return;
+    setTool('select');
+    draftRef.current = null;
+  }, [placing]);
+
+  // What the pointer should look like while carrying it: the marker's own icon. A camera is a
+  // camera; anything else is the appliance, which draws by node kind.
+  const placingCursorCss = useMemo(() => {
+    if (!placing) return undefined;
+    return placingCursor(placing.cameraId ? 'video' : APPLIANCE_ICON);
+  }, [placing]);
   const [, tick] = useState(0);
   const redraw = useCallback(() => tick((n) => n + 1), []);
   const nowSecRef = useRef(Math.floor(Date.now() / 1000));
@@ -179,6 +240,9 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
   const [dock, setDock] = useState({ toolbar: 'left', props: 'right' }); // 'left' | 'right' | 'float'
   const [floatPos, setFloatPos] = useState({ toolbar: null, props: null });
   const [tool, setTool] = useState('select'); // select | wall | room | round | door | window | stairs | parking | erase
+  // Arriving with something to place (dragged in from the map's tray) switches to select and
+  // holds there. Only the select branch of the pointer handler actually PLACES, so with a drawing
+  // tool active the next click would draw a wall and quietly lose the thing you were carrying.
   const toolRef = useRef(tool); toolRef.current = tool;
   // ONE selection holding things of any kind, as keys "<kind>:<index>" — 'seg' | 'door' | 'win' |
   // 'stair' | 'park', plus 'cam:<placementId>' for a camera/node marker. A plan edit is rarely
@@ -684,30 +748,46 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
       // vertical offset is subtracted here and again when the move is persisted.
       const o = pv && pv.cams.get(p.id);
       const px = o ? o.x : p.x; const py = o ? o.y : p.y;
+      // The preview carries a turned HEADING as well as a moved position (a rotated selection turns
+      // its cameras with it), so the wedge has to read both from it - taking the position from the
+      // preview but the heading from the stored row leaves the cone pointing the old way mid-drag.
+      const hdg = o ? (o.heading || 0) : (p.heading || 0);
       const sx = px * ds; const sy = (h - py) * ds;
       const tone = nodeTone(nodesById[p.nodeId], nowSecRef.current) || TONES.idle;
       const isCam = !!p.cameraId;
       if (isCam && (p.fov || 0) > 0) {
         const half = (p.fov || 0) / 2; const N = 22;
         ctx.beginPath(); ctx.moveTo(sx, sy);
-        for (let i = 0; i <= N; i++) { const deg = (p.heading || 0) - half + (p.fov || 0) * (i / N); const a = (deg * Math.PI) / 180; ctx.lineTo(sx + rad * ds * Math.sin(a), sy - rad * ds * Math.cos(a)); }
+        for (let i = 0; i <= N; i++) { const deg = hdg - half + (p.fov || 0) * (i / N); const a = (deg * Math.PI) / 180; ctx.lineTo(sx + rad * ds * Math.sin(a), sy - rad * ds * Math.cos(a)); }
         ctx.closePath(); ctx.fillStyle = `${tone.color}28`; ctx.fill(); ctx.strokeStyle = `${tone.color}88`; ctx.lineWidth = 1; ctx.stroke();
       }
       const selected = isSel('cam', p.id);
-      ctx.beginPath(); ctx.arc(sx, sy, isCam ? 7 : 9, 0, Math.PI * 2);
+      // A touch larger than the old bare disc, so a legible glyph fits inside it.
+      const r = isCam ? 9 : 11;
+      ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2);
       ctx.fillStyle = tone.color; ctx.fill();
       ctx.lineWidth = selected ? 3 : 2; ctx.strokeStyle = selected ? '#2d6cdf' : '#fff'; ctx.stroke();
+      // The same glyph the tray, the cursor and the read-only view use, in white on the tone disc.
+      const glyph = isCam ? 'video' : APPLIANCE_ICON;
+      const gimg = markerIcon(glyph, '#ffffff', redraw);
+      if (gimg) { const gs = r * 1.15; ctx.drawImage(gimg, sx - gs / 2, sy - gs / 2, gs, gs); }
       const label = p.lastKnownName || (isCam ? `Cam ${p.cameraId}` : (nodesById[p.nodeId]?.name || p.nodeId));
       ctx.font = '600 11px system-ui, sans-serif'; ctx.textAlign = 'center';
-      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.strokeText(label, sx, sy - 13);
-      ctx.fillStyle = '#1f2937'; ctx.fillText(label, sx, sy - 13); ctx.textAlign = 'left';
+      const ly = sy - r - 5;
+      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.strokeText(label, sx, ly);
+      ctx.fillStyle = '#1f2937'; ctx.fillText(label, sx, ly); ctx.textAlign = 'left';
     });
 
     // Camera POV handles: draw over the selected camera's wedge so it can be aimed and widened by
     // dragging. An accent line runs from the body out to each knob; the aim knob (round) points the
     // camera, the two edge knobs set the spread. A live readout shows the current heading/fov.
     if (cam) {
-      const H = camHandles(cam);
+      // Follow the drag preview, exactly as the marker and its wedge do. camHandles reads a
+      // placement's stored x/y/heading, so handing it the committed row while a drag is in flight
+      // left the aim knob, the edge knobs, the lines out to them and the heading readout sitting at
+      // the camera's OLD spot - the marker and its aiming furniture visibly coming apart.
+      const co = pv && pv.cams.get(cam.id);
+      const H = camHandles(co ? { ...cam, x: co.x, y: co.y, heading: co.heading } : cam);
       ctx.strokeStyle = '#2d6cdf'; ctx.lineWidth = 1;
       [H.aim, H.edgeL, H.edgeR].forEach((k) => { ctx.beginPath(); ctx.moveTo(H.sx, H.sy); ctx.lineTo(k.x, k.y); ctx.stroke(); });
       const knob = (k, r) => { ctx.beginPath(); ctx.arc(k.x, k.y, r, 0, Math.PI * 2); ctx.fillStyle = '#ffffff'; ctx.fill(); ctx.strokeStyle = '#2d6cdf'; ctx.lineWidth = 1.5; ctx.stroke(); };
@@ -1456,13 +1536,17 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
   // building and "Fence" on a park.
   const toolBtn = (id) => {
     const f = faceOf(kind, id);
+    // Locked while carrying something: picking a tool would abandon the placement, and it is not
+    // obvious that it does. The banner's Cancel is the way out.
+    const locked = !!placing && id !== 'select';
     return (
       <button
         key={id}
         type="button"
         className={tool === id ? 'active' : ''}
+        disabled={locked}
         onClick={() => { setTool(id); draftRef.current = null; if (id !== 'select') clearSel(); }}
-        title={t(f.key)}
+        title={locked ? t('grid.lockedWhilePlacing') : t(f.key)}
         aria-label={t(f.key)}
       >
         <Ico n={f.icon} sz={15} />
@@ -1666,7 +1750,7 @@ export function FloorEditor({ floor, siteKind = KIND_BUILDING, placements = [], 
         <div className="floor-editor-stage">
           {mode === '2d' ? (
             <div className="floor-editor-canvas-wrap" ref={wrapRef} style={{ overflow: zoom > 1 ? 'auto' : 'hidden' }} onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; }} onDrop={onDrop}>
-              <canvas ref={canvasRef} width={cssW} height={cssH} className={`grid-canvas tool-${tool}${placing ? ' placing' : ''}`} style={{ width: cssW, height: cssH, touchAction: 'none' }}
+              <canvas ref={canvasRef} width={cssW} height={cssH} className={`grid-canvas tool-${tool}${placing ? ' placing' : ''}`} style={{ width: cssW, height: cssH, touchAction: 'none', cursor: placingCursorCss }}
                 onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerLeave={() => { cursorRef.current = null; hoverRef.current = -1; if (!moveRef.current) redraw(); }} onDoubleClick={onDoubleClick} />
             </div>
           ) : (

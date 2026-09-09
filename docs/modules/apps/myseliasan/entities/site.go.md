@@ -20,14 +20,15 @@ traffic-light junction is a pole with cameras on it and no surface at all. `Site
 |---|---|---|
 | `SiteKindBuilding` | `"building"` | Has one or more floors, drawn with walls/doors/stairs and stacked by elevation in the 3D view. The default — and what an empty `Kind` means, so every site that predates this field reads as a building with no backfill needed beyond NULL-safety. |
 | `SiteKindOutdoor` | `"outdoor"` | An open area — a park, yard, car park, campus. Holds exactly **one** plan (its ground surface); the asset wizard never asks it "how many areas". Flat ground plane in 3D, no storey above it. |
-| `SiteKindPoint` | `"point"` | No plan at all — a junction, pole, gate, barrier. Its cameras reach it through the owning node's `SiteId` rather than a floor-plan placement, so clicking its marker opens the node's device card instead of a plan. |
+| `SiteKindPoint` | `"point"` | A junction, pole, gate, barrier — nothing an operator would draw walls on, so it has no **authored** plan. It still owns exactly ONE implicit area (`ISiteService.EnsurePointArea`, `services/sites.go.md`) so its cameras are **pinned** to it like everywhere else, instead of being inferred from whichever appliance happens to be assigned to it. |
 
 `NormalizeSiteKind(kind string) string` is the one place that decides what a kind may be — an
 unrecognised string is normalised to `SiteKindBuilding` rather than reaching the database, so an
-unknown value can never leave the frontend guessing how to draw the marker. `HasPlans(kind string)
-bool` reports whether a site of this kind owns floor plans at all (`false` only for
-`SiteKindPoint`), letting callers skip the plan fetch/editor for a point asset rather than showing
-an empty one.
+unknown value can never leave the frontend guessing how to draw the marker. `HasDrawablePlan(kind
+string) bool` reports whether a site of this kind has a plan an operator **authors** — walls,
+rooms, an uploaded image (`false` only for `SiteKindPoint`) — never whether it owns an area at
+all: a point asset's one implicit area is created server-side, not drawn, so callers skip the
+plan-editor/area-bar UI for it but must NOT read `false` as "this site cannot hold a camera".
 
 ## `Site` Fields
 
@@ -73,7 +74,13 @@ One uploaded plan image belonging to a site — a floor, a wing, a yard layout.
 - An area's plan image is either **uploaded** (`POST /api/sites/{id}/floors`) or a **generated
   blank canvas** (`POST /api/sites/{id}/areas`, `services.AddBlankFloor` — a plain white PNG
   rendered server-side, defaulting to 1600×1000 and capped at 8000px/side); either way the
-  operator then draws walls/rooms over it in the same in-app editor.
+  operator then draws walls/rooms over it in the same in-app editor. A point asset's ONE implicit
+  area is a smaller generated canvas (600×400 — room enough to arrange a handful of cameras around
+  a pole/gate, not a floor to lay out), made server-side by `ISiteService.EnsurePointArea` rather
+  than by the operator: on `CreateSite` for a new point asset, and via an idempotent boot-time
+  backfill (`ISiteService.EnsurePointAreas`, called from `app.go`) for one created before this
+  existed. Its name (`"At this point"`) is never shown — the editor hides the area bar and the
+  drill-down title omits it for this kind (`site_kinds.js`'s `showsAreaBar`).
 - Both entities are registered for DB bootstrap in `apps/myseliasan/app/app.go`'s `Entities()`.
   `Design` and `BgPath` (`FloorPlan`) and `Lat`/`Lon`/`MapPlaced`/`Icon` (`Site`) were all added by
   explicit migrations in `app.go`'s `Migrations()` (not just the auto-migrator), and `Grid`/

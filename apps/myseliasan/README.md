@@ -68,57 +68,105 @@ created, positioned and authored entirely from it:
   silhouette (disc/square/diamond) so the shape reads even when the name label doesn't: a
   **building** (has storeys, drawn with walls/doors/stairs and stacked by elevation in 3D), an
   **outdoor area** (one open ground surface — a park, yard, campus, car park — with exactly one
-  plan, no "how many areas" question), or a **point asset** (a junction, pole, gate, barrier — no
-  plan at all; its cameras reach it only through the appliance(s) assigned to it). A node appliance
-  **never** gets its own pin — a site, not the node that happens to record its cameras, is the
-  map's true anchor for "where is this camera physically": a node's own box can sit in a rack,
-  another building, or off-site, while its cameras are placed on that site's floor plans (or, for a
-  point asset, simply assigned to it) regardless. There is no standalone/off-site node placement
-  any more (the old "place on map" button, node drag-to-place, and the Nodes-layer toggle are all
-  gone; the node-pin map layer is kept in the code but is fed no data and stays hidden). Drag a
-  site's marker to reposition it (`PUT /api/sites/{id}/position`). An unplaced site (never dragged
-  onto the map) stays in the rail rather than plotted at `(0,0)` — see `Site.MapPlaced` in
-  `entities/site.go.md`. A marker takes the *worst* status among the nodes that answer for it (own
-  cameras inside it, or are assigned to it for a point asset), and its unread-notification badge
-  sums only those cameras' alerts (`GET /api/notifications/tally?unread=true`), never a whole
-  node's — a node recording cameras in several sites would otherwise over-count every one of them.
-  Clicking a building or outdoor marker opens its **floor plans with every camera inside, from any
-  node** (`BuildingFloorView`, see below); clicking a point marker instead opens the device card of
-  the appliance mounted there (or a chooser when several share the point, or an empty state when
-  none do) — there is no plan surface for a point asset to drill into.
-- **Site-centric rail**: the side rail lists **every site**, grouped by kind (buildings, outdoor
-  areas, point assets — a stable order so the headings don't jump around) — placed and unplaced —
-  each with a status dot (worst among the nodes that answer for it) and camera count. A building
-  or outdoor row has an expand caret that lazily lists its **floors/areas** (1st floor, Kitchen,
-  Carporch…, `GET /api/sites/{id}/floors`, fetched once per expand and invalidated whenever the
-  building editor changes its areas) — clicking a floor row jumps straight into the building editor
-  on that specific area (not just the first one). A placed row flies the map to it on click; an
-  unplaced one enters placing mode the same way it always did. A point asset's row has an **edit**
-  (pencil) button that opens a small rename/re-glyph dialog directly, since it has no editor to
-  jump into. Nodes not yet assigned to any site appear in a separate **"Appliances"** section below
-  the site list, each row offering a site-selector dropdown (`PUT /api/nodes/{id}/building`) —
-  assigning one is now the *only* way an appliance is represented on the map, since it stops
-  needing a pin of its own the moment it belongs somewhere.
+  plan, no "how many areas" question), or a **point asset** (a junction, pole, gate, barrier —
+  nothing to draw walls on, so no *authored* plan; but it still owns exactly ONE **implicit** area,
+  server-generated (`ISiteService.EnsurePointArea`, `services/sites.go.md`), so its cameras are
+  **pinned** to it the same as everywhere else, not inferred from whichever appliance happens to be
+  assigned to it). A node appliance **never** gets its own pin — a site, not the node that happens
+  to record its cameras, is the map's true anchor for "where is this camera physically": a node's
+  own box can sit in a rack, another building, or off-site, while its cameras are placed on that
+  site's floor plans (for a point asset, its one implicit area) regardless. There is no
+  standalone/off-site node placement any more (the old "place on map" button, node drag-to-place,
+  and the Nodes-layer toggle are all gone; the node-pin map layer is kept in the code but is fed no
+  data and stays hidden). Drag a site's marker to reposition it (`PUT /api/sites/{id}/position`).
+  An unplaced site (never dragged onto the map) stays in the rail rather than plotted at `(0,0)` —
+  see `Site.MapPlaced` in `entities/site.go.md`. A marker takes the *worst* status among the nodes
+  that own a camera pinned to it, and its unread-notification badge sums only those cameras' alerts
+  (`GET /api/notifications/tally?unread=true`), never a whole node's — a node recording cameras in
+  several sites (a point asset among them) would otherwise over-count every one of them; this used
+  to be a real bug for a point asset specifically, since with no area of its own it fell back to
+  claiming every camera on its assigned appliance(s), correct only when that appliance recorded
+  nowhere else. Clicking any marker — building, outdoor or point alike — selects that site and puts
+  its **plan, with every camera inside, from any node**, on the map's own stage beside the tree
+  (`FloorPlanView`, see "Three panes" below); a point asset's editor has no area tabs to switch
+  between (it owns exactly one, unnamed), but the plan itself, the camera palette and the inline
+  stage are otherwise identical to a building's.
+- **Twin-tree rail** (`map/twin_tree.js`): the side rail is **two trees**, not a flat list, because
+  one fact the old flat rail couldn't express is that a single `mymatasan` recorder's cameras can
+  live in *different* places — so a node is an **occupant** of a place, never its container.
+  **"Everywhere"** is the digital twin — place ▸ area ▸ camera — with kind shown as a small **glyph**
+  on the row rather than a group heading, and the owning recorder shown beside each camera as a
+  **dim tag**, never as a parent; a placement with no camera (the appliance's own map pin) renders
+  as a leaf tagged "the appliance", drawn with one shared **board** glyph (a single-board-computer
+  icon, `icons.js`) regardless of whether the appliance is a `mymatasan` recorder, a `myiotsan` hub
+  or a `mypintusan` door controller — the icon used to be picked by node kind (camera/cpu/door),
+  which drew a recorder as a literal camera glyph indistinguishable from an actual camera pinned
+  beside it, and a door controller as a door; the icon now shows what the box **is**, not what it
+  watches or controls. Kind is still legible from the row's own name, the tray's grouping, and the
+  inspector's subtitle. A point asset's single implicit area is not shown as its own
+  level — it's unnamed by the operator — so its cameras hang straight off the place. The root row
+  carries a **"{placed} / {total} placed"** counter (a trailing **+** whenever some appliance can't
+  be reached, since the total is then only a lower bound) — the progress bar for the whole
+  authoring job. **"Not placed yet"** is the tray, and the *only* branch where a node is a parent,
+  because "which recorder is it on" is how an operator finds a camera that still needs a home: it
+  lists each node's cameras holding no pin, plus any node whose own box pin is missing ("location
+  not set"). An unreachable node reports **"cameras unknown"**, never "0 unplaced" — folding those
+  together would tell an operator the job is finished when it isn't. Expanding a place lazily fetches
+  its areas *with* their placements in one call (`GET /api/sites/{id}/floorplans`, not `/floors`
+  plus a second round-trip per area); a fleet-wide `GET /api/placements` index is what lets the tray
+  subtract "already pinned" from each node's live camera list, and the per-node camera fetch over
+  the tunnel now covers **every** adopted node, not only nodes at placed sites, so an unplaced
+  node's cameras can still show up in the tray. One search box filters both trees and keeps the
+  ancestors of a match. Indentation uses logical CSS properties, so the tree nests from the right
+  in Arabic. **The box pin is now the sole writer of `ManagedNode.SiteId`**, closing the gap left
+  when the old rail's per-node building-selector dropdown (`PUT /api/nodes/{id}/building`, now
+  removed) went with the flat rail it lived in: pinning an appliance's **own** marker on a plan
+  (a placement with no camera) is what sets `SiteId`, and unpinning it clears `SiteId` again
+  (`ISiteService.AddPlacement`/`DeletePlacement`, `services/sites.go.md`). Each tray camera row is
+  **draggable** onto a place or an area row in the "Everywhere" tree (payload `"text/tray-pick"`;
+  a row only highlights for a drag it can accept), and dropping opens that place's editor with the
+  camera pre-picked and the right area already open (`BuildingEditorDialog`'s new `initialPick`/
+  `initialFloorId` props) — the operator's next click lands it. Every tray camera also has an
+  explicit **"Place on a plan"** button, the discoverable path that works without dragging. **An
+  unpinned appliance's own tray row is draggable too** — the same `"text/tray-pick"` payload, but
+  carrying the node with an empty `cameraId` — and gains its own explicit place button beside the
+  waiver toggle, since pinning the appliance's own marker is the *only* way `SiteId` gets set at
+  all: without this, the tray could tell an operator a box's location wasn't pinned but offered no
+  way to answer that from the tray itself, only by hunting the node down in a place's editor
+  palette. A row stops being draggable once its box is pinned (or waived) — moving it means
+  unpinning it on the plan it's already on. Tray node rows also keep the **no-fixed-location**
+  toggle (`PUT /api/nodes/{id}/no-fixed-location`) for an appliance that genuinely has no place on
+  any plan — a colo recorder, a hosted hub — since without it the tray could never be emptied for a
+  fleet with one, and a tray that can never be emptied is one operators learn to ignore; a waived
+  appliance stops counting as an outstanding box. The tray root now shows **two** counters side by
+  side — cameras not on any plan, and appliances whose own box has no pin — because they are
+  different jobs.
 - **Adding an asset**: a **`+ Add`** button in the rail opens a wizard (`asset_wizard.js`,
   replacing the old building-only `building_wizard.js`) whose first question is **what is being
   added** — building / outdoor area / point asset — because the kind decides everything after: a
   **glyph** picker drawn from that kind's own palette (`Site.Icon`, `site_kinds.js`), and, for a
   building only, whether it is a **single area** or has **several areas** (floors, wings, rooms —
-  "Ground floor", "1st floor", "Kitchen"); an outdoor area always gets exactly one ground plan and
-  a point asset gets none at all — there is no area question for either. Each area becomes a
-  `FloorPlan` row under the new `Site`. On save the site and its areas are created (`POST
-  /api/sites` with `{name, icon, kind}`, then one `POST /api/sites/{id}/areas` per area — each area
-  is a **generated blank white canvas**, not an upload) and the map enters placing mode so the
-  operator clicks/drags the marker onto its geographic spot; dropping it opens the building editor
-  for a building/outdoor area, so "add an asset" ends on the plan surface rather than back at a map
-  with an unexplained new marker — a point asset simply lands on the map with nothing further to
-  author until an appliance is assigned to it.
+  "Ground floor", "1st floor", "Kitchen"); an outdoor area always gets exactly one ground plan, and
+  a point asset gets none from the wizard — there is no area question for either. Each wizard-made
+  area becomes a `FloorPlan` row under the new `Site` (`POST /api/sites` with `{name, icon, kind}`,
+  then one `POST /api/sites/{id}/areas` per area — each area is a **generated blank white
+  canvas**, not an upload); a point asset instead gets its ONE **implicit** area made server-side
+  right after the insert (`ISiteService.EnsurePointArea`, a smaller 600×400 canvas the operator
+  never names), so it is never a site that cannot hold a camera. Either way the map then enters
+  placing mode so the operator clicks/drags the marker onto its geographic spot; dropping it opens
+  the building editor for **every** kind, point asset included, so "add an asset" always ends on
+  the plan surface rather than back at a map with an unexplained new marker.
 - **Authoring a building or outdoor area**: dropping (or re-opening) one opens
   `building_editor_dialog.js`, a near-fullscreen modal over the map: area tabs along the top
   (add/rename/delete an area — a single-plan outdoor area has none of this), a node/camera palette
   down the side (drag or click-to-pick, then click the plan to place — the same click-first pattern
   as the geographic view; an already-placed camera is greyed out with a note naming where it sits,
-  since placement is now **exclusive** — see "Floor plans" below), and the `FloorEditor` canvas
+  since placement is now **exclusive** — see "Floor plans" below; carrying a pick forces the tool
+  back to **Select** and disables every drawing tool, tooltip explaining why, until it lands or is
+  cancelled — only Select's own click handler places a pick, so a drawing tool left active would
+  draw over the plan and quietly drop what was being carried — and the canvas cursor becomes the
+  pending marker's own icon, halo plus accent colour, instead of a plain crosshair, so what you are
+  holding is visible on the pointer), and the `FloorEditor` canvas
   (`floor_editor.js`) doing the actual drawing, with a **toolset that follows the site's kind**: a
   building offers **Select/Move, Wall, Room** (drag a rectangle → four walls), **Round** (drag a
   box → an elliptical room, decomposed into short wall segments so it reuses the same 2D/3D
@@ -154,10 +202,10 @@ created, positioned and authored entirely from it:
   to that same blank canvas (`DELETE /api/floors/{id}/image`) — walls, stairs, doors and camera
   placements all survive; only the picture is cleared (`FloorPlan.HasPlanImage` is what lets the
   editor know whether there is a plan to remove — see `entities/site.go.md`). Re-entry for an
-  existing building/outdoor area: an **edit** button on an unplaced site's rail row (it has no
-  marker to click into yet), and an **Edit plan** button in the read-only building drill-down
-  (`BuildingFloorView`, below). A point asset has no plan surface — its rail-row pencil opens the
-  small rename/re-glyph dialog instead (see "Site-centric rail" above).
+  existing building/outdoor/point asset: an **edit** button on an unplaced site's rail row (it has
+  no marker to click into yet), and an **Edit plan** button on the inline stage's breadcrumb bar
+  (`FloorPlanView`, see "Three panes" below) — the same editor opens for a point asset too, just
+  with its area bar hidden (see "Twin-tree rail" above).
 - **Floor plans**: an operator's placements (`NodePlacement`) are **myseliasan's own record**, not
   fetched from the node — that is deliberate: the live camera list is fetched over the tunnel and
   returns nothing when a node is offline, so a placement carries a name snapshot and stays
@@ -179,34 +227,60 @@ created, positioned and authored entirely from it:
   segments in `FloorPlan.Grid` and extrude the same way in every 3D view, not just the editor's
   own; windows render as glazing, a raised floor as a slab (carved underneath any stairs that land
   on it), and stairs rest on their platform when they have one, descending stairs carving a
-  stairwell opening into the floor slab above when going down. The **read-only 2D drill-down**
-  (`BuildingFloorView`/`node_floor_view.js`) now renders this same authored geometry as a vector
-  overlay over the plan image too, not just the 3D tab — a floor with drawn walls no longer looks
-  empty in the 2D view. A camera marker with unread
-  notifications carries a severity-coloured count badge in **both** the 2D plan and the 3D view
-  (`GET /api/notifications/tally?unread=true`, same per-camera attribution as the building marker's
-  own badge); the 3D view additionally pulses a beacon on the floor beneath that camera — the same
-  two-wave animation as the geographic view's building beacon — shown on every stacked floor but
-  only animated on the active/non-dimmed one, so an alert a storey down stays visible without
-  piling up motion. Clicking a building marker on the geographic view shows
-  `BuildingFloorView` — every floor's placements from **every owning node**, each marker/wedge
-  coloured by *its own* node's status and streaming live over *that* node's tunnel, with its own
-  2D/3D toggle (three.js code-split in, only loaded when 3D is opened) and, for a multi-floor
-  building, a "stack floors" option that renders every floor at its `Elevation` at once — the view
-  that makes "the building is the twin, not any one node" concrete.
+  stairwell opening into the floor slab above when going down. The **editor's own 2D canvas**
+  (`floor_editor.js`) renders this same authored geometry as a vector overlay over the plan image,
+  not just the 3D tab, while authoring — a floor with drawn walls no longer looks empty there. On
+  the **map's monitor-mode stage**, though, clicking a building or outdoor marker (or an area in
+  the twin-tree) now renders `FloorPlanView` (`components/map/floor_view.js`) inline — one area at
+  a time, chosen via the tree or the breadcrumb — which is a flatter surface than the old
+  `BuildingFloorView` drill-down it replaced: plan image, coverage wedges and camera markers only,
+  with **no chrome of its own** (a breadcrumb above it — Everywhere / site / area — says where you
+  are instead), and **no** 2D wall/stair/door vector overlay, no 2D⇄3D toggle and no "stack floors"
+  option — those three remain editor-only (`floor_editor.js`/`floor_3d.js`) for now. Per-camera
+  unread-notification badges likewise no longer render on this inline plan (they still drive the
+  geographic marker's own aggregated badge, `GET /api/notifications/tally?unread=true`); a camera
+  with unread events is only visible on the plan by opening it in the inspector.
+- **Three panes**: the map is `fleet_map.js`'s twin-tree rail, the stage (the geographic map, or —
+  once a site/area/camera is selected — `FloorPlanView` inline beside the tree), and a right-hand
+  **inspector** pane (`components/map/inspector.js`'s `Inspector`), replacing the earlier scatter of
+  floating popups that used to cover the very marker you'd just clicked and drift away from it on
+  the next pan. `fleet_map.js` holds ONE selection, `sel` (`{type:'site'|'area'|'camera'|'node',
+  ...}`), that both the stage and the inspector are derived from, so the two can never disagree
+  about what's showing. The inspector renders exactly one contextual card: a **place** (its areas,
+  camera count, whether it's on the map, and the way into the editor), a **camera** (recent events
+  paged by growing the fetch limit — infinite scroll — Open live, Locate), or an **appliance** — the
+  card this rework exists for: "Where its cameras are" lists one row **per place** with a camera
+  count, since a recorder feeding three sites has three rows, a fact no single `SiteId` field could
+  ever carry (built from the fleet-wide placement index `fleet_map.js` now keeps in full, not just
+  its keys, so the inspector can resolve each pin's site), and separately "Where the appliance
+  itself is" shows its box pin or says it is unpinned / marked no-fixed-location; an unreachable
+  appliance shows its unplaced count as **"?"**, never `0`. Live footage is the deliberate exception
+  to the pane model — it stays a **floating window**, because watching a camera while navigating
+  elsewhere is the point of it. This is Phase 4, the last of the map rework: `components/map/`
+  (`popups.js` — `NodeCameraPopup`/`MapPopupFrame` — plus the early-scaffolding `asset_browser.js`
+  and `geo_map.js`, all from the earlier in-flight redesign) are deleted; `popups.js`'s two
+  node-media URL builders moved to the new `components/map/media_src.js`. Nothing under
+  `components/map/` is unwired scaffolding any longer. The pane is sized in `styles/twin-tree.css`
+  (`.fleet-map-inspector`), which deliberately does **not** take `styles/map-workspace.css`'s
+  `.mw-inspector` class — imported into `fleet_map.js` purely for its `.mw-insp-*` card styles —
+  since that class's physical `border-left` loads after `twin-tree.css` and would win, putting the
+  border on the wrong edge in Arabic; `border-inline-start` is used instead so the pane still mirrors
+  correctly in RTL (tree on the right, inspector on the left, its border on the true trailing edge).
 - **Locate on plan**: from a camera's own context (e.g. the node manager's embedded camera pages),
   **Locate on plan** (`GET /api/node-floorplan/{nodeId}`) jumps straight to the floor plan holding
-  that camera's placement and focuses its marker — no need to know which site/floor it lives on.
-  Clicking a camera marker on a plan opens a small, draggable, resizable floating window
-  (`CameraWindow`) with its live footage (PTZ overlay when supported) on top and recent
-  events below; clicking a footage event opens its recorded snapshot/clip **inline over the same
+  that camera's placement and selects its marker into the inspector — no need to know which
+  site/floor it lives on. Clicking a camera marker on the inline plan selects it into the inspector
+  rather than opening a window directly; from there (or from the twin-tree's play action) **Open
+  live** opens a small, draggable, resizable floating window (`CameraWindow`) with its live footage
+  (PTZ overlay when supported) on top and recent events below; clicking a footage event opens its
+  recorded snapshot/clip **inline over the same
   live panel** (a Back button returns to live without ever tearing down the underlying WebRTC
   stream, since the live tile stays mounted underneath). All windows float over the map, can
   be dragged by their title bar, resized from a corner grip, and toggled small ⇄ maximized without
   restarting the underlying stream.
 
-The geographic view's building markers and the building drill-down's per-node camera
-markers/rail rows share the same status vocabulary: **online** (green), **warning** — amber, cert
+The geographic view's building markers and the inline floor stage's per-node camera
+markers/inspector rows share the same status vocabulary: **online** (green), **warning** — amber, cert
 expiring soon — (reusing the same cert-health signal the Dashboard's "Certs expiring" KPI and the
 Nodes table already surface), **critical** —
 red, the node is `lost` — and **idle** — grey, `self-dropped` or a legacy/unknown status.
@@ -225,7 +299,11 @@ an operator (or `MYSELIASAN_BASEMAP_SOURCE`/`MYSELIASAN_PMTILES_BIN` env vars) c
 pmtiles source and the `pmtiles` tool is installed, the UI can **download a new region on
 demand** (`POST /api/basemap/download`, a bounding box + max zoom, capped at 25°×25°/zoom 14) —
 this is the one action in the whole app that deliberately reaches the internet, and it stays off
-by default so an air-gapped install is unaffected.
+by default so an air-gapped install is unaffected. This is a **two-step** UI flow, not one action:
+the "No map data for this area" banner's **Set up** dialog only saves the source URL; the banner
+then switches to a separate **Download this region** button that extracts whatever area is
+currently panned into view. If the `pmtiles` tool isn't installed, the banner says so instead of
+offering a download button that would always fail.
 
 Floor-plan images are **encrypted at rest** under `<dataDir>/floorplans`, using the same fleet
 cipher that protects the CA key and fleet PSK (see "Fleet secret encryption at rest" below) —
@@ -253,16 +331,34 @@ state), `PUT/DELETE /api/placements/{id}` (position, and/or
 `GET /api/node-floorplan/{nodeId}` (locate-on-plan drill-down),
 `GET /api/basemap/info`, `GET/PUT /api/basemap/config`, `POST /api/basemap/download`,
 `GET /api/basemap/tiles/{name}`, `PUT /api/nodes/{id}/position` (a node's own geographic
-coordinates), and `PUT /api/nodes/{id}/building` (assign/clear the site a node resides in).
+coordinates), and `PUT /api/nodes/{id}/no-fixed-location` (an operator's decision that an
+appliance has no place on any plan — the site a node resides in is set only by pinning its own
+marker, via `POST /api/floors/{id}/placements` above).
 See `docs/modules/apps/myseliasan/apis/{basemap,sites,nodes}.go.md`.
 
-**In-flight redesign (not wired in):** `components/map/` (`geo_map.js`, `inspector.js`,
-`asset_browser.js`, `floor_view.js`, `styles/map-workspace.css`) holds early scaffolding for a
-unified three-pane "map workspace" shell — asset-browser rail, reworked geographic stage, and a
-single contextual inspector card replacing the current scatter of floating popups — intended to
-eventually supersede this section's `map_page.js`/`fleet_map.js`/`fleet-map.css`. Nothing imports
-these files yet: `App.js` still lazy-loads the shipped `map_page`, so none of the behavior
-described above has changed and the new components are not reachable from the UI.
+**The map rework is complete** — all five phases (0: pure refactor, 1: point-asset areas, 2: the
+two trees, 3: the box pin and the tray's verbs, 4: three panes) have shipped and are reachable from
+the UI; nothing under `components/map/` is inert scaffolding any more. `App.js` still lazy-loads
+`map_page.js`, which wraps `fleet_map.js`/`fleet-map.css` unchanged. `fleet_map.js` itself was cut
+from ~1,570 lines to ~1,100 in **Phase 0**, a pure internal refactor with zero behavior change:
+`map/basemap_style.js` (the offline Protomaps vector-tile cartography — land/water/roads/borders +
+place labels), `map/markers.js` (site/node pin styling by kind and worst owning-node status, plus
+the colour/easing helpers the critical beacon uses), and `map/basemap_ui.js` (the offline-basemap
+download banner and setup dialog) were lifted into sibling modules; `fleet_map.js` keeps the
+workspace state, the OpenLayers boot/interactions, the rail, and the beacon ring itself (animated
+per-frame in the layer's prerender handler, so it stays with the map's own render loop rather than
+the static style modules).
+
+**Phase 4** finished the rework by wiring in the three-pane shell (see "Three panes" above) and
+retiring the last floating-popup/drill-down code path: `map/popups.js` (`NodeCameraPopup` — the
+device card Phase 0 had lifted out — and `MapPopupFrame`, its viewport-clamping anchor frame) is
+deleted, its two node-media URL builders (`eventSnapshotSrc`/`recordingStreamSrc`) moved to the new
+`map/media_src.js`; the early-scaffolding `map/asset_browser.js` and `map/geo_map.js` (inert since
+PR #125, never imported) are deleted as superseded by the twin-tree and the live geographic map
+respectively; and `map/floor_view.js`'s `FloorPlanView` and `map/inspector.js`'s `Inspector` — both
+also inert scaffolding until now — are imported and live, rewritten against the shipped `sel`
+selection model rather than the `mw.*` i18n keys the PR #125 scaffolding used, which never existed
+in any dictionary.
 
 ## Fleet rules — cross-domain correlation
 
@@ -693,6 +789,8 @@ The CA private key (`pairing.caKey`), the control plane's own parent leaf privat
 ## Frontend
 
 The UI is a React/webpack SPA under `apps/myseliasan/views/react-webpack/`, built into `apps/myseliasan/static/` (content-hashed bundles), mirroring `mymatasan`'s frontend architecture. Myseliasan-only styling lives in `styles/app.css` and the shared RBAC-standard rail in `styles/rbac-standard.css`. Build with `npm install && npm run build` in that directory.
+
+**After moving code between modules, run `npm run lint:undef`** (`eslint.undef.config.mjs`, a deliberately tiny config with only the `no-undef` rule). Webpack compiles a reference to an identifier that was never imported or declared without a word of complaint — a runtime `ReferenceError`, not a build error — so a file split can ship with a broken branch that a green `make web` and a passing bench never reach; this is exactly how `markerShape` (`fleet_map.js`) and `useCallback`/`nodeKindOf`/`nodeToneKey` (`components/map/popups.js`) went missing across the fleet-map file split.
 
 The shell uses the standardized dark icon side-nav (`SideNav` from `components/layout.js`). The **Workspace** group holds **Dashboard**, an **AI Insight** nav item (the fleet digest + ask-the-fleet chat, see "AI Agent" above — only rendered when the caller's role can `GET /api/agent`), and a **Map** nav item (the fleet map — geographic view with in-place building creation/authoring, see "Fleet Map" above; its OpenLayers-based components are lazy-loaded on first open). Below that sit top-level **Live Views**, **Objects**, and **Teach** nav items positioned above a bespoke **Nodes tree**: an expandable branch listing adopted nodes (root item → fleet page/node dashboard, child items → each node's own camera sub-tree, lazily loaded over the tunnel on first expand). Selecting a node opens its `NodeDashboard`; selecting a camera under it opens that camera's full page (Live View/Detection/Recordings/Settings). A single click on a node row now both navigates **and** expands its camera sub-tree (matching the root Nodes row); the caret or a double-click collapses/toggles it. Each camera row shows a liveness dot (green online / red offline / grey unknown) driven by the node-reported camera health, mirroring mymatasan's own camera nav. Admin pages (Users, Roles, Audit Log) appear under the **Administration** group — the former separate RBAC permission-matrix page is now part of the **Roles** page (see "Node management" above), which includes a central **Node Access** matrix where a superadmin assigns per-role node access (**Viewer** / **Operator** / **Admin**). A **System** group holds the badged **Notifications** nav item (see "Notifications" above), a **Reports** nav item (see "Reports" above), an ungated **Help** nav item (every role, including a pending-clearance viewer — see "Built-in user manual" above), and the superadmin-only **Settings** page (see "Settings" above). The side-nav's internal list area now scrolls independently of the fixed brand/account chrome (`--nav-scroll` tokens in `styles/rbac-standard.css`), matching mymatasan. A **pin/auto-hide toggle** in the brand slot (`nav-pin-toggle`, ported from mymatasan's own rail) lets the rail collapse to a 68px hover-expanding icon strip instead of always sitting in the grid flow; the choice is persisted to `localStorage` (`myseliasan_nav_pinned`) and applied via a `nav-autohide` class on `.app-shell`. It only takes effect at `min-width: 1081px` — mymatasan's rail stacks at `<=860px` but this app's stacks at `<=1080px`, and auto-hide is neutralized below that breakpoint since a fixed hover-strip makes no sense in a stacked layout.
 

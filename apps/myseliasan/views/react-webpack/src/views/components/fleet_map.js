@@ -1,15 +1,22 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import PropTypes from 'prop-types';
-import { useT, Ico, Tabs } from '@shared';
+import { useT, Ico } from '@shared';
 import { api, apiBase } from '../lib/helpers';
 import { nodeTone, nodeToneKey, TONES } from '../lib/fleet_status';
 import { BuildingFloorView, CameraWindow, MediaWindow } from './node_floor_view';
-import { AssetWizard, SiteDialog } from './asset_wizard';
+import { AssetWizard } from './asset_wizard';
 import { BuildingEditorDialog } from './building_editor_dialog';
-import { KIND_BUILDING, KIND_OUTDOOR, KIND_POINT, KIND_ORDER, normKind, hasPlans, siteGlyph } from './site_kinds';
-import { nodeKindOf } from './layout';
+import { normKind, siteGlyph } from './site_kinds';
+// The map's own pieces, lifted out of this file so the workspace below is state and composition
+// rather than 1,600 lines of cartography, canvas styling and floating cards.
+import { basemapStyle } from './map/basemap_style';
+import { SEV_COLOR, PULSE_PERIOD, hexToRgba, easeOutCubic, markerShape, pinStyle, siteStyle } from './map/markers';
+import { eventSnapshotSrc, recordingStreamSrc } from './map/media_src';
+import { Inspector } from './map/inspector';
+import { BasemapDownloadBanner, BasemapSetupDialog } from './map/basemap_ui';
+import { TwinTree } from './map/twin_tree';
 
-// OpenLayers, driven directly through refs (no React wrapper — see the note in Phase 0).
+// OpenLayers, driven directly through refs (no React wrapper - see the note in Phase 0).
 import Map from 'ol/Map.js';
 import View from 'ol/View.js';
 import VectorTileLayer from 'ol/layer/VectorTile.js';
@@ -21,502 +28,22 @@ import Point from 'ol/geom/Point.js';
 import Translate from 'ol/interaction/Translate.js';
 import { fromLonLat, toLonLat } from 'ol/proj.js';
 import { getCenter } from 'ol/extent.js';
-import { Fill, Stroke, Style, Circle as CircleStyle, RegularShape, Text } from 'ol/style.js';
+import { Fill, Stroke, Style, Circle as CircleStyle } from 'ol/style.js';
 import { getVectorContext } from 'ol/render.js';
 import { PMTilesVectorSource } from 'ol-pmtiles';
 import 'ol/ol.css';
 import '../styles/fleet-map.css';
+import '../styles/twin-tree.css';
+// map-workspace.css supplies the inspector pane's card styles (the .mw-insp-* family). Its
+// three-pane grid rules go unused here - this page keeps its own flex body - and land on nothing.
+import '../styles/map-workspace.css';
+
+// Severity ordering for rolling a place's camera alerts up to one badge.
+const SEV_RANK = { critical: 3, warning: 2, info: 1 };
 
 const DEFAULT_CENTER = [109.45, 4.15];
 const DEFAULT_ZOOM = 6;
 
-// Same-origin control-plane URLs for a node event's annotated snapshot and its recorded clip.
-// Both route through myseliasan's node proxy / recording-stream, so the browser never contacts
-// the node directly (mirrors the Notifications page).
-const eventSnapshotSrc = (nodeId, alertId) =>
-  `${apiBase()}/api/nodes/${encodeURIComponent(nodeId)}/proxy/api/vision/alerts/${alertId}/snapshot?annotated=1`;
-const recordingStreamSrc = (nodeId, segId) =>
-  `${apiBase()}/api/nodes/${encodeURIComponent(nodeId)}/recording-stream/${segId}`;
-// A node event carries reviewable footage when it's a mymatasan AI detection (alert_event + refId).
-const eventHasFootage = (e) => e && e.refType === 'alert_event' && Number(e.refId) > 0;
-
-// Basemap cartography — plain OL styles keyed on the Protomaps layer name (see Phase 0).
-const BASE_STYLES = {
-  earth: new Style({ fill: new Fill({ color: '#f3f1ec' }) }),
-  landcover: new Style({ fill: new Fill({ color: '#e6ece1' }) }),
-  landuse: new Style({ fill: new Fill({ color: '#e9ece4' }) }),
-  water: new Style({ fill: new Fill({ color: '#b9d7e6' }) }),
-  buildings: new Style({ fill: new Fill({ color: '#e2ded6' }) }),
-  roads: new Style({ stroke: new Stroke({ color: '#ffffff', width: 1.2 }) }),
-};
-// Admin borders: a firmer, near-solid line for country outlines and the old faint dashes for
-// internal (state/region) boundaries — so the eye can tell a national border from a state line.
-const COUNTRY_BORDER = new Style({ stroke: new Stroke({ color: '#a9a294', width: 1.4 }) });
-const REGION_BORDER = new Style({ stroke: new Stroke({ color: '#c3bdb3', width: 1, lineDash: [3, 3] }) });
-
-// Label styles. Each is a reused singleton whose text we set per feature before returning it —
-// the standard OpenLayers idiom (the renderer reads the text synchronously), which avoids
-// allocating a Style/Text per feature per frame. A white halo keeps every label legible over
-// land, water, or roads. `declutter: true` on the layer drops labels that would overlap.
-const halo = (w) => new Stroke({ color: 'rgba(255,255,255,0.9)', width: w });
-const COUNTRY_LABEL = new Style({ text: new Text({ font: '700 12px system-ui, sans-serif', fill: new Fill({ color: '#3f3d38' }), stroke: halo(3), overflow: true }) });
-const REGION_LABEL = new Style({ text: new Text({ font: '600 11px system-ui, sans-serif', fill: new Fill({ color: '#6b6a63' }), stroke: halo(2.5), overflow: true }) });
-const CITY_LABEL = new Style({
-  image: new CircleStyle({ radius: 2.6, fill: new Fill({ color: '#5b5a54' }), stroke: new Stroke({ color: '#ffffff', width: 1 }) }),
-  text: new Text({ font: '500 11px system-ui, sans-serif', fill: new Fill({ color: '#33322e' }), stroke: halo(2.5), offsetY: -10 }),
-});
-const WATER_LABEL = new Style({ text: new Text({ font: 'italic 400 11px system-ui, sans-serif', fill: new Fill({ color: '#3d6b85' }), stroke: halo(2), overflow: true }) });
-const ROAD_LABEL = new Style({ text: new Text({ font: '500 10px system-ui, sans-serif', fill: new Fill({ color: '#5a5852' }), stroke: halo(2.5), placement: 'line', maxAngle: 0.6 }) });
-
-// Web-Mercator resolution → approximate tile zoom, so the style function can gate labels by zoom
-// (the style function only receives a resolution, not the view zoom).
-const R0 = 156543.03392804097;
-const zoomForResolution = (res) => Math.log2(R0 / res);
-// Prefer the English name, falling back to the native name the tile carries.
-const placeLabel = (f) => f.get('name:en') || f.get('name') || '';
-
-// basemapStyle paints one basemap vector-tile feature. Fills/lines come from the layer name;
-// the `places`, `water`, and `roads` layers additionally carry names, which we render as text so
-// the map reads like a real map (countries, states, cities) instead of blank shapes.
-function basemapStyle(feature, resolution) {
-  const layer = feature.get('layer');
-  const zoom = zoomForResolution(resolution);
-
-  if (layer === 'boundaries') {
-    return feature.get('kind') === 'country' ? COUNTRY_BORDER : REGION_BORDER;
-  }
-
-  if (layer === 'places') {
-    const label = placeLabel(feature);
-    if (!label) return null;
-    // Each place point carries the zoom at which it should first appear; honour it so we don't
-    // splatter every village across a zoomed-out view (declutter then thins whatever remains).
-    const minZoom = feature.get('min_zoom');
-    if (typeof minZoom === 'number' && zoom + 0.4 < minZoom) return null;
-    const kind = feature.get('kind');
-    if (kind === 'country') { COUNTRY_LABEL.getText().setText(label.toUpperCase()); return COUNTRY_LABEL; }
-    if (kind === 'region') { REGION_LABEL.getText().setText(label.toUpperCase()); return REGION_LABEL; }
-    if (kind === 'locality') {
-      // Bump the biggest cities up a size so a capital reads before a small town.
-      const big = (feature.get('population_rank') || 0) >= 11;
-      const txt = CITY_LABEL.getText();
-      txt.setFont(big ? '600 12px system-ui, sans-serif' : '500 11px system-ui, sans-serif');
-      txt.setText(label);
-      return CITY_LABEL;
-    }
-    return null; // neighbourhoods, etc. — left off to keep the map calm
-  }
-
-  if (layer === 'water') {
-    const fill = BASE_STYLES.water;
-    const label = placeLabel(feature);
-    if (label && zoom >= 5) { WATER_LABEL.getText().setText(label); return [fill, WATER_LABEL]; }
-    return fill;
-  }
-
-  if (layer === 'roads') {
-    const base = BASE_STYLES.roads;
-    const kind = feature.get('kind');
-    const label = feature.get('name:en') || feature.get('name') || feature.get('ref');
-    if (label && zoom >= 11 && (kind === 'highway' || kind === 'major_road')) {
-      ROAD_LABEL.getText().setText(label);
-      return [base, ROAD_LABEL];
-    }
-    return base;
-  }
-
-  return BASE_STYLES[layer] || null;
-}
-
-// Severity → badge colour (canvas, so concrete hex).
-const SEV_COLOR = { critical: '#ef4444', warning: '#f59e0b', info: '#3b82f6' };
-
-// hexToRgba turns a #rrggbb tone colour into an rgba() string at the given alpha, so the beacon
-// ring can fade out as it expands.
-function hexToRgba(hex, alpha) {
-  const h = hex.replace('#', '');
-  const r = parseInt(h.slice(0, 2), 16);
-  const g = parseInt(h.slice(2, 4), 16);
-  const b = parseInt(h.slice(4, 6), 16);
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
-// easeOutCubic makes each ring shoot out quickly then ease as it fades — a more natural, modern
-// pulse than a linear expansion.
-const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
-
-// Beacon timing: one ring is born, expands, and fades every PULSE_PERIOD ms; a second ring runs
-// half a period behind so a wave is always in flight (continuous, not a blip).
-const PULSE_PERIOD = 1800;
-
-// pinStyle renders a placed node. A single node shows a tone-coloured pin and an optional
-// notification count badge (top-right). The critical "beacon" ring is NOT drawn here — it is
-// animated every frame in the layer's prerender handler (see boot) so it stays perfectly smooth.
-// A cluster of several shows a neutral disc with the count and the worst tone.
-function pinStyle(clusterFeature) {
-  const members = clusterFeature.get('features') || [];
-  const hover = clusterFeature.get('hover');
-  if (members.length === 1) {
-    const f = members[0];
-    const tone = f.get('tone') || TONES.idle;
-    const notif = f.get('notif'); // { count, sev } | undefined
-    const styles = [];
-    if (hover) styles.push(new Style({ image: new CircleStyle({ radius: 15, fill: new Fill({ color: hexToRgba(HOVER, 0.16) }) }) }));
-    // Main pin.
-    styles.push(new Style({ image: new CircleStyle({ radius: hover ? 9 : 8, fill: new Fill({ color: tone.color }), stroke: new Stroke({ color: hover ? HOVER : '#ffffff', width: hover ? 3 : 2 }) }) }));
-    // Notification count badge (top-right; OL displacement y is up-positive).
-    if (notif && notif.count > 0) {
-      styles.push(new Style({ image: new CircleStyle({ radius: 7, fill: new Fill({ color: SEV_COLOR[notif.sev] || '#ef4444' }), stroke: new Stroke({ color: '#ffffff', width: 1.5 }), displacement: [10, 10] }) }));
-      styles.push(new Style({ text: new Text({ text: notif.count > 99 ? '99+' : String(notif.count), font: '700 9px system-ui, sans-serif', fill: new Fill({ color: '#ffffff' }), offsetX: 10, offsetY: -10 }) }));
-    }
-    return styles;
-  }
-  const order = ['critical', 'warning', 'online', 'idle'];
-  let worst = 'idle';
-  let totalNotif = 0;
-  for (const m of members) {
-    const k = m.get('toneKey') || 'idle';
-    if (order.indexOf(k) < order.indexOf(worst)) worst = k;
-    const n = m.get('notif');
-    if (n) totalNotif += n.count;
-  }
-  const tone = TONES[worst];
-  const styles = [];
-  if (hover) styles.push(new Style({ image: new CircleStyle({ radius: 18, fill: new Fill({ color: hexToRgba(HOVER, 0.16) }) }) }));
-  styles.push(new Style({
-    image: new CircleStyle({ radius: hover ? 14 : 13, fill: new Fill({ color: 'rgba(255,255,255,0.92)' }), stroke: new Stroke({ color: hover ? HOVER : tone.ring, width: 3 }) }),
-    text: new Text({ text: String(members.length), font: '600 12px system-ui, sans-serif', fill: new Fill({ color: '#334155' }) }),
-  }));
-  if (totalNotif > 0) {
-    styles.push(new Style({ image: new CircleStyle({ radius: 7, fill: new Fill({ color: '#ef4444' }), stroke: new Stroke({ color: '#ffffff', width: 1.5 }), displacement: [13, 13] }) }));
-    styles.push(new Style({ text: new Text({ text: totalNotif > 99 ? '99+' : String(totalNotif), font: '700 9px system-ui, sans-serif', fill: new Fill({ color: '#ffffff' }), offsetX: 13, offsetY: -13 }) }));
-  }
-  return styles;
-}
-
-// BUILDING_GLYPH_FONT prefers the platform colour-emoji font so a chosen asset icon renders in
-// colour on the OL canvas (Windows/Chrome/macOS all ship one).
-const BUILDING_GLYPH_FONT = '15px "Segoe UI Emoji", "Noto Color Emoji", "Apple Color Emoji", system-ui, sans-serif';
-const HOVER = '#2f6bd6'; // accent used for the hover/selection highlight ring + halo
-
-// markerShape draws a site marker in the SHAPE of its kind: a disc for a building, a square for an
-// outdoor area, a diamond for a point asset. Zoomed out past the point where the name label is
-// legible, the silhouette is the only thing left to tell a park from an office block — so the shape
-// carries the kind, and the glyph inside carries the specifics.
-//
-// The radii are tuned so the three read as the same visual weight: a square of radius r covers more
-// area than a disc of radius r, and a diamond covers less, hence the multipliers.
-function markerShape(kind, radius, fill, stroke) {
-  const opts = { fill, stroke };
-  if (kind === KIND_OUTDOOR) return new RegularShape({ ...opts, points: 4, angle: Math.PI / 4, radius: radius * 1.06 });
-  if (kind === KIND_POINT) return new RegularShape({ ...opts, points: 4, angle: 0, radius: radius * 1.3 });
-  return new CircleStyle({ ...opts, radius });
-}
-
-// siteStyle renders a placed site: the operator's chosen glyph on a white marker ringed in the worst
-// owning-node tone (so status still reads at a glance), shaped by the site's kind, the name below,
-// and a camera-count badge.
-function siteStyle(feature) {
-  const tone = feature.get('tone') || TONES.idle;
-  const cams = feature.get('cameras') || 0;
-  const kind = normKind(feature.get('kind'));
-  const icon = feature.get('icon');
-  const hover = feature.get('hover');
-  const styles = [];
-  // Hover halo + accent ring — a clear "this is clickable" affordance for the canvas marker.
-  if (hover) styles.push(new Style({ image: markerShape(kind, 19, new Fill({ color: hexToRgba(HOVER, 0.16) }), undefined) }));
-  styles.push(new Style({ image: markerShape(kind, hover ? 15 : 14, new Fill({ color: '#ffffff' }), new Stroke({ color: hover ? HOVER : tone.ring, width: hover ? 4 : 3 })) }));
-  styles.push(new Style({ text: new Text({ text: icon, font: BUILDING_GLYPH_FONT }) }));
-  styles.push(new Style({ text: new Text({ text: feature.get('name') || '', offsetY: 24, font: '600 11px system-ui, sans-serif', fill: new Fill({ color: '#1f2937' }), stroke: new Stroke({ color: 'rgba(255,255,255,0.85)', width: 3 }) }) }));
-  // Camera badge (bottom-right): "online/total" when live health shows some are down (amber/red),
-  // otherwise just the total. Surfaces a camera that dropped while its node stayed up.
-  const total = feature.get('camTotal') != null ? feature.get('camTotal') : cams;
-  if (total > 0) {
-    const known = feature.get('camKnown') || 0;
-    const online = feature.get('camOnline') || 0;
-    const down = known > 0 && online < total; // we have readings and some aren't online
-    const badgeColor = !down ? tone.color : (online === 0 ? '#ef4444' : '#f59e0b');
-    const label = down ? `${online}/${total}` : (total > 99 ? '99+' : String(total));
-    styles.push(new Style({ image: new CircleStyle({ radius: down ? 9 : 8, fill: new Fill({ color: badgeColor }), stroke: new Stroke({ color: '#ffffff', width: 1.5 }), displacement: [12, -12] }) }));
-    styles.push(new Style({ text: new Text({ text: label, font: '700 9px system-ui, sans-serif', fill: new Fill({ color: '#ffffff' }), offsetX: 12, offsetY: 12 }) }));
-  }
-  // Unread-notification badge (top-right, severity coloured) — sum of THIS building's camera alerts.
-  const notif = feature.get('notif');
-  if (notif && notif.count > 0) {
-    styles.push(new Style({ image: new CircleStyle({ radius: 8, fill: new Fill({ color: SEV_COLOR[notif.sev] || '#ef4444' }), stroke: new Stroke({ color: '#ffffff', width: 1.5 }), displacement: [12, 12] }) }));
-    styles.push(new Style({ text: new Text({ text: notif.count > 99 ? '99+' : String(notif.count), font: '700 9px system-ui, sans-serif', fill: new Fill({ color: '#ffffff' }), offsetX: 12, offsetY: -12 }) }));
-  }
-  return styles;
-}
-
-const SEV_RANK = { critical: 3, warning: 2, info: 1 };
-// Compact relative time ("5m", "3h", "2d") for the event list.
-function shortAgo(sec) {
-  if (!sec) return '';
-  const d = Math.max(0, Math.floor(Date.now() / 1000) - sec);
-  if (d < 60) return `${d}s`;
-  if (d < 3600) return `${Math.floor(d / 60)}m`;
-  if (d < 86400) return `${Math.floor(d / 3600)}h`;
-  return `${Math.floor(d / 86400)}d`;
-}
-
-// NodeCameraPopup summarises a placed node as a compact, tabbed status card: a status-coloured
-// header (identity + state, glanceable at a glance), a meta strip with at-a-glance counts and the
-// Open-node action, then Events / Cameras as TABS — so only one clean, single-scroll list shows at
-// a time instead of two competing stacked lists. Events are worst-first; cameras are searchable
-// once there are many. Everything is fetched live and the card never grows past the viewport.
-function NodeCameraPopup({ node, nowSec, onOpenNode, onPlay, onOpenMedia, onLocate, onAck, onClose }) {
-  const t = useT();
-  const [cams, setCams] = useState({ loading: true, list: [], reachable: true });
-  const [events, setEvents] = useState({ loading: true, list: [] });
-  const [camQuery, setCamQuery] = useState('');
-  const [tab, setTab] = useState('events');
-
-  // Acknowledge an event straight from the popup: mark it read (optimistically), propagate the
-  // ack to the source AI alert on the node when it's a detection, and let the map refresh its pin
-  // badges. Mirrors the Notifications page's acknowledge, minus the list re-fetch.
-  const ackEvent = useCallback((e) => {
-    setEvents((cur) => ({ ...cur, list: cur.list.map((n) => (n.id === e.id ? { ...n, isRead: true } : n)) }));
-    if (eventHasFootage(e)) {
-      api(`/api/nodes/${encodeURIComponent(node.nodeId)}/proxy/api/vision/alerts/${e.refId}/ack`, { method: 'POST', noRedirect: true }).catch(() => {});
-    }
-    api(`/api/notifications/${e.id}/read`, { method: 'POST', noRedirect: true }).catch(() => {});
-    if (onAck) onAck();
-  }, [node.nodeId, onAck]);
-
-  useEffect(() => {
-    // Only a camera node serves /api/cameras. Asking a sensor hub or a door controller was a
-    // guaranteed 404 down the tunnel on every popup open — wasted round-trip, noisy node log.
-    if (nodeKindOf(node) !== 'camera') {
-      setCams({ loading: false, list: [], reachable: true });
-      return undefined;
-    }
-    let live = true;
-    setCams({ loading: true, list: [], reachable: true });
-    api(`/api/nodes/${encodeURIComponent(node.nodeId)}/proxy/api/cameras?limit=200`, { noRedirect: true })
-      .then((r) => {
-        if (!live) return;
-        const list = r.ok ? (Array.isArray(r.body) ? r.body : r.body?.items || []) : [];
-        setCams({ loading: false, list, reachable: r.ok });
-      })
-      .catch(() => { if (live) setCams({ loading: false, list: [], reachable: false }); });
-    return () => { live = false; };
-    // eslint-disable-next-line
-  }, [node.nodeId]);
-
-  // The node's recent events, ordered MOST CRITICAL FIRST (then newest).
-  useEffect(() => {
-    let live = true;
-    setEvents({ loading: true, list: [] });
-    api(`/api/notifications?nodeId=${encodeURIComponent(node.nodeId)}&limit=30`, { noRedirect: true })
-      .then((r) => {
-        if (!live) return;
-        const rows = Array.isArray(r.body?.items) ? r.body.items : (Array.isArray(r.body) ? r.body : []);
-        rows.sort((a, b) => {
-          const s = (SEV_RANK[(b.severity || '').toLowerCase()] || 0) - (SEV_RANK[(a.severity || '').toLowerCase()] || 0);
-          return s !== 0 ? s : (b.createdAt || 0) - (a.createdAt || 0);
-        });
-        setEvents({ loading: false, list: rows });
-      })
-      .catch(() => { if (live) setEvents({ loading: false, list: [] }); });
-    return () => { live = false; };
-  }, [node.nodeId]);
-
-  const toneKey = nodeToneKey(node, nowSec);
-  const tone = nodeTone(node, nowSec);
-  const pillClass = toneKey === 'online' ? 'online' : toneKey === 'critical' ? 'offline' : toneKey === 'warning' ? 'warn' : '';
-  const isCamera = nodeKindOf(node) === 'camera';
-  const unread = events.list.filter((e) => !e.isRead).length;
-  const onlineCams = cams.list.filter((c) => (c.healthStatus || '').toLowerCase() === 'online').length;
-
-  const tabs = [{ id: 'events', label: (<>{t('map.tabEvents')}{unread > 0 ? <span className="mp-tab-count danger">{unread}</span> : null}</>), icon: 'bell' }];
-  if (isCamera) tabs.push({ id: 'cameras', label: (<>{t('map.cameras')}{cams.list.length > 0 ? <span className="mp-tab-count">{cams.list.length}</span> : null}</>), icon: 'video' });
-  const activeTab = (tab === 'cameras' && !isCamera) ? 'events' : tab;
-
-  const renderEvents = () => {
-    if (events.loading) return <div className="mp-empty">{t('common.loading')}</div>;
-    if (events.list.length === 0) return <div className="mp-empty"><Ico n="bell" sz={22} /><span>{t('map.noEvents')}</span></div>;
-    return events.list.map((e) => {
-      const title = e.title || e.body || t('map.event');
-      const footage = eventHasFootage(e);
-      const main = (
-        <>
-          <span className={`sev-dot sev-${(e.severity || 'info').toLowerCase()}`} />
-          <span className="mp-event-title" title={e.body || e.title}>{title}</span>
-          {footage ? <span className="mp-event-cam" aria-hidden="true"><Ico n="camera" sz={12} /></span> : null}
-        </>
-      );
-      return (
-        <div key={e.id} className={`mp-event${e.isRead ? ' read' : ''}`}>
-          {footage ? (
-            <button
-              type="button"
-              className="mp-event-main has-footage"
-              title={t('map.openFootage')}
-              onClick={(ev) => onOpenMedia && onOpenMedia({ nodeId: node.nodeId, alertId: Number(e.refId), name: title }, ev.clientX, ev.clientY)}
-            >
-              {main}
-            </button>
-          ) : (
-            <span className="mp-event-main">{main}</span>
-          )}
-          <span className="mp-event-time">{shortAgo(e.createdAt)}</span>
-          {onLocate && Number(e.cameraId) > 0 ? (
-            <button type="button" className="mp-event-locate" title={t('map.locateOnPlan')} aria-label={t('map.locateOnPlan')} onClick={() => onLocate({ nodeId: node.nodeId, cameraId: e.cameraId, name: title })}>
-              <Ico n="map-pin" sz={13} />
-            </button>
-          ) : null}
-          {!e.isRead ? (
-            <button type="button" className="mp-event-ack" title={t('map.ack')} aria-label={t('map.ack')} onClick={() => ackEvent(e)}>
-              <Ico n="acknowledge" sz={13} />
-            </button>
-          ) : null}
-        </div>
-      );
-    });
-  };
-
-  const renderCameras = () => {
-    if (cams.loading) return <div className="mp-empty">{t('common.loading')}</div>;
-    if (!cams.reachable) return <div className="mp-empty"><Ico n="video" sz={22} /><span>{t('map.camsOffline')}</span></div>;
-    if (cams.list.length === 0) return <div className="mp-empty"><Ico n="video" sz={22} /><span>{t('map.noCams')}</span></div>;
-    const q = camQuery.trim().toLowerCase();
-    const shown = q ? cams.list.filter((c) => (c.name || `${c.id}`).toLowerCase().includes(q)) : cams.list;
-    return (
-      <>
-        {/* Sticky search once there are many cameras, so hundreds stay navigable — it stays put
-            while the list below scrolls. */}
-        {cams.list.length > 8 ? (
-          <div className="mp-camsearch">
-            <Ico n="search" sz={13} />
-            <input
-              type="text"
-              value={camQuery}
-              onChange={(e) => setCamQuery(e.target.value)}
-              placeholder={t('map.searchCams')}
-              aria-label={t('map.searchCams')}
-            />
-          </div>
-        ) : null}
-        {shown.length === 0 ? <div className="mp-empty"><span>{t('map.noCamMatch')}</span></div> : shown.map((c) => (
-          <button key={c.id} type="button" className="mp-cam" onClick={(e) => onPlay && onPlay({ nodeId: node.nodeId, cameraId: c.id, name: c.name || t('nodes.cameraN', { id: c.id }), ptzSupported: !!c.ptzSupported }, e.clientX, e.clientY)}>
-            <span className={`cam-dot ${((c.healthStatus || '').toLowerCase() === 'online') ? 'on' : 'off'}`} />
-            <span className="mp-cam-name">{c.name || t('nodes.cameraN', { id: c.id })}</span>
-            <Ico n="play" sz={12} />
-          </button>
-        ))}
-      </>
-    );
-  };
-
-  return (
-    <div className="mp-card" role="dialog" aria-label={node.name || node.nodeId}>
-      {/* The whole identity block is the "open node" affordance — clicking the node's name/icon
-          opens its management pages (a chevron hints at it on hover). No separate action icon. */}
-      <div className="mp-head">
-        <button
-          type="button"
-          className="mp-id"
-          onClick={() => onOpenNode && onOpenNode(node.nodeId)}
-          disabled={!onOpenNode}
-          title={onOpenNode ? t('map.openNode') : undefined}
-        >
-          <span className="mp-avatar" style={{ background: tone.color }}><Ico n={isCamera ? 'video' : 'cpu'} sz={15} /></span>
-          <span className="mp-title" title={node.name || node.nodeId}>{node.name || node.nodeId}</span>
-          {onOpenNode ? <span className="mp-id-go" aria-hidden="true"><Ico n="chev-right" sz={15} /></span> : null}
-        </button>
-        <button type="button" className="icon-button mp-close" onClick={onClose} aria-label={t('nset.close')}><Ico n="x" sz={14} /></button>
-      </div>
-
-      <div className="mp-meta">
-        <span className={`status-pill ${pillClass}`}>{t(`map.legend.${toneKey}`)}</span>
-        <span className="mp-meta-spacer" />
-        {isCamera && cams.list.length > 0 ? (
-          <span className="mp-stat" title={t('map.cameras')}><Ico n="video" sz={12} /> {onlineCams}/{cams.list.length}</span>
-        ) : null}
-        {unread > 0 ? <span className="mp-stat danger" title={t('map.events')}><Ico n="bell" sz={12} /> {unread}</span> : null}
-      </div>
-
-      {tabs.length > 1 ? (
-        <Tabs tabs={tabs} active={activeTab} onChange={setTab} ariaLabel={t('map.sections')} className="mp-tabs" />
-      ) : (
-        <div className="mp-solo-head"><Ico n="bell" sz={13} /> {t('map.events')} {unread > 0 ? <span className="mp-tab-count danger">{unread}</span> : null}</div>
-      )}
-
-      <div className="mp-body">
-        {activeTab === 'cameras' ? renderCameras() : renderEvents()}
-      </div>
-    </div>
-  );
-}
-NodeCameraPopup.propTypes = { node: PropTypes.object, nowSec: PropTypes.number, onOpenNode: PropTypes.func, onPlay: PropTypes.func, onOpenMedia: PropTypes.func, onLocate: PropTypes.func, onAck: PropTypes.func, onClose: PropTypes.func };
-
-// SiteAssetPopup is what a POINT asset (a junction, a gate, a pole) opens: it has no plan to drill
-// into, so the marker answers "what is mounted here?" instead. With exactly one appliance the map
-// skips this and opens that appliance's device card directly — this card is for the none and
-// several cases, where jumping to "the" appliance would be a guess.
-function SiteAssetPopup({ site, nodes, nowSec, onOpenNode, onClose }) {
-  const t = useT();
-  return (
-    <div className="mp-card" role="dialog" aria-label={site.name}>
-      <div className="mp-head">
-        <span className="mp-id as-static">
-          <span className="mp-avatar as-glyph" aria-hidden="true">{siteGlyph(site)}</span>
-          <span className="mp-title" title={site.name}>{site.name}</span>
-        </span>
-        <button type="button" className="icon-button mp-close" onClick={onClose} aria-label={t('nset.close')}><Ico n="x" sz={14} /></button>
-      </div>
-      <div className="mp-solo-head"><Ico n="cpu" sz={13} /> {t('map.appliancesHere')} {nodes.length > 0 ? <span className="mp-tab-count">{nodes.length}</span> : null}</div>
-      <div className="mp-body">
-        {nodes.length === 0 ? (
-          <div className="mp-empty"><Ico n="cpu" sz={22} /><span>{t('map.noAppliancesHere')}</span></div>
-        ) : nodes.map((n) => (
-          <button key={n.nodeId} type="button" className="mp-cam" onClick={() => onOpenNode(n)}>
-            <span className="cam-dot" style={{ background: nodeTone(n, nowSec).color }} />
-            <span className="mp-cam-name">{n.name || n.nodeId}</span>
-            <Ico n="chev-right" sz={12} />
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-SiteAssetPopup.propTypes = { site: PropTypes.object, nodes: PropTypes.array, nowSec: PropTypes.number, onOpenNode: PropTypes.func, onClose: PropTypes.func };
-
-// MapPopupFrame positions the node popup relative to the pin's VIEWPORT coordinates (x, y) and
-// keeps it fully on screen: centred over the pin and floated above it, but dropped below when the
-// header would clip the top edge, and clamped horizontally + vertically so it never spills out —
-// however tall the popup grows. It re-clamps whenever the popup's own size changes (its camera /
-// event lists load in asynchronously), so a node near any edge always shows its full header.
-function MapPopupFrame({ x, y, children }) {
-  const ref = useRef(null);
-  const [style, setStyle] = useState({ left: 0, top: 0, visibility: 'hidden' });
-
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return undefined;
-    const place = () => {
-      const r = el.getBoundingClientRect();
-      const M = 10; // viewport margin
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
-      const w = r.width;
-      const h = r.height;
-      const left = Math.max(M, Math.min(x - w / 2, vw - w - M));
-      let top = y - h - 14; // preferred: above the pin
-      if (top < M) top = y + 16; // not enough room above → drop below the pin
-      if (top + h > vh - M) top = Math.max(M, vh - h - M); // still overflowing → clamp
-      setStyle({ left, top, visibility: 'visible' });
-    };
-    place();
-    let ro;
-    if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(place); ro.observe(el); }
-    return () => { if (ro) ro.disconnect(); };
-  }, [x, y]);
-
-  return <div className="map-popup-anchor" ref={ref} style={style}>{children}</div>;
-}
-MapPopupFrame.propTypes = { x: PropTypes.number, y: PropTypes.number, children: PropTypes.node };
 
 // FleetMap is the geographic fleet view. Nodes appear as status pins over the offline basemap.
 // PLACING a node is click-first (the discoverable path): pick a node in the side list, then
@@ -537,7 +64,6 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   const [downloading, setDownloading] = useState(false);
   const [bmConfig, setBmConfig] = useState({ hasTool: false, envManaged: false, source: '' }); // download setup state
   const [setupOpen, setSetupOpen] = useState(false);
-  const sourceInputRef = useRef(null);
   const basemapLayersRef = useRef({}); // region name -> VectorTileLayer
   const regionsRef = useRef([]); // live [{ name, bounds }] for the once-bound moveend handler
 
@@ -616,13 +142,15 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   const [placing, setPlacing] = useState(null);
   const placingRef = useRef(null);
   placingRef.current = placing;
-  // Camera popup: the node whose pin was clicked + where to anchor the card.
-  const [popup, setPopup] = useState(null); // { node, x, y }
-  // A point asset's appliance chooser: shown when a junction/pole has none or several appliances,
-  // since there is no single device card to jump straight to.
-  const [sitePopup, setSitePopup] = useState(null); // { site, nodes, x, y }
-  // Drill-down: the node whose floor plan is open (with its cameras), or null for the map.
-  const [drill, setDrill] = useState(null); // { node, floorplans }
+  // What the inspector is describing, and what the stage is showing. ONE selection, set from the
+  // tree or from a marker on the plan, instead of a drill-down state plus a floating popup that
+  // could each be showing something different.
+  //
+  //   { type: 'site',   id }
+  //   { type: 'area',   siteId, floorId }
+  //   { type: 'camera', nodeId, cameraId, name, siteId, siteName, floorId, floorName }
+  //   { type: 'node',   nodeId }
+  const [sel, setSel] = useState(null);
   // Live footage windows: several can be open at once (each its own floating window). Opened
   // from a camera click in EITHER the quick popup or the floor plan — a camera never opens the
   // full camera page.
@@ -635,7 +163,9 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   const [notifByNode, setNotifByNode] = useState({});
   const [notifByCam, setNotifByCam] = useState({}); // "nodeId::cameraId" -> { count, sev } — building attribution
   const [camHealth, setCamHealth] = useState({}); // "nodeId::cameraId" -> health string ('online'|'offline'|…)
-  const [camsByNode, setCamsByNode] = useState({}); // nodeId -> ["nodeId::cameraId", …] — a point asset's cameras
+  // nodeId -> { loading, error, cams }. `error` is load-bearing: an unreachable node's cameras are
+  // UNKNOWN, and the tree must never render that as "nothing left to place".
+  const [camsByNode, setCamsByNode] = useState({});
   const pinLayerRef = useRef(null);
   const notifReloadRef = useRef(null); // the notif-tally loader, so an ack can refresh pin badges now
   // Buildings (sites) are the OTHER thing on the map — a building is where cameras physically live,
@@ -646,14 +176,28 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   const [showLayers] = useState({ buildings: true, nodes: false });
   // Which building rows in the rail are expanded, and the lazily-loaded floors/areas inside each
   // (id -> { loading, error, list }). A building's children are its floor plans (1st floor, kitchen…).
-  const [expandedSites, setExpandedSites] = useState({});
-  const [floorsBySite, setFloorsBySite] = useState({});
+  // The tree's open branches, as one set of keys ("places", "tray", "site:3", "area:11") rather
+  // than a map per level - a tree has one expansion state, whatever the depth of the row.
+  const [expanded, setExpanded] = useState(() => new Set(['places', 'tray']));
+  // Per-site areas WITH their placements, so expanding a place yields its areas and the cameras
+  // pinned in them in one request rather than a second round-trip per area.
+  const [plansBySite, setPlansBySite] = useState({});
+  // Fleet-wide "what already holds a pin", so the tray can subtract it from each node's live
+  // camera list. It is the placement index the editor palette already uses.
+  // The full placement index, not just the keys: the inspector needs each pin's SITE to answer
+  // "where are this recorder's cameras?", which is the one question the old model could not.
+  const [placements, setPlacements] = useState([]);
+  const placedKeys = useMemo(() => new Set(placements.map((p) => `${p.nodeId}::${p.cameraId || ''}`)), [placements]);
+  const [treeQuery, setTreeQuery] = useState('');
+  // Which tree row a dragged camera is currently over, so exactly one row lights up.
+  const [dropTarget, setDropTarget] = useState(null);
+  // A camera dragged out of the tray, waiting for the editor to open on its new home.
+  const [editorPick, setEditorPick] = useState(null); // { pick, floorId }
   // Adding a building is a three-beat flow owned here: the wizard collects name/glyph/areas, the
   // map takes the drop point, then the editor opens on the building just created. editorSite is
   // also the re-entry point for an EXISTING building (from the rail or the drill-down).
   const [wizardOpen, setWizardOpen] = useState(false);
   const [editorSite, setEditorSite] = useState(null);
-  const [renameSite, setRenameSite] = useState(null); // a point asset being renamed (it has no editor)
   const [busy, setBusy] = useState(false); // a building create/save is in flight
   const buildingSourceRef = useRef(null);
   const buildingLayerRef = useRef(null);
@@ -720,38 +264,84 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
     return () => { live = false; clearInterval(iv); };
   }, []);
 
-  // Live camera health for the cameras in PLACED buildings, so a building marker can show
-  // "online / total" — a camera that drops while its NODE is still up is otherwise invisible on
-  // the map (the building tone only tracks node status). Refetched whenever the overview changes
-  // (~30s); one proxy call per owning node, skipped when there are no placed buildings.
+  // Every adopted node's live camera list, over the tunnel. It answers two questions at once:
+  //   marker health - "online / total" on a place's badge, so a camera that drops while its NODE
+  //                   is still up is not invisible (a place's tone only tracks node status);
+  //   the tray      - which of a recorder's cameras hold no pin yet.
+  // It covers the WHOLE fleet rather than only placed sites, because the tray's whole job is the
+  // cameras that are nowhere yet - and those live on nodes that may sit at no place at all.
+  //
+  // A node that cannot be reached is recorded as `error`, never as an empty list. "We could not
+  // ask" and "there is nothing left to place" are different answers, and collapsing them would
+  // quietly tell an operator the job is finished.
   useEffect(() => {
     let live = true;
-    const nodeIds = Array.from(new Set(sites.filter((s) => s.site && s.site.mapPlaced).flatMap((s) => resolvedNodeIds(s))));
-    if (nodeIds.length === 0) { setCamHealth({}); setCamsByNode({}); return undefined; }
-    Promise.all(nodeIds.map((nid) => api(`/api/nodes/${encodeURIComponent(nid)}/proxy/api/cameras?limit=200`, { noRedirect: true })
-      .then((r) => ({ nid, list: r.ok ? (Array.isArray(r.body) ? r.body : (r.body?.items || [])) : [] }))
-      .catch(() => ({ nid, list: [] }))))
+    const ids = nodes.map((n) => n && n.nodeId).filter(Boolean);
+    if (ids.length === 0) { setCamHealth({}); setCamsByNode({}); return undefined; }
+    setCamsByNode((m) => {
+      const next = { ...m };
+      ids.forEach((nid) => { if (!next[nid]) next[nid] = { loading: true, cams: [] }; });
+      return next;
+    });
+    Promise.all(ids.map((nid) => api(`/api/nodes/${encodeURIComponent(nid)}/proxy/api/cameras?limit=200`, { noRedirect: true })
+      .then((r) => ({ nid, ok: !!r.ok, list: r.ok ? (Array.isArray(r.body) ? r.body : (r.body?.items || [])) : [] }))
+      .catch(() => ({ nid, ok: false, list: [] }))))
       .then((results) => {
         if (!live) return;
-        const m = {};
+        const health = {};
         const byNode = {};
-        results.forEach(({ nid, list }) => {
-          byNode[nid] = list.map((c) => `${nid}::${c.id}`);
-          list.forEach((c) => { m[`${nid}::${c.id}`] = (c.healthStatus || '').toLowerCase(); });
+        results.forEach(({ nid, ok, list }) => {
+          byNode[nid] = ok ? { loading: false, cams: list } : { loading: false, error: true, cams: [] };
+          if (ok) list.forEach((c) => { health[`${nid}::${c.id}`] = (c.healthStatus || '').toLowerCase(); });
         });
-        setCamHealth(m);
+        setCamHealth(health);
         setCamsByNode(byNode);
       });
     return () => { live = false; };
-  }, [sites, resolvedNodeIds]);
+  }, [nodes]);
 
-  // A site's cameras. A building/outdoor area knows them from its plan placements; a point asset has
-  // no plan, so its cameras are simply every camera on the appliance assigned to it.
-  const resolvedCamKeys = useCallback((row) => {
-    const keys = row.cameraKeys || [];
-    if (keys.length > 0 || !row.site || hasPlans(row.site.kind)) return keys;
-    return resolvedNodeIds(row).flatMap((nid) => camsByNode[nid] || []);
-  }, [resolvedNodeIds, camsByNode]);
+  // Fleet-wide placement index: every camera (and appliance) that already holds a pin. The tray
+  // subtracts it from each node's camera list. Refreshed alongside the site overview so placing
+  // something in the editor removes it from the tray without a reload.
+  const reloadPlaced = useCallback(() => api('/api/placements', { noRedirect: true })
+    .then((r) => setPlacements(r.ok && Array.isArray(r.body) ? r.body : []))
+    .catch(() => {}), []);
+  useEffect(() => { reloadPlaced(); }, [reloadPlaced, sites]);
+  const reloadPlacedRef = useRef(reloadPlaced);
+  reloadPlacedRef.current = reloadPlaced;
+  // openBuilding is bound once into the OpenLayers click handler, so it reads the live plan cache
+  // through a ref rather than closing over a stale copy.
+  const plansBySiteRef = useRef(plansBySite);
+  plansBySiteRef.current = plansBySite;
+
+  // What the stage is showing: the plan behind the current selection, or null for the geo map.
+  // Derived rather than stored, so the stage can never drift from the inspector beside it - the
+  // old drill-down was a second copy of "where am I" and the two could disagree.
+  const stagePlan = useMemo(() => {
+    if (!sel || (sel.type !== 'area' && sel.type !== 'camera')) return null;
+    const row = sites.find((r) => r.site && r.site.id === sel.siteId);
+    const site = row && row.site;
+    const list = (plansBySite[sel.siteId] || {}).list || [];
+    if (!site || list.length === 0) return null;
+    return { site, plans: list };
+  }, [sel, sites, plansBySite]);
+
+  // Selecting anything inside a place needs that place's plans, however the selection was made -
+  // the tree's branch may never have been expanded (a camera located from a notification, say).
+  useEffect(() => {
+    if (!sel || (sel.type !== 'area' && sel.type !== 'camera')) return;
+    if (!plansBySite[sel.siteId]) loadSitePlansRef.current(sel.siteId);
+  }, [sel, plansBySite]);
+
+  // A site's cameras are the ones PLACED there — for every kind, including a point asset, which
+  // now owns an implicit area to pin them to.
+  //
+  // This used to fall back, for a point asset, to "every camera on every appliance assigned here".
+  // That is wrong whenever one recorder feeds more than one place, which is the normal case: an
+  // NVR with cameras in two buildings, assigned to a junction, made the junction claim all of
+  // them. A camera holds exactly one pin fleet-wide, so a placement is the only honest answer to
+  // "what is here".
+  const resolvedCamKeys = useCallback((row) => row.cameraKeys || [], []);
 
 
   // Open a live footage window for a camera near the click (x, y = viewport coords). Adds a new
@@ -809,10 +399,19 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
       const site = (sites.find((s) => s.site && s.site.id === siteId) || {}).site || { id: siteId, name: t('map.viewIndoor') };
       const sres = await api(`/api/sites/${siteId}/floorplans`);
       const sitePlans = sres.ok && Array.isArray(sres.body) ? sres.body.filter((p) => p && p.floor) : plans;
-      setPopup(null);
       setLiveWindows([]); // clear floating windows so the highlighted marker on the plan is unobstructed
       setMediaWindows([]);
-      setDrill({ kind: 'site', site, floorplans: sitePlans, focusCameraId: payload.cameraId });
+      setPlansBySite((m) => ({ ...m, [siteId]: { loading: false, list: sitePlans } }));
+      setSel({
+        type: 'camera',
+        nodeId: payload.nodeId,
+        cameraId: payload.cameraId,
+        name: payload.name || String(payload.cameraId),
+        siteId,
+        siteName: site.name,
+        floorId: holder.floor.id,
+        floorName: holder.floor.name,
+      });
     } catch (_) { if (onToast) onToast(t('map.error'), 'error'); }
   }, [sites, onToast, t]);
 
@@ -824,45 +423,35 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
     v.animate({ center: fromLonLat([s.lon, s.lat]), zoom: Math.max(13, v.getZoom() || DEFAULT_ZOOM), duration: 650 });
   }, []);
 
-  // Clicking a NODE opens its device card (status + cameras + events) — a node is an appliance, not
-  // a building, so it never opens a floor plan. Mirrored to a ref for the once-bound OL handler.
-  const openNode = useCallback((node, px) => {
-    // px is relative to the map container; convert to viewport coords so the popup frame can clamp
-    // against the window and never clip off the top/edges.
-    const rect = containerRef.current ? containerRef.current.getBoundingClientRect() : { left: 0, top: 0 };
-    setDrill(null);
-    setPopup({ node, x: Math.round(rect.left + px[0]), y: Math.round(rect.top + px[1]) });
+  // Clicking a NODE selects it into the inspector. It used to open a card floating over the map,
+  // which covered the marker you had just clicked; the pane sits beside it instead.
+  const openNode = useCallback((node) => {
+    if (node && node.nodeId) setSel({ type: 'node', nodeId: node.nodeId });
   }, []);
   const openNodeRef = useRef(openNode);
   openNodeRef.current = openNode;
 
-  // Clicking a site opens the right thing for what it IS. A building or outdoor area opens its
-  // plans with EVERY camera on them (multi-node) — the digital-twin drill, shown even with no plans
-  // yet. A point asset has no plan to open, so it opens the device card of the appliance mounted
-  // there instead; with several appliances it first offers the choice, with none it says so.
-  // focusFloorId opens the drill-down on a SPECIFIC area (clicked in the rail), rather than the
-  // default first plan — otherwise clicking one area could land you on the other.
-  const openBuilding = useCallback(async (site, px, focusFloorId) => {
-    if (!hasPlans(site.kind)) {
-      const rect = containerRef.current ? containerRef.current.getBoundingClientRect() : { left: 0, top: 0 };
-      const x = Math.round(rect.left + (px ? px[0] : 0));
-      const y = Math.round(rect.top + (px ? px[1] : 0));
-      const mine = nodesBySiteId[site.id] || [];
-      setDrill(null);
-      if (mine.length === 1) { setSitePopup(null); setPopup({ node: mine[0], x, y }); return; }
-      setPopup(null);
-      setSitePopup({ site, nodes: mine, x, y });
-      return;
+  // Opening an area puts its plan on the STAGE - beside the tree that got you there and the
+  // inspector describing it - rather than over the top of the map in a drill-down that had its own
+  // back button. The tree is the navigation now, so the plan needs no chrome of its own.
+  //
+  // floorId is optional: naming no area lands on the place's first one, which is what clicking a
+  // place (rather than an area) means.
+  const openBuilding = useCallback(async (site, px, floorId) => {
+    if (!site || !site.id) return;
+    let list = (plansBySiteRef.current[site.id] || {}).list;
+    if (!list) {
+      try {
+        const res = await api(`/api/sites/${site.id}/floorplans`);
+        list = res.ok && Array.isArray(res.body) ? res.body.filter((p) => p && p.floor) : [];
+      } catch (_) { list = []; }
+      setPlansBySite((m) => ({ ...m, [site.id]: { loading: false, list } }));
     }
-    let plans = [];
-    try {
-      const res = await api(`/api/sites/${site.id}/floorplans`);
-      plans = res.ok && Array.isArray(res.body) ? res.body.filter((p) => p && p.floor) : [];
-    } catch (_) { /* open empty */ }
-    setPopup(null);
-    setSitePopup(null);
-    setDrill({ kind: 'site', site, floorplans: plans, focusFloorId });
-  }, [nodesBySiteId]);
+    const target = floorId || (list[0] && list[0].floor.id) || null;
+    setSel(target
+      ? { type: 'area', siteId: site.id, floorId: target }
+      : { type: 'site', id: site.id });
+  }, []);
   const openBuildingRef = useRef(openBuilding);
   openBuildingRef.current = openBuilding;
 
@@ -871,16 +460,11 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   const removeGhostPlacements = useCallback(async (ids) => {
     if (!ids || !ids.length) return;
     await Promise.all(ids.map((id) => api(`/api/placements/${id}`, { method: 'DELETE' }).catch(() => {})));
-    if (drill && drill.site) {
-      try {
-        const res = await api(`/api/sites/${drill.site.id}/floorplans`);
-        const plans = res.ok && Array.isArray(res.body) ? res.body.filter((p) => p && p.floor) : [];
-        setDrill((d) => (d ? { ...d, floorplans: plans } : d));
-      } catch (_) { /* ignore */ }
-    }
+    setPlansBySite({}); // drop the cache; the open branch reloads itself
+    if (reloadPlacedRef.current) reloadPlacedRef.current();
     if (siteReloadRef.current) siteReloadRef.current();
     if (onToast) onToast(t('map.ghostsRemoved', { n: ids.length }), 'success');
-  }, [drill, onToast, t]);
+  }, [onToast, t]);
 
   // Buildings-centric map: a node never gets its own pin — every node lives in a site and is
   // reached by drilling into that site. Nothing is placed standalone, so there are no node pins.
@@ -903,20 +487,6 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
     (nodesBySiteId[s.id] || []).forEach((n) => { if (ids.indexOf(n.nodeId) < 0) ids.push(n.nodeId); });
     return ids;
   }, [nodesBySiteId]);
-  // A site's rail status = the worst status among the nodes that answer for it.
-  const siteToneKey = (row) => {
-    const order = ['critical', 'warning', 'online', 'idle'];
-    let worst = 'idle';
-    resolvedNodeIds(row).forEach((nid) => { const k = nodeToneKey(nodesById[nid], nowSec); if (order.indexOf(k) < order.indexOf(worst)) worst = k; });
-    return worst;
-  };
-  // Sites split by kind for the rail, each group in the wizard's order so the headings are stable.
-  const sitesByKind = useMemo(() => {
-    const g = { [KIND_BUILDING]: [], [KIND_OUTDOOR]: [], [KIND_POINT]: [] };
-    sites.forEach((row) => { if (row.site) g[normKind(row.site.kind)].push(row); });
-    return g;
-  }, [sites]);
-
   const persistPosition = useCallback(async (nodeId, lon, lat) => {
     try {
       const res = await api(`/api/nodes/${nodeId}/position`, { method: 'PUT', body: JSON.stringify({ lat, lon, placed: true }) });
@@ -963,97 +533,126 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
       // thenEdit: the map click that drops the marker also opens the editor, so "add an asset" ends
       // on the plan surface rather than back at a map with an unexplained new marker. A point asset
       // has no editor, so it simply lands on the map and waits for an appliance to be assigned.
-      setPlacing({ kind: 'site', id: created.id, name: created.name, siteKind: normKind(siteKind), thenEdit: hasPlans(siteKind) });
+      setPlacing({ kind: 'site', id: created.id, name: created.name, siteKind: normKind(siteKind), thenEdit: true });
       if (onToast) onToast(t('bld.createdPlaceIt', { name: created.name }), 'success');
     } catch (_) {
       if (onToast) onToast(t('map.siteCreateFailed'), 'error');
     } finally { setBusy(false); }
   }, [onToast, t]);
 
-  // Rename / re-glyph an asset in place. A building or outdoor area gets this inside its editor;
-  // a point asset has no editor, so the rail's pencil opens this dialog directly.
-  const saveSiteMeta = useCallback(async (site, name, icon) => {
-    setBusy(true);
-    try {
-      const res = await api(`/api/sites/${site.id}`, { method: 'PUT', body: JSON.stringify({ name, description: site.description || '', icon, kind: normKind(site.kind), ordinal: site.ordinal || 0 }) });
-      if (!res.ok) throw new Error();
-      setRenameSite(null);
-      if (siteReloadRef.current) siteReloadRef.current();
-      if (onToast) onToast(t('map.siteUpdated'), 'success');
-    } catch (_) {
-      if (onToast) onToast(t('map.error'), 'error');
-    } finally { setBusy(false); }
-  }, [onToast, t]);
-
-  // Delete an asset from the rename dialog (used for point assets, which have no editor). Takes its
-  // floor plans and camera placements with it; guarded by a confirm.
-  const deleteSiteMeta = useCallback(async (site) => {
-    if (!window.confirm(t('map.deleteAssetConfirm', { name: site.name }))) return;
-    setBusy(true);
-    try {
-      const res = await api(`/api/sites/${site.id}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error();
-      setRenameSite(null);
-      if (siteReloadRef.current) siteReloadRef.current();
-      if (onToast) onToast(t('map.assetDeleted', { name: site.name }), 'success');
-    } catch (_) {
-      if (onToast) onToast(t('map.error'), 'error');
-    } finally { setBusy(false); }
-  }, [onToast, t]);
-
   // Open the authoring dialog for an asset. Takes the site row (id/name/icon/kind) from wherever the
-  // operator asked — rail row, drill-down header, or the drop that just finished. A point asset has
-  // no plan surface to author, so for it "edit" means renaming/re-glyphing the marker.
+  // operator asked — rail row, drill-down header, or the drop that just finished. A point asset
+  // opens the same editor as everything else: it has no walls to draw, but it has an area to drop
+  // its cameras onto and aim them, which is the only way its cameras get placed at all.
   const openEditor = useCallback((site) => {
-    setPopup(null);
-    setSitePopup(null);
-    setDrill(null);
-    if (!hasPlans(site.kind)) { setRenameSite(site); return; }
     setEditorSite(site);
   }, []);
   const openEditorRef = useRef(openEditor);
   openEditorRef.current = openEditor;
-  // The OL click handler is bound once, so it reads the live site list through a ref to resolve
-  // the id it just placed into the full row the editor needs.
-  const sitesRef = useRef(sites);
-  sitesRef.current = sites;
 
-  // Assign a node to the building it resides in (siteId), or clear it (siteId 0). Assigning takes
-  // the node off the map (a building-resident node has no own pin); clearing returns it to the
-  // "needs a home" list. The building's own marker then represents the node.
-  const assignBuilding = useCallback(async (nodeId, siteId) => {
+  // --- what the tree's rows do -----------------------------------------------------------------
+  // Deliberately the SAME verbs the flat rail had, so this phase changes the shape of the rail and
+  // nothing about what clicking things does. A place that is on the map flies to it; one that is
+  // not enters placing mode, because "drop me somewhere" is the only thing left to do with it.
+  const openSiteFromTree = useCallback((row) => {
+    const s = row.site;
+    setSel({ type: 'site', id: s.id });
+    if (s.mapPlaced) { flyToSite(s); return; }
+    setPlacing((cur) => (cur && cur.kind === 'site' && cur.id === s.id
+      ? null
+      : { kind: 'site', id: s.id, name: s.name, siteKind: normKind(s.kind) }));
+  }, [flyToSite]);
+
+  // A camera leaf opens the plan it is pinned to, with that camera highlighted - the tree found
+  // it, so the map should land on it rather than on the area in general.
+  const openCameraFromTree = useCallback((site, floor, placement) => {
+    setSel({
+      type: 'camera',
+      nodeId: placement.nodeId,
+      cameraId: placement.cameraId,
+      name: placement.lastKnownName || String(placement.cameraId),
+      siteId: site.id,
+      siteName: site.name,
+      floorId: floor.id,
+      floorName: floor.name,
+    });
+  }, []);
+
+  // Placing a camera from the tray: open the place's editor already holding it, on the area it was
+  // dropped on. The editor is where a pin gets a POSITION and a direction, which a tree row cannot
+  // express - so the tree's job ends at "this camera belongs there", and the plan takes it from
+  // there with one click.
+  const placeCameraFromTray = useCallback((site, floorId, pick) => {
+    if (!site) {
+      // The button, not a drop: no target chosen yet. Say what to do rather than silently doing
+      // nothing - picking a place FOR the operator would be a guess about the physical world.
+      if (onToast) onToast(t('tree.pickAPlaceFirst', { name: pick.name }), 'info');
+      return;
+    }
+    setEditorPick({ pick, floorId: floorId || null });
+    setEditorSite(site);
+  }, [onToast, t]);
+
+  // The waiver: "this appliance has no place on any plan, on purpose". The only other way out of
+  // the tray, and the reason the tray can ever be empty for a fleet with an off-site recorder.
+  const waiveLocation = useCallback(async (node, waived) => {
     try {
-      const res = await api(`/api/nodes/${nodeId}/building`, { method: 'PUT', body: JSON.stringify({ siteId }) });
+      const res = await api(`/api/nodes/${encodeURIComponent(node.nodeId)}/no-fixed-location`, {
+        method: 'PUT', body: JSON.stringify({ noFixedLocation: waived }),
+      });
       if (!res.ok) throw new Error('save failed');
-      setPopup(null);
       if (reloadNodes) reloadNodes();
+      if (onToast) onToast(waived ? t('tree.markedNoFixedLocation', { name: node.name || node.nodeId }) : t('tree.locationExpectedAgain', { name: node.name || node.nodeId }), 'success');
     } catch (_) {
       if (onToast) onToast(t('map.saveFailed'), 'error');
       if (reloadNodes) reloadNodes();
     }
   }, [reloadNodes, onToast, t]);
 
-  // Lazily fetch a building's floors/areas the first time its rail row is expanded.
-  const loadSiteFloors = useCallback(async (siteId) => {
-    setFloorsBySite((m) => ({ ...m, [siteId]: { ...(m[siteId] || {}), loading: true } }));
+  // An appliance row opens its device card. The popup anchors to viewport coordinates, so the
+  // click's own position is what keeps the card next to the row it came from.
+  const selectNodeFromTree = useCallback((node) => {
+    if (!node || !node.nodeId) return;
+    setSel({ type: 'node', nodeId: node.nodeId });
+  }, []);
+  // The OL click handler is bound once, so it reads the live site list through a ref to resolve
+  // the id it just placed into the full row the editor needs.
+  const sitesRef = useRef(sites);
+  sitesRef.current = sites;
+
+  // Lazily fetch a place's areas WITH their placements the first time its branch opens. One call
+  // (/floorplans, not /floors) because the tree's leaves are the cameras pinned in each area, so
+  // fetching areas alone would only mean a second request per area a moment later.
+  const loadSitePlans = useCallback(async (siteId) => {
+    setPlansBySite((m) => ({ ...m, [siteId]: { ...(m[siteId] || { list: [] }), loading: true } }));
     try {
-      const res = await api(`/api/sites/${siteId}/floors`, { noRedirect: true });
-      const list = res.ok && Array.isArray(res.body) ? res.body.slice().sort((a, b) => (a.ordinal || 0) - (b.ordinal || 0)) : [];
-      setFloorsBySite((m) => ({ ...m, [siteId]: { loading: false, list } }));
+      const res = await api(`/api/sites/${siteId}/floorplans`, { noRedirect: true });
+      const list = res.ok && Array.isArray(res.body)
+        ? res.body.filter((p) => p && p.floor).sort((a, b) => (a.floor.ordinal || 0) - (b.floor.ordinal || 0))
+        : [];
+      setPlansBySite((m) => ({ ...m, [siteId]: { loading: false, list } }));
     } catch (_) {
-      setFloorsBySite((m) => ({ ...m, [siteId]: { loading: false, error: true, list: [] } }));
+      setPlansBySite((m) => ({ ...m, [siteId]: { loading: false, error: true, list: [] } }));
     }
   }, []);
-  const toggleSite = useCallback((siteId) => {
-    setExpandedSites((e) => ({ ...e, [siteId]: !e[siteId] }));
-  }, []);
-  // Fetch floors for any expanded building we don't have them for. Driven off state (rather than the
-  // click) so an editor change that drops the cache re-loads the row that is still open.
-  useEffect(() => {
-    Object.keys(expandedSites).forEach((id) => {
-      if (expandedSites[id] && !floorsBySite[id]) loadSiteFloors(Number(id));
+  const loadSitePlansRef = useRef(loadSitePlans);
+  loadSitePlansRef.current = loadSitePlans;
+  const toggleBranch = useCallback((key) => {
+    setExpanded((cur) => {
+      const next = new Set(cur);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
     });
-  }, [expandedSites, floorsBySite, loadSiteFloors]);
+  }, []);
+  // Load the areas of any open place we don't have yet. Driven off state rather than the click, so
+  // an editor change that drops the cache re-loads the branch that is still open.
+  useEffect(() => {
+    expanded.forEach((key) => {
+      if (key.indexOf('site:') !== 0) return;
+      const id = Number(key.slice(5));
+      if (id && !plansBySite[id]) loadSitePlans(id);
+    });
+  }, [expanded, plansBySite, loadSitePlans]);
 
   // Build the map once.
   useEffect(() => {
@@ -1237,13 +836,10 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
           const node = members[0].get('node');
           const px = map.getPixelFromCoordinate(evt.coordinate);
           openNodeRef.current(node, px);
-        } else {
-          setPopup(null);
-          setSitePopup(null);
         }
       });
       // Close the popups when the map moves (they would otherwise float away from their marker).
-      map.on('movestart', () => { setPopup(null); setSitePopup(null); });
+
 
       // Track whether the current view is beyond every downloaded region's coverage (→ offer a
       // download of the area you're looking at).
@@ -1387,82 +983,6 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
     setPlacing(null);
   }
 
-  // A node rail row: status + name + a building selector. On a buildings-centric map a node is only
-  // ever assigned to a building (which then represents it on the map) — there is no standalone place.
-  const renderNodeRow = (n) => (
-    <li key={n.nodeId} className="fleet-map-rail-noderow">
-      <span className="rail-dot" style={{ background: nodeTone(n, nowSec).color }} />
-      <span className="rail-name" title={n.name || n.nodeId}>{n.name || n.nodeId}</span>
-      <select
-        className="rail-building-select"
-        value={n.siteId ? String(n.siteId) : ''}
-        onChange={(e) => assignBuilding(n.nodeId, Number(e.target.value) || 0)}
-        title={t('map.residesIn')}
-        aria-label={t('map.residesIn')}
-      >
-        <option value="">{t('map.noBuilding')}</option>
-        {allSites.map((s) => <option key={s.id} value={s.id}>{`${siteGlyph(s)} ${s.name}`}</option>)}
-      </select>
-    </li>
-  );
-
-  // One rail row per site. A building or outdoor area expands to the plans inside it; a point asset
-  // has none, so its caret is replaced by a spacer and its pencil renames the marker instead of
-  // opening an editor.
-  const renderSiteRow = (row) => {
-    const s = row.site;
-    const kind = normKind(s.kind);
-    const onMap = !!s.mapPlaced;
-    const worst = siteToneKey(row);
-    const expandable = hasPlans(kind);
-    const isOpen = expandable && !!expandedSites[s.id];
-    const fl = floorsBySite[s.id];
-    const placingThis = placing && placing.kind === 'site' && placing.id === s.id;
-    const camCount = row.cameras || resolvedCamKeys(row).length;
-    return (
-      <li key={`site-${s.id}`} className="fleet-map-rail-bldgwrap">
-        <div className="fleet-map-rail-siterow">
-          {expandable ? (
-            <button type="button" className="rail-expand" onClick={() => toggleSite(s.id)} aria-label={t('map.showFloors')} aria-expanded={isOpen}><Ico n={isOpen ? 'chev-down' : 'chev-right'} sz={12} /></button>
-          ) : <span className="rail-expand-spacer" />}
-          <button
-            type="button"
-            className={`fleet-map-rail-node${placingThis ? ' active' : ''}`}
-            draggable={!onMap}
-            onDragStart={!onMap ? (e) => { e.dataTransfer.setData('text/site-id', String(s.id)); e.dataTransfer.effectAllowed = 'move'; setPlacing(null); } : undefined}
-            onClick={() => (onMap ? flyToSite(s) : setPlacing(placingThis ? null : { kind: 'site', id: s.id, name: s.name, siteKind: kind }))}
-            title={onMap ? t('map.flyTo') : t('map.placeHint')}
-          >
-            <span className="rail-dot" style={{ background: TONES[worst].color }} />
-            <span className="rail-emoji" aria-hidden="true">{siteGlyph(s)}</span>
-            <span className="rail-name">{s.name}</span>
-            {camCount ? <span className="rail-count" title={t('map.cameras')}>{camCount}<Ico n="video" sz={11} /></span> : null}
-            {placingThis ? <Ico n="map-pin" sz={14} /> : (!onMap ? <span className="rail-toplace" title={t('map.notOnMap')} aria-label={t('map.notOnMap')}><Ico n="map-pin" sz={12} /></span> : null)}
-          </button>
-          <button type="button" className="rail-edit-btn" onClick={() => openEditor(s)} title={expandable ? t('bld.editAreas') : t('map.editAsset')} aria-label={expandable ? t('bld.editAreas') : t('map.editAsset')}>
-            <Ico n="edit-2" sz={13} />
-          </button>
-        </div>
-        {isOpen ? (
-          <ul className="fleet-map-rail-sublist">
-            {!fl || fl.loading ? (
-              <li className="rail-subfloor muted">{t('common.loading')}</li>
-            ) : !fl.list.length ? (
-              <li className="rail-subfloor muted">{t('map.noAreasYet')}</li>
-            ) : fl.list.map((f) => (
-              <li key={f.id} className="rail-subfloor">
-                <button type="button" className="rail-floor-btn" onClick={() => openBuilding(s, null, f.id)} title={f.name}>
-                  <Ico n="layers" sz={11} />
-                  <span className="rail-name">{f.name}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-      </li>
-    );
-  };
-
   return (
     <section className="settings-panel span-two fleet-map-panel">
       <header>
@@ -1482,47 +1002,31 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
       {state === 'nobasemap' ? <p className="settings-hint">{t('map.noBasemap')}</p> : null}
 
       <div className="fleet-map-body">
-        <aside className="fleet-map-rail">
-          <div className="fleet-map-rail-head">
-            <span>{t('map.assets')} <span className="count-badge">{sites.length}</span></span>
-            <button type="button" className="rail-addbuilding" onClick={() => setWizardOpen(true)} disabled={busy} title={t('map.addAsset')}>
-              <Ico n="plus" sz={13} /> {t('map.addAsset')}
-            </button>
-          </div>
-          {/* One scroll region for the whole rail body — see .fleet-map-rail-scroll. */}
-          <div className="fleet-map-rail-scroll">
-          {sites.length === 0 && nodesToPlace.length === 0 ? (
-            <div className="fleet-map-rail-empty"><Ico n="building" sz={22} /><span>{t('map.noAssetsYet')}</span></div>
-          ) : (
-            <>
-              {/* Assets grouped by what they ARE — buildings, outdoor areas, point assets — so a
-                  junction doesn't sit in a list headed "Buildings". A group with nothing in it is
-                  simply absent. Placed assets fly-to on click; unplaced ones enter placing mode. */}
-              {KIND_ORDER.map((k) => (sitesByKind[k].length === 0 ? null : (
-                <div key={`grp-${k}`} className="fleet-map-rail-kindgroup">
-                  <div className="fleet-map-rail-group">
-                    <Ico n={k === KIND_BUILDING ? 'building' : (k === KIND_OUTDOOR ? 'grid2' : 'map-pin')} sz={12} />
-                    {t(`bld.kindPlural.${k}`)} <span className="count-badge">{sitesByKind[k].length}</span>
-                  </div>
-                  <ul className="fleet-map-rail-list">
-                    {sitesByKind[k].map((row) => renderSiteRow(row))}
-                  </ul>
-                </div>
-              )))}
-              {/* Appliances not yet at any asset — assign each to one. */}
-              {nodesToPlace.length > 0 ? (
-                <>
-                  <div className="fleet-map-rail-group"><Ico n="cpu" sz={12} /> {t('map.nodesToPlace')} <span className="count-badge">{nodesToPlace.length}</span></div>
-                  <div className="fleet-map-rail-hint">{t('map.assignHint')}</div>
-                  <ul className="fleet-map-rail-list">
-                    {nodesToPlace.map((n) => renderNodeRow(n))}
-                  </ul>
-                </>
-              ) : null}
-            </>
-          )}
-          </div>
-        </aside>
+        <TwinTree
+          sites={sites}
+          nodes={nodes}
+          nodesById={nodesById}
+          nowSec={nowSec}
+          plansBySite={plansBySite}
+          camsByNode={camsByNode}
+          placedKeys={placedKeys}
+          expanded={expanded}
+          onToggle={toggleBranch}
+          query={treeQuery}
+          onQuery={setTreeQuery}
+          placing={placing}
+          onAddSite={() => setWizardOpen(true)}
+          onOpenSite={openSiteFromTree}
+          onOpenArea={(site, floorId) => openBuilding(site, null, floorId)}
+          onOpenCamera={openCameraFromTree}
+          onEditSite={openEditor}
+          onSelectNode={selectNodeFromTree}
+          onPlayCamera={playCamera}
+          onPlaceCamera={placeCameraFromTray}
+          onWaiveLocation={waiveLocation}
+          dropTarget={dropTarget}
+          onDropTarget={setDropTarget}
+        />
 
         <div className="fleet-map-stage">
           {placing ? (
@@ -1540,97 +1044,98 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
             onDrop={onDrop}
           />
           {outside || downloading ? (
-            <div className="fleet-map-download">
-              <span><Ico n="globe" sz={14} /> {t('map.noDataHere')}</span>
-              {canDownload ? (
-                <button type="button" onClick={downloadRegion} disabled={downloading}>
-                  {downloading ? <><Ico n="reload" sz={13} /> {t('map.downloading')}</> : <><Ico n="download" sz={13} /> {t('map.downloadRegion')}</>}
-                </button>
-              ) : (
-                <>
-                  <span className="fleet-map-download-note">{t('map.downloadNotConfigured')}</span>
-                  {!bmConfig.envManaged ? <button type="button" onClick={() => setSetupOpen(true)}><Ico n="sliders" sz={13} /> {t('map.setUp')}</button> : null}
-                </>
-              )}
-            </div>
+            <BasemapDownloadBanner
+              canDownload={canDownload}
+              downloading={downloading}
+              envManaged={bmConfig.envManaged}
+              hasTool={bmConfig.hasTool}
+              onDownload={downloadRegion}
+              onSetUp={() => setSetupOpen(true)}
+            />
           ) : null}
-          {popup ? (
-            <MapPopupFrame x={popup.x} y={popup.y}>
-              <NodeCameraPopup
-                node={popup.node}
-                nowSec={nowSec}
-                onOpenNode={onOpenNode}
-                onPlay={playCamera}
-                onOpenMedia={openMedia}
-                onLocate={locateOnPlan}
-                onAck={() => { if (notifReloadRef.current) notifReloadRef.current(); }}
-                onClose={() => setPopup(null)}
-              />
-            </MapPopupFrame>
-          ) : null}
-          {sitePopup ? (
-            <MapPopupFrame x={sitePopup.x} y={sitePopup.y}>
-              <SiteAssetPopup
-                site={sitePopup.site}
-                nodes={sitePopup.nodes}
-                nowSec={nowSec}
-                onOpenNode={(n) => { const { x, y } = sitePopup; setSitePopup(null); setPopup({ node: n, x, y }); }}
-                onClose={() => setSitePopup(null)}
-              />
-            </MapPopupFrame>
-          ) : null}
-          {drill ? (
+          {/* The selected area's plan, ON the stage. It used to be a drill-down with its own
+              header and back button covering the map; the tree is the navigation now, so the plan
+              needs no chrome beyond a breadcrumb saying where you are. */}
+          {/* The floor view, in the stage. It was already rendered here rather than in a page
+              modal; what changes is that ONE selection drives it and the inspector together, and
+              that clicking a camera marker now SELECTS the camera instead of immediately opening a
+              stream over the plan.
+
+              This is BuildingFloorView, not the smaller read-only FloorPlanView that shipped inert
+              in PR #125: that one has no walls, no 2D/3D toggle, no floor stacking and no
+              notification badges, so using it would have quietly dropped four shipped features in
+              a phase that is supposed to be about layout. */}
+          {stagePlan ? (
             <div className="fleet-map-drill">
-              <BuildingFloorView site={drill.site} floorplans={drill.floorplans} nodesById={nodesById} notifByCam={notifByCam} focusCameraId={drill.focusCameraId} focusFloorId={drill.focusFloorId} onBack={() => { const s = drill.site; setDrill(null); flyToSite(s); }} onPlay={playCamera} onRemovePlacements={removeGhostPlacements} onEdit={openEditor} />
+              <BuildingFloorView
+                site={stagePlan.site}
+                floorplans={stagePlan.plans}
+                nodesById={nodesById}
+                notifByCam={notifByCam}
+                focusCameraId={sel && sel.type === 'camera' ? sel.cameraId : undefined}
+                focusFloorId={sel && sel.floorId}
+                onBack={() => setSel(null)}
+                onPlay={playCamera}
+                onSelectCamera={(payload) => setSel({
+                  type: 'camera',
+                  nodeId: payload.nodeId,
+                  cameraId: payload.cameraId,
+                  name: payload.name,
+                  siteId: stagePlan.site.id,
+                  siteName: stagePlan.site.name,
+                  floorId: payload.floorId,
+                  floorName: payload.floorName,
+                })}
+                onRemovePlacements={removeGhostPlacements}
+                onEdit={openEditor}
+              />
             </div>
           ) : null}
         </div>
+
+        {/* One contextual card for whatever is selected, beside the thing it describes - not a
+            popup floating over it. */}
+        {/* NOT .mw-inspector: that rule sets a physical border-left for its own grid layout, loads
+            after this file's stylesheet, and would win - putting the border on the wrong edge in
+            Arabic. This pane supplies its own logical border instead. */}
+        <aside className="fleet-map-inspector">
+          <Inspector
+            sel={sel}
+            sites={sites}
+            nodesById={nodesById}
+            plansBySite={plansBySite}
+            placements={placements}
+            camsByNode={camsByNode}
+            nowSec={nowSec}
+            onPlay={playCamera}
+            onOpenMedia={openMedia}
+            onLocate={locateOnPlan}
+            onOpenArea={(site, floorId) => openBuilding(site, null, floorId)}
+            onEdit={openEditor}
+            onOpenNode={onOpenNode}
+            onWaive={waiveLocation}
+          />
+        </aside>
       </div>
       {attribution ? <div className="fleet-map-attribution">{attribution}</div> : null}
 
       {setupOpen ? (
-        <div className="fd-overlay" role="dialog" aria-label={t('map.basemapSetup')}>
-          <div className="site-dialog">
-            <div className="site-dialog-title"><Ico n="globe" sz={16} /> {t('map.basemapSetup')}</div>
-            <p className="settings-hint" style={{ margin: 0 }}>{t('map.basemapSetupHint')}</p>
-            <label className="site-dialog-field">
-              <span>{t('map.sourceUrl')}</span>
-              <input ref={sourceInputRef} type="text" defaultValue={bmConfig.source || ''} placeholder="https://build.protomaps.com/20260719.pmtiles" />
-            </label>
-            <div className={`bm-tool-status ${bmConfig.hasTool ? 'ok' : 'bad'}`}>
-              <Ico n={bmConfig.hasTool ? 'check-ok' : 'warning'} sz={13} /> {bmConfig.hasTool ? t('map.toolInstalled') : t('map.toolMissing')}
-            </div>
-            <div className="site-dialog-actions">
-              <button type="button" className="quiet" onClick={() => setSetupOpen(false)}>{t('map.cancel')}</button>
-              <button type="button" onClick={() => saveSource((sourceInputRef.current && sourceInputRef.current.value.trim()) || '')}>{t('fd.save')}</button>
-            </div>
-          </div>
-        </div>
+        <BasemapSetupDialog config={bmConfig} onSave={saveSource} onCancel={() => setSetupOpen(false)} />
       ) : null}
 
       {wizardOpen ? (
         <AssetWizard busy={busy} onCreate={createBuilding} onCancel={() => setWizardOpen(false)} />
       ) : null}
 
-      {renameSite ? (
-        <SiteDialog
-          initialName={renameSite.name}
-          initialIcon={renameSite.icon}
-          kind={renameSite.kind}
-          busy={busy}
-          onSave={(name, icon) => saveSiteMeta(renameSite, name, icon)}
-          onDelete={() => deleteSiteMeta(renameSite)}
-          onCancel={() => setRenameSite(null)}
-        />
-      ) : null}
-
       {editorSite ? (
         <BuildingEditorDialog
           site={editorSite}
           nodes={nodes}
+          initialPick={editorPick ? editorPick.pick : undefined}
+          initialFloorId={editorPick && editorPick.floorId ? editorPick.floorId : undefined}
           onToast={onToast}
-          onClose={() => { const id = editorSite.id; setEditorSite(null); setFloorsBySite((m) => { const c = { ...m }; delete c[id]; return c; }); if (siteReloadRef.current) siteReloadRef.current(); }}
-          onChanged={() => { setFloorsBySite((m) => { const c = { ...m }; delete c[editorSite.id]; return c; }); if (siteReloadRef.current) siteReloadRef.current(); }}
+          onClose={() => { const id = editorSite.id; setEditorSite(null); setEditorPick(null); setPlansBySite((m) => { const c = { ...m }; delete c[id]; return c; }); if (siteReloadRef.current) siteReloadRef.current(); if (reloadNodes) reloadNodes(); }}
+          onChanged={() => { setPlansBySite((m) => { const c = { ...m }; delete c[editorSite.id]; return c; }); if (siteReloadRef.current) siteReloadRef.current(); if (reloadPlacedRef.current) reloadPlacedRef.current(); }}
         />
       ) : null}
 

@@ -241,14 +241,23 @@ curl -b cookies.txt https://localhost:3002/api/basemap/info
 #  "regions":[{"name":"region.pmtiles","bounds":[...],"sizeBytes":...}]}
 ```
 
-**Optional: download a region from the UI instead of the CLI.** Set
-`MYSELIASAN_BASEMAP_SOURCE` to a remote pmtiles URL (and make sure the `pmtiles` binary is on
-`PATH`, or set `MYSELIASAN_PMTILES_BIN` to its path) before starting MySeliaSan, or configure the
-same source at runtime via `PUT /api/basemap/config` (`{"source":"https://..."}`, refused if the
-env var is set). An operator can then draw a bounding box in the Map UI and
-`POST /api/basemap/download` extracts just that region (capped at 25°×25°, zoom ≤14) without
-touching a terminal. This is the **one** action in MySeliaSan that reaches the internet; leaving
-both unset keeps the app fully offline exactly as before.
+**Optional: download a region from the UI instead of the CLI.** This is a **two-step** flow —
+configuring a source downloads nothing by itself, and it's easy to read the first step as a dead
+end if you don't expect a second one:
+
+1. Point the server at a source: set `MYSELIASAN_BASEMAP_SOURCE` to a remote pmtiles URL (and make
+   sure the `pmtiles` binary is on `PATH`, or set `MYSELIASAN_PMTILES_BIN` to its path) before
+   starting MySeliaSan, or configure the same source at runtime from the Map UI — the "No map data
+   for this area" banner's **Set up** button opens a dialog to paste the URL and **Save source**
+   (`PUT /api/basemap/config`, `{"source":"https://..."}`, refused if the env var is set).
+2. Download a region: once a source is configured, the banner changes to offer **Download this
+   region**, which extracts the bounding box of whatever area is currently panned into view
+   (`POST /api/basemap/download`, capped at 25°×25°, zoom ≤14) — there is no separate
+   bounding-box-drawing step.
+
+Both steps need the `pmtiles` binary on the server; if it isn't installed, the banner shows that
+instead of offering a download that would just fail. This is the **one** action in MySeliaSan that
+reaches the internet; leaving both unset keeps the app fully offline exactly as before.
 
 Floor-plan images for the indoor view need no separate provisioning step. A building's areas are
 created from the Map's `+ Add building` wizard (or the building editor's "add an area" button)

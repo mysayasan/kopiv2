@@ -80,6 +80,16 @@ type ManagedNode struct {
 	// pin. A node with a SiteId is NOT drawn as its own map pin — only a building-less node is
 	// (a standalone recorder, an IoT hub in the field, an off-site aggregator).
 	SiteId int64 `json:"siteId" form:"siteId" query:"siteId"`
+	// NoFixedLocation records that an operator has DECIDED this appliance has no place on any
+	// plan — a recorder in a colo rack, a hosted hub, a unit on a bench. It is not the same as
+	// SiteId being 0, which only means nobody has said yet.
+	//
+	// It exists because pinning the box is otherwise required: without an explicit way to say
+	// "nowhere, on purpose", an off-site recorder would sit in the map's "not placed yet" tray
+	// for ever, and a tray that can never be emptied is a tray operators learn to ignore — which
+	// is the exact failure the tray exists to prevent. Setting it clears SiteId: a node cannot
+	// both be somewhere and be deliberately nowhere.
+	NoFixedLocation bool `json:"noFixedLocation" form:"noFixedLocation" query:"noFixedLocation"`
 	// OwnerRoleId is the myseliasan RoleId that adopted this node. That role gets full
 	// (admin) access to the node by default; other roles need an explicit
 	// NodeAccessGrant. 0 means legacy/unknown owner (no default access).

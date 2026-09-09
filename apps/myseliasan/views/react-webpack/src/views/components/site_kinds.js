@@ -15,11 +15,18 @@ export function normKind(kind) {
   return kind === KIND_OUTDOOR || kind === KIND_POINT ? kind : KIND_BUILDING;
 }
 
-// hasPlans — a point asset owns no floor plans, so there is nothing to drill into or author.
-export const hasPlans = (kind) => normKind(kind) !== KIND_POINT;
+// hasDrawablePlan — mirrors entities.HasDrawablePlan. A point asset has no surface an operator
+// would draw: a junction is a pole, not a floor. It DOES own one implicit area underneath (the
+// server makes it — see ISiteService.EnsurePointArea), because that is what its cameras are
+// pinned to. So this answers "is there a plan worth authoring or printing", never "does this site
+// own an area". Nothing may read it as "this site cannot hold a camera".
+export const hasDrawablePlan = (kind) => normKind(kind) !== KIND_POINT;
 // multiPlan — only a building has more than one plan. An outdoor area is exactly one ground
 // surface, which is why its editor never offers "add area".
 export const multiPlan = (kind) => normKind(kind) === KIND_BUILDING;
+// showsAreaBar — a point asset has exactly one area and it is implicit, so there is nothing to
+// switch between and its name ("At this point") is noise. Everything else shows its areas.
+export const showsAreaBar = (kind) => normKind(kind) !== KIND_POINT;
 
 // Per-kind glyph palettes. Emoji so a marker needs no image asset and renders natively on the
 // OpenLayers canvas — the same reason the building palette was emoji to begin with, and it keeps

@@ -5,7 +5,7 @@ import { api, apiBase, csrfToken } from '../lib/helpers';
 import { nodeTone } from '../lib/fleet_status';
 import { FloorEditor } from './floor_editor';
 import { SiteDialog } from './asset_wizard';
-import { multiPlan, normKind, siteGlyph } from './site_kinds';
+import { multiPlan, normKind, showsAreaBar, siteGlyph } from './site_kinds';
 import { nodeKindOf } from './layout';
 
 // BuildingEditorDialog is the authoring surface for ONE building, opened as a modal over the
@@ -37,7 +37,11 @@ function AreaTab({ floor, active, onOpen, onRename }) {
 }
 AreaTab.propTypes = { floor: PropTypes.object, active: PropTypes.bool, onOpen: PropTypes.func, onRename: PropTypes.func };
 
-export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onChanged }) {
+// initialPick / initialFloorId let a caller open the editor ALREADY holding something to place -
+// which is what dragging a camera out of the map's "not placed yet" tray onto an area does. The
+// operator's next click lands it; without this they would arrive at a plan and have to find the
+// same camera again in the palette they just dragged it from.
+export function BuildingEditorDialog({ site, nodes = [], initialPick, initialFloorId, onToast, onClose, onChanged }) {
   const t = useT();
   const changedRef = useRef(onChanged); changedRef.current = onChanged;
   const notifyChanged = () => { if (changedRef.current) changedRef.current(); };
@@ -50,7 +54,7 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
   const [expanded, setExpanded] = useState({});
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  const [placing, setPlacing] = useState(null); // { nodeId, cameraId, name }
+  const [placing, setPlacing] = useState(initialPick || null); // { nodeId, cameraId, name }
   const [placedIndex, setPlacedIndex] = useState({}); // "nodeId::cameraId" -> { siteName, floorName, floorId, … }
   const [editSite, setEditSite] = useState(false);
   const fileInputRef = useRef(null);
@@ -60,6 +64,10 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
   const nowSec = Math.floor(Date.now() / 1000);
   // Multi-plan affordances are a building's alone (see site_kinds).
   const canAddAreas = multiPlan(building.kind);
+  // A point asset has exactly one area and the operator never named it, so the bar would be a row
+  // of chrome around a label ("At this point") that means nothing to them. Its cameras still drop
+  // onto that area from the palette exactly as anywhere else.
+  const areaBar = showsAreaBar(building.kind);
 
   const nodesById = {};
   for (const n of nodes) nodesById[n.nodeId] = n;
@@ -71,7 +79,8 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
       list.sort((a, b) => (a.ordinal - b.ordinal) || (a.id - b.id));
       setFloors(list);
       setActiveFloor((cur) => {
-        const want = selectId || (cur && cur.id);
+        // initialFloorId only steers the FIRST load - after that the operator's own tab choice wins.
+        const want = selectId || (cur && cur.id) || initialFloorId;
         return list.find((f) => f.id === want) || list[0] || null;
       });
       setLoaded(true);
@@ -79,7 +88,7 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
       return list;
     } catch (_) { setFloors([]); setActiveFloor(null); setLoaded(true); return []; }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [building.id]);
+  }, [building.id, initialFloorId]);
 
   const loadPlacements = useCallback(async (floorId) => {
     if (!floorId) { setPlacements([]); return; }
@@ -334,6 +343,7 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
           <button type="button" className="icon-button bld-head-close" onClick={onClose} aria-label={t('bld.done')} title={t('bld.done')}><Ico n="x" sz={15} /></button>
         </header>
 
+        {areaBar ? (
         <div className="bld-areabar" role="tablist" aria-label={t('bld.areas')}>
           {floors.map((f) => (
             <AreaTab key={f.id} floor={f} active={activeFloor && activeFloor.id === f.id} onOpen={setActiveFloor} onRename={renameArea} />
@@ -349,6 +359,7 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
             </>
           ) : null}
         </div>
+        ) : null}
 
         <div className="bld-body">
           <aside className="bld-palette">
@@ -474,6 +485,8 @@ export function BuildingEditorDialog({ site, nodes = [], onToast, onClose, onCha
 BuildingEditorDialog.propTypes = {
   site: PropTypes.object,
   nodes: PropTypes.array,
+  initialPick: PropTypes.object,
+  initialFloorId: PropTypes.number,
   onToast: PropTypes.func,
   onClose: PropTypes.func,
   onChanged: PropTypes.func,

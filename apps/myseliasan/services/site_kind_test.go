@@ -64,7 +64,9 @@ func TestCreateSiteStoresKind(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := &fakeSiteRepo{}
-			svc := &siteService{sites: repo}
+			// A point asset gets its implicit area on create, so the service needs a floor repo
+			// and somewhere to write the canvas — see EnsurePointArea.
+			svc := &siteService{sites: repo, floors: &fakePointFloorRepo{}, dir: t.TempDir()}
 			if _, err := svc.CreateSite(context.Background(), "Somewhere", "", "🚦", tc.in, 7); err != nil {
 				t.Fatalf("CreateSite: %v", err)
 			}
@@ -80,7 +82,7 @@ func TestCreateSiteStoresKind(t *testing.T) {
 
 func TestUpdateSiteKeepsKindWhenEchoedBack(t *testing.T) {
 	repo := &fakeSiteRepo{}
-	svc := &siteService{sites: repo}
+	svc := &siteService{sites: repo, floors: &fakePointFloorRepo{}, dir: t.TempDir()}
 	created, err := svc.CreateSite(context.Background(), "Central Park", "", "🌳", entities.SiteKindOutdoor, 7)
 	if err != nil {
 		t.Fatalf("CreateSite: %v", err)
@@ -98,16 +100,16 @@ func TestUpdateSiteKeepsKindWhenEchoedBack(t *testing.T) {
 	}
 }
 
-func TestHasPlansOnlyExcludesPointAssets(t *testing.T) {
-	if !entities.HasPlans(entities.SiteKindBuilding) || !entities.HasPlans(entities.SiteKindOutdoor) {
+func TestHasDrawablePlanOnlyExcludesPointAssets(t *testing.T) {
+	if !entities.HasDrawablePlan(entities.SiteKindBuilding) || !entities.HasDrawablePlan(entities.SiteKindOutdoor) {
 		t.Fatal("buildings and outdoor areas own plans")
 	}
-	if entities.HasPlans(entities.SiteKindPoint) {
+	if entities.HasDrawablePlan(entities.SiteKindPoint) {
 		t.Fatal("a point asset has no plan surface")
 	}
 	// An empty kind is a building (every site that predates the field), so it must own plans —
 	// otherwise the existing fleet's floor plans would become unreachable.
-	if !entities.HasPlans("") {
+	if !entities.HasDrawablePlan("") {
 		t.Fatal("a kindless (legacy) site must still own plans")
 	}
 }

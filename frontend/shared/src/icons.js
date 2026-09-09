@@ -5,6 +5,10 @@
 export const icoSvg = {
   monitor:     '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>',
   camera:      '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>',
+  // A single-board computer: the board, its SoC, and a pin header along the top edge. This is
+  // what a fleet APPLIANCE actually is - a mini PC or a Pi in a box - as opposed to `cpu`,
+  // which is a bare chip, or `video`, which is a camera and is what the appliance RECORDS.
+  board:       '<rect x="2" y="6" width="20" height="12" rx="2"/><rect x="7" y="10.5" width="6" height="5" rx="1"/><path d="M6.5 6v2.5M9.5 6v2.5M12.5 6v2.5M15.5 6v2.5"/>',
   cpu:         '<rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/>',
   film:        '<rect x="2" y="2" width="20" height="20" rx="2"/><path d="M7 2v20M17 2v20M2 12h20M2 7h5M2 17h5M17 17h5M17 7h5"/>',
   sliders:     '<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>',

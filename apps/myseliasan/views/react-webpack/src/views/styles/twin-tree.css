@@ -1,0 +1,249 @@
+/* TwinTree - the fleet map's rail (see components/map/twin_tree.js).
+
+   Two trees in one scroller: Places (the twin) and Not placed yet (the tray).
+   Indentation IS the containment model here, so every inset uses LOGICAL
+   properties (padding-inline-start / border-inline-start): in Arabic the tree
+   has to nest from the right, and a physical `padding-left` renders it
+   inside-out. Its own file rather than more of fleet-map.css, because the rail
+   is the part of this page being replaced and it should be liftable in one go. */
+
+.fleet-map-rail.tt {
+  /* Wider than the old flat rail: rows now go four deep (place > area > camera)
+     and still have to show a name, a recorder tag and a count without wrapping. */
+  flex: 0 0 288px;
+}
+
+.tt-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-faint);
+  flex: 0 0 auto;
+}
+.tt-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--text-primary);
+  outline: none;
+}
+.tt-search input::placeholder { color: var(--text-faint); }
+.tt-search-x {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 2px;
+  color: var(--text-faint);
+  display: inline-flex;
+  border-radius: 4px;
+}
+.tt-search-x:hover { color: var(--text-primary); background: var(--bg-surface); }
+
+.tt-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-bottom: 8px;
+}
+
+/* One row shape at every depth: caret, dot/glyph, name, then trailing chips and
+   actions. Keeping it identical all the way down is what lets the indentation -
+   rather than per-level styling - carry the hierarchy. */
+.tt-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 4px;
+  min-height: 26px;
+  color: var(--text-secondary);
+}
+.tt-row:hover { background: var(--bg-surface); }
+.tt-row.placing { background: var(--accent-bg); }
+
+/* A camera being dragged out of the tray. Only rows that can actually take the drop light up, so
+   the highlight is a promise the drop will keep. */
+.tt-draggable { cursor: grab; }
+.tt-draggable:active { cursor: grabbing; }
+.tt-row.droptarget {
+  background: var(--accent-bg);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  border-radius: 5px;
+}
+.tt-row.droptarget .tt-name { color: var(--accent); }
+
+.tt-root {
+  font-weight: 600;
+  color: var(--text-primary);
+  padding-top: 7px;
+  padding-bottom: 5px;
+  border-top: 1px solid var(--border-subtle);
+}
+.tt-scroll > .tt-root:first-child { border-top: 0; }
+
+.tt-caret {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+  border-radius: 3px;
+}
+.tt-caret:hover { color: var(--text-primary); background: var(--bg-subtle); }
+/* A leaf has no caret but must still line up with the rows that do. */
+.tt-caret-gap { width: 16px; flex: 0 0 auto; }
+
+.tt-dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
+.tt-glyph { font-size: 0.9rem; line-height: 1; flex: 0 0 auto; }
+
+.tt-name {
+  /* The name is the primary information in the row, so it keeps a floor it cannot be squeezed
+     below - the recorder tag beside it gives way first (see .tt-tag). */
+  flex: 1 1 auto;
+  min-width: 84px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+  text-align: start;
+  color: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tt-name:hover { color: var(--accent); }
+.tt-name.dim { color: var(--text-muted); }
+/* A name that is a <span> is a label, not a control - it must not look clickable. */
+span.tt-name { cursor: default; }
+span.tt-name:hover { color: inherit; }
+
+/* The recorder tag beside a camera. Deliberately quiet: which NVR records a
+   camera is context, not the camera's identity, and one recorder legitimately
+   appears beside cameras in several different places. */
+.tt-tag {
+  /* Shrinks BEFORE the name does: which recorder a camera is on is context, and losing a few
+     characters of it costs far less than losing the end of "Reception desk". Every tag carries a
+     title attribute, so whatever the ellipsis eats is still one hover away. */
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 0.62rem;
+  color: var(--text-faint);
+  max-width: 92px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tt-tag.warn { color: var(--danger-text); }
+
+.tt-chip {
+  flex: 0 0 auto;
+  min-width: 18px;
+  text-align: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--bg-body);
+  border: 1px solid var(--border-subtle);
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.tt-chip.warn { background: var(--accent-bg); border-color: transparent; color: var(--accent); }
+.tt-chip.todo { background: var(--danger-bg); border-color: transparent; color: var(--danger-text); }
+
+/* Row actions stay hidden until the row is hovered or the button itself takes
+   keyboard focus, so a deep tree does not read as a wall of icons. The roots
+   keep theirs visible: "add a place" must be findable without hunting. */
+.tt-act {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  color: var(--text-faint);
+  display: inline-flex;
+  visibility: hidden;
+}
+.tt-row:hover .tt-act,
+.tt-act:focus-visible { visibility: visible; }
+.tt-root .tt-act { visibility: visible; }
+.tt-act:hover { color: var(--accent); background: var(--bg-subtle); }
+
+/* The indent, and the guide line that makes depth readable at a glance. */
+.tt-children {
+  padding-inline-start: 14px;
+  margin-inline-start: 10px;
+  border-inline-start: 1px solid var(--border-subtle);
+}
+
+/* A tray row carries up to three pieces of state at once — cameras unknown, location not set, no
+   fixed location — and those tags ARE the row's content, not decoration beside a name. Squeezing
+   them into the leftover width turns every one into "camera…  locatio…  no fixe…", which says
+   nothing. Let them wrap onto a second line and drop the truncation cap instead. */
+.tt-row.tt-trayrow { flex-wrap: wrap; row-gap: 2px; }
+.tt-row.tt-trayrow .tt-tag { max-width: none; }
+/* The wrapped tags line up under the name rather than under the caret. */
+.tt-row.tt-trayrow > .tt-tag:not(:nth-child(-n + 4)) { margin-inline-start: 22px; }
+
+.tt-empty {
+  padding: 6px 10px;
+  font-size: 0.72rem;
+  color: var(--text-faint);
+  font-style: italic;
+}
+.tt-empty.sm { font-size: 0.68rem; padding: 3px 10px; }
+
+/* ---------------------------------------------------------------------------
+   The inspector pane (third column). Its CARDS come from map-workspace.css's
+   .mw-insp-* family, written for exactly this and inert until now; only the
+   pane itself needs sizing here, because this page keeps its own flex body
+   rather than that file's three-column grid.
+   --------------------------------------------------------------------------- */
+
+.fleet-map-inspector {
+  flex: 0 0 320px;
+  border: 1px solid var(--border-panel);
+  border-radius: 8px;
+  overflow: hidden;
+  /* The pane is a column of its own so a long event list scrolls inside the
+     card instead of stretching the whole page. */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* map-workspace.css gives .mw-inspector a physical left border for its grid layout. This pane
+     is a rounded card in a flex row and must mirror in Arabic, so it overrides that with the
+     logical property - a physical border-left would sit on the wrong edge in RTL. */
+  border-left: 0;
+  border-inline-start: 1px solid var(--border-panel);
+}
+
+/* The plan on the stage carries a breadcrumb instead of the drill-down's old
+   header and back button — the tree is the navigation now. */
+.fleet-map-drill { display: flex; flex-direction: column; background: var(--bg-body); }
+.fleet-map-drill .mw-stage { flex: 1 1 auto; }
+
+/* Below the map's stacked breakpoint the inspector would squeeze the plan to
+   nothing, so it drops under the stage at full width. */
+@media (max-width: 1200px) {
+  .fleet-map-inspector { flex: 1 1 100%; max-height: 340px; }
+}
+
+/* The floor view's toolbar was written for a stage that spanned the page. With the inspector
+   taking a third column beside it, the bar can run out of room and clip its own controls - the
+   2D/3D toggle was the first casualty. Let it wrap rather than hide a control that is still
+   there and still clickable, just invisible. */
+.fleet-map-drill .floor-view-bar { flex-wrap: wrap; row-gap: 6px; }

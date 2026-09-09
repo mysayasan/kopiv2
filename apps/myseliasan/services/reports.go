@@ -490,8 +490,40 @@ func (r *reportService) Inventory(ctx context.Context, now time.Time, siteID int
 			}, rows)
 		}
 
-		if !entities.HasPlans(s.Kind) {
-			doc.Note("This is a point asset — it holds no floor plans; its cameras reach it through the owning node.")
+		// A point asset has no plan worth printing — a junction is a pole, not a floor — but it does
+		// hold cameras, pinned to its one implicit area. List those instead of a blank canvas.
+		if !entities.HasDrawablePlan(s.Kind) {
+			doc.H2("Cameras at this point")
+			pointPlans, _ := r.sites.SiteFloorplans(ctx, s.Id)
+			var pinned []*entities.NodePlacement
+			for _, fp := range pointPlans {
+				pinned = append(pinned, fp.Placements...)
+			}
+			if len(pinned) == 0 {
+				doc.Empty("No cameras have been placed at this point asset.")
+				continue
+			}
+			rows := make([][]string, 0, len(pinned))
+			for _, pl := range pinned {
+				name := pl.LastKnownName
+				if name == "" {
+					name = pl.CameraId
+				}
+				kind := "Camera"
+				if pl.CameraId == "" {
+					kind = "Node"
+				}
+				fov := "—"
+				if pl.Fov > 0 {
+					fov = fmt.Sprintf("%.0f° @ %.0f°", pl.Fov, pl.Heading)
+				}
+				rows = append(rows, []string{name, kind, fov})
+			}
+			doc.Table([]report.Column{
+				{Header: "Placement", Width: 0},
+				{Header: "Type", Width: 24, Align: "C"},
+				{Header: "Coverage", Width: 40},
+			}, rows)
 			continue
 		}
 

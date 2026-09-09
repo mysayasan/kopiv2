@@ -18,7 +18,7 @@ All routes require a myseliasan session (`auth.Middleware` + `session.Middleware
 |---|---|---|
 | GET | `/api/sites` | List all sites (`Ordinal` then `Id` ascending). |
 | POST | `/api/sites` | Create a site. Body: `{name, description, icon, kind}`. `name` is required; `icon` is an operator-chosen emoji glyph shown on the geo-map marker (empty = that kind's default glyph, rendered client-side); `kind` is `building`/`outdoor`/`point` (`entities.NormalizeSiteKind` — anything unrecognised or absent becomes `building`, see `entities/site.go.md`'s "Site kinds"). |
-| GET | `/api/sites/overview` | Compact per-site rollup for the geographic map: `[]SiteOverview` (`site`, `nodeIds` — every node with a camera physically placed in this site, `cameraKeys` — `"<nodeId>::<cameraId>"` per camera, `cameras`, `floors`). The marker takes the *worst* status among `nodeIds` and attributes unread notifications **per camera** (`cameraKeys`), not per whole node, since one node can record cameras in several sites. A **point** kind site (no plans) has no `cameraKeys`/`floors` of its own here — the frontend resolves its cameras through the node(s) assigned to it via `SiteId` instead (`fleet_map.js`). Registered before the `/{id}` routes (literal path) so it is never captured as an id. |
+| GET | `/api/sites/overview` | Compact per-site rollup for the geographic map: `[]SiteOverview` (`site`, `nodeIds` — every node with a camera physically placed in this site, `cameraKeys` — `"<nodeId>::<cameraId>"` per camera, `cameras`, `floors`). The marker takes the *worst* status among `nodeIds` and attributes unread notifications **per camera** (`cameraKeys`), not per whole node, since one node can record cameras in several sites. A **point** kind site reports `cameraKeys`/`floors` like any other: it owns one implicit, image-less area (`ISiteService.EnsurePointArea`) that its cameras are pinned to. It previously had no area at all, and the frontend resolved its cameras as *every camera on every node assigned to it* — wrong whenever one recorder feeds more than one place, which is the normal case. Registered before the `/{id}` routes (literal path) so it is never captured as an id. |
 | PUT | `/api/sites/{id}` | Update a site's `{name, description, icon, kind, ordinal}`. |
 | DELETE | `/api/sites/{id}` | Delete a site and cascade-delete its floor plans (and their encrypted images + placements — see `DeleteFloor` below). |
 | PUT | `/api/sites/{id}/position` | Set a building's geographic coordinates from an operator dragging its marker: `{lat, lon, placed}` — the exact counterpart of `PUT /api/nodes/{id}/position`. `placed` defaults to `true` when omitted (the common drag); an explicit `false` unplaces it (coordinates then unchecked). Otherwise `lat`/`lon` are validated to `[-90,90]`/`[-180,180]`. Returns the updated `Site`; 400 on an unknown site, out-of-range coordinates, or bad body. |
@@ -85,14 +85,15 @@ All routes require a myseliasan session (`auth.Middleware` + `session.Middleware
   geo-map's marker (its own `Lat`/`Lon`/`MapPlaced` + `Icon` + `Kind`), shaped on the map by its
   `Kind` (disc for a building, square for an outdoor area, diamond for a point asset —
   `markerShape` in `fleet_map.js`), and `ManagedNode` separately carries a `SiteId` — the site the
-  *appliance itself* resides in, set via `PUT /api/nodes/{id}/building` (`apis/nodes.go.md`). The
-  frontend never draws a node its own pin, assigned or not — a node with no `SiteId` yet is listed
-  in the rail's "Appliances" section to be assigned rather than placed standalone on the map (the
-  old building-less node pin, drag-to-place, and Nodes-layer toggle are gone). A **building** or
-  **outdoor** site's cameras are anchored by their floor-plan placements (`GET
-  /api/sites/{id}/floorplans`); a **point** site has no plan at all — clicking its marker instead
-  opens the device card of the node(s) assigned to it via `SiteId` (or a chooser when several
-  appliances share the point, or an empty state when none do), resolved client-side rather than
-  through a floor-plan query. `ManagedNode.Lat`/`Lon`/`MapPlaced` and
+  *appliance itself* resides in. `SiteId` is no longer set by a dedicated route: it is written by
+  `ISiteService.AddPlacement`/`DeletePlacement` when the operator pins or unpins the appliance's
+  own marker on a plan (a placement with an empty `CameraId`), via the `SetNodeSiteBinder` seam
+  into `INodeRegistry.UpdateNodeSite` (see `services/sites.go.md`, `apis/nodes.go.md`). The
+  frontend never draws a node its own pin — an appliance whose box has no pin yet is listed in the
+  map's "Not placed yet" tray, alongside the cameras that hold no pin, until it is either pinned or
+  marked `NoFixedLocation` (the old building-less node pin, drag-to-place, and Nodes-layer toggle
+  are gone, and so is the per-node assign dropdown). EVERY kind of site anchors its cameras by
+  floor-plan placements (`GET /api/sites/{id}/floorplans`), point assets included — a junction's
+  cameras are the ones pinned on it, never an inferred list borrowed from an appliance. `ManagedNode.Lat`/`Lon`/`MapPlaced` and
   `PUT /api/nodes/{id}/position` still exist at the API layer (unchanged) but are no longer driven
   by any reachable UI action. See `entities/managed_node.go.md`.

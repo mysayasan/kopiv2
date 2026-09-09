@@ -4,7 +4,7 @@ import { useManual } from '@shared/Manual';
 import { BrandLogo } from './layout';
 import { FormBusyOverlay, Message } from './ui';
 import { api, apiBase } from '../lib/helpers';
-import { KIND_ORDER, KIND_ICO, normKind, defaultIconFor, hasPlans, multiPlan } from './site_kinds';
+import { KIND_ORDER, KIND_ICO, normKind, defaultIconFor, hasDrawablePlan, multiPlan } from './site_kinds';
 
 // First-run setup wizard for the control plane. myseliasan carries the heaviest setup
 // burden in the suite — sign-in, a site to put on the map, an adopted node, and the
@@ -374,7 +374,7 @@ function SiteStep({ busy, setBusy, setMessage, onToast, done, setDone }) {
       const r = await api('/api/sites', { method: 'POST', body: JSON.stringify({ name: trimmed, icon, kind: normKind(kind) }), noRedirect: true });
       if (!r.ok || !r.body || !r.body.id) throw new Error(r.message || t('setup.siteFailed'));
       // A point asset has no surface to author, so it gets no areas at all.
-      if (hasPlans(kind)) {
+      if (hasDrawablePlan(kind)) {
         const area = multiPlan(kind) ? t('bld.areaMain') : t('bld.areaGrounds');
         await api(`/api/sites/${r.body.id}/areas`, { method: 'POST', body: JSON.stringify({ name: area, ordinal: 0 }), noRedirect: true });
       }

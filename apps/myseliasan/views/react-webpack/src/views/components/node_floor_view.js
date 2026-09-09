@@ -6,6 +6,7 @@ import { NodeCameraTile } from './node_manager';
 import { PTZRing } from './nodecam/ptz';
 import { nodeTone, TONES } from '../lib/fleet_status';
 import { carveSeg, rectCenter, rectSize } from './plan_geometry';
+import { showsAreaBar, siteGlyph } from './site_kinds';
 
 // FloorPlanGrid draws the AUTHORED geometry (walls, openings, stairs, raised floors, parking) over
 // the plan image in the read-only 2D view. The editor stores this as vectors in floor.grid and only
@@ -559,7 +560,7 @@ export function NodeFloorView({ node, floorplans, focusCameraId, onBack, onPlay 
                 onClick={(e) => { if (isCam && onPlay) onPlay({ nodeId: node.nodeId, cameraId: p.cameraId, name: label, ptzSupported: ptzByCam[String(p.cameraId)] ?? !!p.ptzSupported }, e.clientX, e.clientY); }}
                 title={label}
               >
-                <Ico n={isCam ? 'video' : 'cpu'} sz={13} />
+                <Ico n={isCam ? 'video' : 'board'} sz={13} />
                 <span className="floor-marker-label">{label}</span>
               </button>
             );
@@ -584,7 +585,11 @@ NodeFloorView.propTypes = {
 // counterpart to NodeFloorView — a floor plan is a building, and a building's cameras may belong to
 // several nodes, so each marker/coverage-wedge is coloured by ITS OWN owning node's status and its
 // live view streams over THAT node's tunnel. This is what fixes "the node isn't the building".
-export function BuildingFloorView({ site, floorplans, nodesById = {}, notifByCam = {}, focusCameraId, focusFloorId, onBack, onPlay, onRemovePlacements, onEdit }) {
+// onSelectCamera (optional): when given, clicking a camera marker SELECTS it rather than opening
+// a live window. That is what the map wants now - the inspector beside the plan describes the
+// camera and offers "Open live view" as a deliberate second action, instead of a click on a pin
+// immediately starting a stream. Callers that do not pass it keep the old click-to-play.
+export function BuildingFloorView({ site, floorplans, nodesById = {}, notifByCam = {}, focusCameraId, focusFloorId, onBack, onPlay, onSelectCamera, onRemovePlacements, onEdit }) {
   const t = useT();
   const focusIdx = useMemo(() => {
     // Open on the AREA that was asked for — by floor id first (a rail click names the area), then by
@@ -711,7 +716,9 @@ export function BuildingFloorView({ site, floorplans, nodesById = {}, notifByCam
         </button>
         <span className="floor-view-title">
           <span className="rail-dot" style={{ background: siteTone.color }} />
-          <span className="floor-view-emoji">{site.icon || '🏢'}</span> {site.name} · {floor.name}
+          {/* A point asset's single area is implicit and unnamed by the operator, so the title is
+              the junction/gate alone — "Main gate · At this point" reads as a bug, not a location. */}
+          <span className="floor-view-emoji">{siteGlyph(site)}</span> {site.name}{showsAreaBar(site.kind) ? ` · ${floor.name}` : ''}
         </span>
         {floorplans.length > 1 ? (
           <div className="floor-view-switch">
@@ -788,10 +795,10 @@ export function BuildingFloorView({ site, floorplans, nodesById = {}, notifByCam
                 type="button"
                 className={`floor-marker${isCam ? ' cam' : ' node'}${focused ? ' focus' : ''}${ghost ? ' ghost' : ''}${camOffline ? ' cam-offline' : ''}`}
                 style={{ ...markerPos(p, w, h), borderColor: border }}
-                onClick={(e) => { if (isCam && !ghost && onPlay) onPlay({ nodeId: p.nodeId, cameraId: p.cameraId, name: label, ptzSupported: ptz }, e.clientX, e.clientY); }}
+                onClick={(e) => { if (!isCam || ghost) return; const payload = { nodeId: p.nodeId, cameraId: p.cameraId, name: label, ptzSupported: ptz, floorId: floor.id, floorName: floor.name }; if (onSelectCamera) onSelectCamera(payload); else if (onPlay) onPlay(payload, e.clientX, e.clientY); }}
                 title={ghost ? t('map.cameraGone', { name: label }) : (camOffline ? `${label} · ${t('map.legend.critical')}` : label)}
               >
-                <Ico n={ghost ? 'x' : isCam ? 'video' : 'cpu'} sz={13} />
+                <Ico n={ghost ? 'x' : isCam ? 'video' : 'board'} sz={13} />
                 <span className="floor-marker-label">{label}</span>
                 {notif && notif.count > 0 ? <span className={`floor-marker-badge sev-${notif.sev}`}>{notif.count > 99 ? '99+' : notif.count}</span> : null}
               </button>
@@ -819,6 +826,7 @@ BuildingFloorView.propTypes = {
   notifByCam: PropTypes.object,
   focusCameraId: PropTypes.any,
   focusFloorId: PropTypes.any,
+  onSelectCamera: PropTypes.func,
   onBack: PropTypes.func,
   onPlay: PropTypes.func,
   onRemovePlacements: PropTypes.func,

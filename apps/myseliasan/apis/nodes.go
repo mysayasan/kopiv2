@@ -77,9 +77,12 @@ func NewNodesApi(router *mux.Router, auth middlewares.AuthMidware, session *midd
 	g.HandleFunc("/adopt", h.adopt).Methods("POST")
 	g.HandleFunc("/{id}", h.update).Methods("PUT")
 	g.HandleFunc("/{id}/position", h.updatePosition).Methods("PUT")
-	// Assign (or clear) the building an appliance resides in — the building-first map's alternative
-	// to placing a node's own pin.
-	g.HandleFunc("/{id}/building", h.updateBuilding).Methods("PUT")
+	// Record (or withdraw) that an appliance deliberately has no place on any plan — a colo
+	// recorder, a hosted hub. WHERE a box is comes from pinning its own marker on a plan
+	// (ISiteService.AddPlacement), so there is no "assign to a building" route: one writer, no
+	// dropdown that could disagree with the pin. This is the other half of that — the only way to
+	// answer "nowhere, on purpose" rather than leaving the question unanswered for ever.
+	g.HandleFunc("/{id}/no-fixed-location", h.setNoFixedLocation).Methods("PUT")
 	// Toggle a node's certificate auto-renew gate. Off (default) lets the cert lapse.
 	g.HandleFunc("/{id}/auto-renew", h.setAutoRenew).Methods("PUT")
 	g.HandleFunc("/fleet-key", h.fleetKey).Methods("GET")
@@ -308,11 +311,13 @@ func (a *nodesApi) updatePosition(w http.ResponseWriter, r *http.Request) {
 	controllers.SendResult(w, node, "succeed")
 }
 
-// updateBuilding assigns a node to the building it resides in (siteId), or clears it (siteId 0).
-func (a *nodesApi) updateBuilding(w http.ResponseWriter, r *http.Request) {
+// setNoFixedLocation records that an appliance deliberately has no place on any plan, or withdraws
+// that. Setting it clears the node's SiteId — a box cannot be both somewhere and, on purpose,
+// nowhere.
+func (a *nodesApi) setNoFixedLocation(w http.ResponseWriter, r *http.Request) {
 	nodeID := mux.Vars(r)["id"]
 	var body struct {
-		SiteId int64 `json:"siteId"`
+		NoFixedLocation bool `json:"noFixedLocation"`
 	}
 	if err := decodeJSON(w, r, &body); err != nil {
 		controllers.SendError(w, controllers.ErrParseFailed, err.Error())
@@ -322,7 +327,7 @@ func (a *nodesApi) updateBuilding(w http.ResponseWriter, r *http.Request) {
 	if claims, ok := r.Context().Value(enumauth.Claims).(*models.JwtCustomClaims); ok && claims != nil {
 		updatedBy = claims.Id
 	}
-	node, err := a.registry.UpdateNodeSite(r.Context(), nodeID, body.SiteId, updatedBy)
+	node, err := a.registry.SetNoFixedLocation(r.Context(), nodeID, body.NoFixedLocation, updatedBy)
 	if err != nil {
 		controllers.SendError(w, controllers.ErrBadRequest, err.Error())
 		return

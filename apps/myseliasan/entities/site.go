@@ -11,8 +11,11 @@ const (
 	// (its ground surface), which is why the wizard never asks it "how many areas"; in 3D it is a
 	// flat ground plane with no storey above it.
 	SiteKindOutdoor = "outdoor"
-	// SiteKindPoint has NO plan: a junction, pole, gate, barrier. Its cameras reach it through the
-	// owning node's SiteId, so clicking its marker opens the node's device card rather than a plan.
+	// SiteKindPoint is a junction, pole, gate or barrier — nothing an operator would draw walls
+	// on. It still owns ONE implicit area (see ISiteService.EnsurePointArea) so its cameras are
+	// PINNED to it like everywhere else. That matters: a recorder's cameras can be spread across
+	// several places, so "the cameras here" can only ever mean the ones placed here, never every
+	// camera on whichever appliance happens to be assigned.
 	SiteKindPoint = "point"
 )
 
@@ -30,9 +33,11 @@ func NormalizeSiteKind(kind string) string {
 	}
 }
 
-// HasPlans reports whether a site of this kind owns floor plans at all. A point asset does not, so
-// callers can skip the plan fetch (and the UI can skip the editor) instead of showing an empty one.
-func HasPlans(kind string) bool { return NormalizeSiteKind(kind) != SiteKindPoint }
+// HasDrawablePlan reports whether a site of this kind has a plan an operator AUTHORS — walls,
+// rooms, an uploaded floor plan. A point asset does not: a traffic-light junction has no surface
+// to draw. It still has one implicit area underneath, because that is what its cameras are pinned
+// to, so this answers "is there a plan worth drawing/printing", never "does this site own floors".
+func HasDrawablePlan(kind string) bool { return NormalizeSiteKind(kind) != SiteKindPoint }
 
 // Site is a named physical location that a fleet's cameras belong to. It is the container an
 // operator drags cameras and nodes onto in the non-geographic (indoor) view, the counterpart to
