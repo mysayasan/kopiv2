@@ -8,16 +8,17 @@
    is the part of this page being replaced and it should be liftable in one go. */
 
 .fleet-map-rail.tt {
-  /* Wider than the old flat rail: rows now go four deep (place > area > camera)
-     and still have to show a name, a recorder tag and a count without wrapping. */
-  flex: 0 0 288px;
+  /* Wide enough for four levels of nesting (place > area > camera) plus a recorder tag and a
+     count. It was 288px; the density pass below (shorter rows, tags that no longer wrap onto
+     their own lines) buys that back and hands 26px to the stage. */
+  flex: 0 0 262px;
 }
 
 .tt-search {
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 8px 10px;
+  padding: 6px 9px;
   border-bottom: 1px solid var(--border-subtle);
   color: var(--text-faint);
   flex: 0 0 auto;
@@ -55,12 +56,16 @@
 /* One row shape at every depth: caret, dot/glyph, name, then trailing chips and
    actions. Keeping it identical all the way down is what lets the indentation -
    rather than per-level styling - carry the hierarchy. */
+/* Density. 26px rows with 6px gaps showed six places and three tray entries on a 1000px screen -
+   an operator with twenty buildings never saw the tray at all without scrolling. 23px rows and
+   tighter gutters fit roughly a third more without the row ever feeling cramped: the hit target
+   is still the full row width, which is what actually matters for clicking. */
 .tt-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 8px 3px 4px;
-  min-height: 26px;
+  gap: 5px;
+  padding: 2px 7px 2px 3px;
+  min-height: 23px;
   color: var(--text-secondary);
 }
 .tt-row:hover { background: var(--bg-surface); }
@@ -190,14 +195,28 @@ span.tt-name:hover { color: inherit; }
   border-inline-start: 1px solid var(--border-subtle);
 }
 
-/* A tray row carries up to three pieces of state at once — cameras unknown, location not set, no
-   fixed location — and those tags ARE the row's content, not decoration beside a name. Squeezing
-   them into the leftover width turns every one into "camera…  locatio…  no fixe…", which says
-   nothing. Let them wrap onto a second line and drop the truncation cap instead. */
-.tt-row.tt-trayrow { flex-wrap: wrap; row-gap: 2px; }
-.tt-row.tt-trayrow .tt-tag { max-width: none; }
-/* The wrapped tags line up under the name rather than under the caret. */
-.tt-row.tt-trayrow > .tt-tag:not(:nth-child(-n + 4)) { margin-inline-start: 22px; }
+/* A tray row carries up to three pieces of state at once, and spelling each one out in words
+   ("cameras unknown", "location not set", "no fixed location") wrapped every row onto two or
+   three lines - 84px per appliance, so eight of them were 670px of rail and were what pushed the
+   whole page past the viewport. The words become abbreviated chips with the full sentence on
+   hover: the row is one line again, and the state is still readable at a glance because there
+   are only three of them and they are colour-coded. */
+.tt-row.tt-trayrow { flex-wrap: nowrap; }
+/* One state, one 16px chip. `cursor: help` is the promise that hovering explains it. */
+.tt-state {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: var(--bg-body);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-faint);
+  cursor: help;
+}
+.tt-state.warn { background: var(--danger-bg); border-color: transparent; color: var(--danger-text); }
 
 .tt-empty {
   padding: 6px 10px;
@@ -215,9 +234,7 @@ span.tt-name:hover { color: inherit; }
    --------------------------------------------------------------------------- */
 
 .fleet-map-inspector {
-  flex: 0 0 320px;
-  border: 1px solid var(--border-panel);
-  border-radius: 8px;
+  flex: 0 0 300px;
   overflow: hidden;
   /* The pane is a column of its own so a long event list scrolls inside the
      card instead of stretching the whole page. */
@@ -225,8 +242,8 @@ span.tt-name:hover { color: inherit; }
   flex-direction: column;
   min-height: 0;
   /* map-workspace.css gives .mw-inspector a physical left border for its grid layout. This pane
-     is a rounded card in a flex row and must mirror in Arabic, so it overrides that with the
-     logical property - a physical border-left would sit on the wrong edge in RTL. */
+     sits in a flex row that mirrors in Arabic, so it overrides that with the logical property -
+     a physical border-left would sit on the wrong edge in RTL. */
   border-left: 0;
   border-inline-start: 1px solid var(--border-panel);
 }
@@ -236,10 +253,14 @@ span.tt-name:hover { color: inherit; }
 .fleet-map-drill { display: flex; flex-direction: column; background: var(--bg-body); }
 .fleet-map-drill .mw-stage { flex: 1 1 auto; }
 
-/* Below the map's stacked breakpoint the inspector would squeeze the plan to
-   nothing, so it drops under the stage at full width. */
-@media (max-width: 1200px) {
-  .fleet-map-inspector { flex: 1 1 100%; max-height: 340px; }
+/* Below the map's stacked breakpoint the inspector would squeeze the plan to nothing. The page
+   is viewport-height now, so dropping it UNDER the stage would just eat the map's height instead
+   of its width - it folds away entirely and the operator reopens it from the command bar. */
+@media (max-width: 1180px) {
+  .fleet-map-inspector { display: none; }
+}
+@media (max-width: 900px) {
+  .fleet-map-rail.tt { flex-basis: 210px; }
 }
 
 /* The floor view's toolbar was written for a stage that spanned the page. With the inspector
@@ -247,3 +268,179 @@ span.tt-name:hover { color: inherit; }
    2D/3D toggle was the first casualty. Let it wrap rather than hide a control that is still
    there and still clickable, just invisible. */
 .fleet-map-drill .floor-view-bar { flex-wrap: wrap; row-gap: 6px; }
+
+/* ---------------------------------------------------------------------------
+   Inspector content added by the console redesign. The .mw-* family in
+   map-workspace.css supplies the cards; these are the pieces that replaced its
+   two oversized KPI tiles and its empty state.
+   --------------------------------------------------------------------------- */
+
+/* A row of facts instead of a grid of tiles. Two .mw-kpi tiles were ~60px tall each and gave the
+   number 7 and the word "Yes" the visual weight of headlines, pushing the areas list and the
+   editor button - the only things on the card you can act on - below the fold of a 300px pane. */
+.mw-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin-bottom: 12px;
+}
+.mw-fact {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.mw-fact b { font-size: 0.82rem; font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.mw-fact.warn { background: var(--danger-bg); border-color: transparent; color: var(--danger-text); }
+.mw-fact.warn b { color: var(--danger-text); }
+
+/* The "pick something" prompt, as a quiet strip at the TOP of the pane rather than a slab of
+   grey text centred in 660px of nothing. */
+.mw-insp-prompt {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border-panel);
+  font-size: 0.74rem;
+  color: var(--text-faint);
+}
+
+/* A fact row carries no action, so it must not offer one. */
+.fleet-map-inspector .mw-lrow.static { cursor: default; }
+.fleet-map-inspector .mw-lrow.static .nm { color: var(--text-secondary); font-size: 0.78rem; }
+.fleet-map-inspector .mw-lrow.static .rt { font-size: 0.78rem; font-weight: 700; color: var(--text-primary); }
+
+/* --- Folding a side pane away -----------------------------------------------
+   Both panes fold from the command bar. The pane is emptied of width rather
+   than `display:none`d, so its scroll position and the tree's expanded branches
+   survive a fold and unfold.
+
+   This MUST sit after `.fleet-map-rail.tt` and `.fleet-map-inspector` above.
+   `.fleet-map-body > .collapsed` and `.fleet-map-rail.tt` have identical
+   specificity (two classes each), so whichever comes last wins - and when this
+   rule lived in fleet-map.css, which loads first, the rail kept its 262px and
+   its toggle did nothing at all while the inspector's worked. Ties like that
+   are invisible in review and only show up when you click the button.
+   --------------------------------------------------------------------------- */
+.fleet-map-body > .collapsed {
+  flex-basis: 0;
+  width: 0;
+  min-width: 0;
+  border-inline-end-width: 0;
+  border-inline-start-width: 0;
+  overflow: hidden;
+}
+
+/* --- The tree's own fold control --------------------------------------------
+   The toggle belongs to the pane it toggles. It used to sit in the command bar,
+   which meant the control for reopening the tree was nowhere near the tree -
+   and once folded, nothing on screen connected that button to the pane it
+   governed.
+   --------------------------------------------------------------------------- */
+
+/* Open state: a quiet chevron at the end of the tree's own header row. */
+.tt-collapse {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.tt-collapse:hover { background: var(--bg-surface); color: var(--text-primary); }
+
+/* The chevron points the way the pane actually moves, so it has to mirror: the tree is the
+   leading pane, which is the LEFT edge in English and the RIGHT edge in Arabic. */
+[dir="rtl"] .tt-collapse svg { transform: scaleX(-1); }
+
+/* Collapsed: a narrow spine, NOT zero width - it has to carry the control that reopens it.
+   `.fleet-map-rail.tt.collapsed` is three classes, so it beats the generic
+   `.fleet-map-body > .collapsed` zero-width rule on specificity rather than on source order. */
+.fleet-map-rail.tt.collapsed {
+  flex: 0 0 34px;
+  width: 34px;
+  min-width: 34px;
+  border-inline-end: 1px solid var(--border-panel);
+  overflow: hidden;
+}
+
+/* The whole spine is the hit target - a 34px column with one small chevron in it would be a
+   needlessly fussy thing to aim at. */
+.tt-collapse-spine {
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 7px 0 0;
+  border-radius: 0;
+}
+.tt-collapse-spine:hover { background: var(--bg-surface); }
+
+/* The pane's name, turned on its side, so the spine says what it is rather than just offering an
+   anonymous arrow. Reads bottom-to-top in both directions. */
+.tt-spine-label {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tt-collapse-spine:hover .tt-spine-label { color: var(--text-secondary); }
+
+/* --- The details pane's own fold control ------------------------------------
+   Same pair as the tree above (.tt-collapse / .tt-collapse-spine are shared), but
+   this pane needed a header invented for it: its cards each bring their own
+   heading and none of them is a heading for the COLUMN.
+   --------------------------------------------------------------------------- */
+.fm-insp-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px 5px 6px;
+  min-height: 33px;                    /* matches .tt-search, so the two panes' headers line up */
+  border-bottom: 1px solid var(--border-panel);
+  background: var(--bg-subtle);
+}
+.fm-insp-title {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Three selectors (0,3,0) so it beats the generic `.fleet-map-body > .collapsed` zero-width rule
+   outright instead of tying with it on two classes and being decided by source order - which is
+   exactly the trap that left the tree's toggle silently doing nothing earlier. */
+.fleet-map-body > .fleet-map-inspector.collapsed {
+  flex: 0 0 34px;
+  width: 34px;
+  min-width: 34px;
+  border-inline-start: 1px solid var(--border-panel);
+  overflow: hidden;
+}

@@ -1047,6 +1047,8 @@ label {
   display: block;
   color: rgba(255, 255, 255, 0.88);
   filter: drop-shadow(0 1px 6px rgba(0, 0, 0, 0.72));
+  /* So that any change to the busy dim below eases rather than snapping. */
+  transition: opacity 0.18s ease;
 }
 
 .ptz-sector {
@@ -1064,13 +1066,26 @@ label {
   fill: rgba(255, 255, 255, 0.18);
 }
 
+/* The sector being held. This is the ring's real state - "the camera is panning this way" - and
+   it lasts as long as the pan, unlike :hover which only says where the pointer is and does not
+   exist at all on a touch screen. */
+.ptz-sector-active,
+.ptz-sector-active:hover {
+  fill: rgba(255, 255, 255, 0.3);
+}
+
 .ptz-sector-busy {
   pointer-events: none;
 }
 
+/* Kept for the camera page, where `busy` covers a genuinely long operation. It is NOT used for a
+   PTZ nudge any more: WindowPTZ used to raise it for the duration of the "start panning" POST, so
+   every press dimmed the whole ring and snapped it back - a blink, not feedback. The transition
+   means that even where it does apply it eases in rather than flashing. */
 .ptz-ring-busy {
-  opacity: 0.45;
+  opacity: 0.6;
 }
+
 
 .tile-header {
   position: absolute;

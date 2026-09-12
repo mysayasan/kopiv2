@@ -61,6 +61,58 @@ export function parsePlanRoute(loc) {
   return { siteId: Number(m[1]), floorId: Number.isFinite(area) && area > 0 ? area : null, pick };
 }
 
+// ---- back to the app ---------------------------------------------------------------------------
+//
+// The workspace opens in a tab of its own, and BOTH ways in pass `noopener` — window.open below,
+// and the inspector's <a target="_blank" rel="noopener noreferrer">. noopener means the new tab
+// gets a FRESH sessionStorage rather than a copy of the opener's, so the plan tab remembers no
+// section at all. A plain href="/" back link therefore landed on the app's default section — the
+// dashboard — and never on the fleet map the operator had just come from.
+//
+// So the way back has to SAY where it is going. The section rides as a one-shot query hint that
+// App.js consumes and then strips from the address, which keeps the promise stickyTab.js makes
+// (sections are not bookmarkable URLs) while still letting one screen hand another a destination.
+export const TAB_PARAM = 'tab';
+
+// appHref addresses the main app, naming the section to open on and — for the map — which place
+// and area to open ON. "Back" from the plan editor means "the floor I was just editing", not "the
+// map, somewhere": returning to an unselected world map makes the operator re-find their own work.
+//
+//   appHref('map')                              the fleet map, wherever it last was
+//   appHref('map', { siteId: 4 })               that place, on its first area
+//   appHref('map', { siteId: 4, floorId: 9 })   that place, on that area's floor view
+export function appHref(tab, opts = {}) {
+  if (!tab) return '/';
+  const q = new URLSearchParams();
+  q.set(TAB_PARAM, tab);
+  // Same names the plan route uses for the same two things, so one address vocabulary covers
+  // both screens and `?area=` never means one thing here and another there.
+  if (opts.siteId) q.set('site', String(opts.siteId));
+  if (opts.siteId && opts.floorId) q.set('area', String(opts.floorId));
+  return `/?${q.toString()}`;
+}
+
+// parseAppTab reads what the address is asking the app to open: { tab, siteId, floorId }, with
+// tab '' when nothing is asked for and the ids null unless they are usable numbers. The caller
+// decides whether the section name is one it can render — this only reads the address.
+export function parseAppTab(loc) {
+  const l = loc || (typeof window !== 'undefined' ? window.location : null);
+  const none = { tab: '', siteId: null, floorId: null };
+  if (!l) return none;
+  try {
+    const q = new URLSearchParams(l.search || '');
+    const tab = q.get(TAB_PARAM) || '';
+    if (!tab) return none;
+    const num = (k) => { const n = Number(q.get(k)); return Number.isFinite(n) && n > 0 ? n : null; };
+    const siteId = num('site');
+    // An area without a place is meaningless — a floor id says nothing about which building it is
+    // in — so it is dropped rather than passed on as half an instruction.
+    return { tab, siteId, floorId: siteId ? num('area') : null };
+  } catch (_) {
+    return none;
+  }
+}
+
 // openPlanTab is the fallback for the flows where there is no element to hang an href on — the
 // tail of "add a building" (the map's own click handler continues into the editor) and a finished
 // drag-and-drop. Anywhere the operator clicks a visible control, use a real <a> instead.
