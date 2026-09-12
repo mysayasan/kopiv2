@@ -1,12 +1,12 @@
 ---
-title: Peta armada
+title: Peta
 category: map
 categoryLabel: Peta & tapak
 summary: Di mana sebenarnya peranti anda berada — dan cara peta berfungsi tanpa internet.
 order: 210
 ---
 
-# Peta armada
+# Peta
 
 **Map** memaparkan armada anda sebagai tempat dan bukan baris: setiap nod di tapak tempat ia berdiri,
 diwarnakan mengikut keadaannya.

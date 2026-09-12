@@ -103,7 +103,12 @@ created, positioned and authored entirely from it:
   which drew a recorder as a literal camera glyph indistinguishable from an actual camera pinned
   beside it, and a door controller as a door; the icon now shows what the box **is**, not what it
   watches or controls. Kind is still legible from the row's own name, the tray's grouping, and the
-  inspector's subtitle. A point asset's single implicit area is not shown as its own
+  inspector's subtitle. A tray row's "cameras unknown" / "box not placed" / "no fixed location"
+  states are icon chips (`.tt-state`) rather than spelled-out words — as words they wrapped to two
+  or three lines per row (eight appliances then made the tray taller than the screen), and squeezed
+  onto one line they truncated to unreadable stubs like "camera..."; a tooltip carries the full
+  sentence, and colour keeps the three states apart from a glance. Row height was tightened for the
+  same density pass. A point asset's single implicit area is not shown as its own
   level — it's unnamed by the operator — so its cameras hang straight off the place. The root row
   carries a **"{placed} / {total} placed"** counter (a trailing **+** whenever some appliance can't
   be reached, since the total is then only a lower bound) — the progress bar for the whole
@@ -333,32 +338,77 @@ created, positioned and authored entirely from it:
   unread-notification badges likewise no longer render on this inline plan (they still drive the
   geographic marker's own aggregated badge, `GET /api/notifications/tally?unread=true`); a camera
   with unread events is only visible on the plan by opening it in the inspector.
-- **Three panes**: the map is `fleet_map.js`'s twin-tree rail, the stage (the geographic map, or —
-  once a site/area/camera is selected — `FloorPlanView` inline beside the tree), and a right-hand
-  **inspector** pane (`components/map/inspector.js`'s `Inspector`), replacing the earlier scatter of
-  floating popups that used to cover the very marker you'd just clicked and drift away from it on
-  the next pan. `fleet_map.js` holds ONE selection, `sel` (`{type:'site'|'area'|'camera'|'node',
-  ...}`), that both the stage and the inspector are derived from, so the two can never disagree
-  about what's showing. The inspector renders exactly one contextual card: a **place** (its areas,
-  camera count, whether it's on the map, and the way into the editor), a **camera** (recent events
-  paged by growing the fetch limit — infinite scroll — Open live, Locate), or an **appliance** — the
-  card this rework exists for: "Where its cameras are" lists one row **per place** with a camera
-  count, since a recorder feeding three sites has three rows, a fact no single `SiteId` field could
-  ever carry (built from the fleet-wide placement index `fleet_map.js` now keeps in full, not just
-  its keys, so the inspector can resolve each pin's site), and separately "Where the appliance
-  itself is" shows its box pin or says it is unpinned / marked no-fixed-location; an unreachable
-  appliance shows its unplaced count as **"?"**, never `0`. Live footage is the deliberate exception
-  to the pane model — it stays a **floating window**, because watching a camera while navigating
-  elsewhere is the point of it. This is Phase 4, the last of the map rework: `components/map/`
-  (`popups.js` — `NodeCameraPopup`/`MapPopupFrame` — plus the early-scaffolding `asset_browser.js`
-  and `geo_map.js`, all from the earlier in-flight redesign) are deleted; `popups.js`'s two
-  node-media URL builders moved to the new `components/map/media_src.js`. Nothing under
-  `components/map/` is unwired scaffolding any longer. The pane is sized in `styles/twin-tree.css`
-  (`.fleet-map-inspector`), which deliberately does **not** take `styles/map-workspace.css`'s
-  `.mw-inspector` class — imported into `fleet_map.js` purely for its `.mw-insp-*` card styles —
-  since that class's physical `border-left` loads after `twin-tree.css` and would win, putting the
-  border on the wrong edge in Arabic; `border-inline-start` is used instead so the pane still mirrors
-  correctly in RTL (tree on the right, inspector on the left, its border on the true trailing edge).
+- **Three panes, as a viewport-pinned console**: the map is `fleet_map.js`'s twin-tree rail, the
+  stage (the geographic map, or — once a site/area/camera is selected — `FloorPlanView` inline
+  beside the tree), and a right-hand **inspector** pane (`components/map/inspector.js`'s
+  `Inspector`), replacing the earlier scatter of floating popups that used to cover the very marker
+  you'd just clicked and drift away from it on the next pan. `fleet_map.js` holds ONE selection,
+  `sel` (`{type:'site'|'area'|'camera'|'node', ...}`), that both the stage and the inspector are
+  derived from, so the two can never disagree about what's showing. The page used to size itself to
+  its tallest pane (the tree), which meant a fleet with a full tray scrolled a **map** up and down a
+  page taller than the screen, with the stage getting less than half the body width regardless; a
+  `.main-workspace:has(> .map-page)` rule now pins the page to `100vh` (footer hidden) and lets each
+  pane scroll inside itself, and the rail and inspector are both narrower and independently
+  **collapsible** — a chevron in each pane's own header when open, a narrow icon-labelled spine
+  (`.tt-collapse-spine`) carrying the same chevron when folded, since the control that reopens a
+  pane has to live on that pane rather than in a bar that named a pane no longer on screen (the
+  fold state is `fleet_map.js`'s own `railOpen`/`inspOpen`, not persisted). The old `<h2>` + floating
+  legend + two full-width instruction paragraphs (117px of permanent chrome above the map) are one
+  44px **command bar** (`.fm-bar`) now: title, live **{places}/{cameras}/{N to place}** counters
+  (clicking "N to place" opens the tray), and the legend; the instructional prose moved to a
+  `.fm-stage-empty` state shown over the stage only while no place has been added yet, which is the
+  one moment it answers a real question rather than sitting there as a caption. The geographic view
+  also now **fits its initial view to the extent of every placed site** (`ol/extent`'s
+  `boundingExtent` + the OpenLayers `View.fit`, latched once via a ref so a later poll of
+  `/api/sites/overview` never yanks the view back from wherever the operator panned to) instead of
+  opening at a fixed centre/zoom 6 — a campus fleet used to open as a thumbnail-sized clump of
+  overlapping labels adrift in open ocean. When no basemap is installed the canvas paints a CSS
+  graticule (`.fleet-map-canvas.no-basemap`, a repeating linear-gradient grid under the OpenLayers
+  layers) instead of a plain white sheet, so an air-gapped install with no `.pmtiles` region reads
+  as a map with no detail rather than a broken one. The inspector renders exactly one contextual
+  card: a **place** (its areas, camera count, whether it's on the map, and the way into the editor),
+  a **camera** (recent events paged by growing the fetch limit — infinite scroll — Open live,
+  Locate), or an **appliance** — the card this rework exists for: "Where its cameras are" lists one
+  row **per place** with a camera count, since a recorder feeding three sites has three rows, a fact
+  no single `SiteId` field could ever carry (built from the fleet-wide placement index
+  `fleet_map.js` now keeps in full, not just its keys, so the inspector can resolve each pin's
+  site), and separately "Where the appliance itself is" shows its box pin or says it is unpinned /
+  marked no-fixed-location; an unreachable appliance shows its unplaced count as **"?"**, never `0`.
+  Each card's two large KPI tiles are a compact single-line `.mw-facts` row now (a "7" and a "Yes"
+  no longer get a 60px tile of visual weight each, pushing the areas list and the way into the
+  editor below the fold of a 300px pane); selecting the place itself (not just an area or camera
+  under it) now loads that site's plans the same way a tree expansion would — previously only
+  `area`/`camera` selections triggered the load, so clicking a building whose branch had never been
+  expanded read its area list out of an unfilled cache and reported **"0 areas"** for a building
+  that had three, inviting the operator to recreate areas that already existed; the card now
+  distinguishes "not loaded yet" from "genuinely none" instead of treating a missing cache entry as
+  empty. With nothing selected, the inspector no longer shows a bare icon and two lines of grey text
+  in the middle of the pane — it shows a fleet-at-a-glance roll-up instead (places, cameras pinned,
+  places on the map, and appliance counts by status, zero-count statuses omitted). Live footage is
+  the deliberate exception to the pane model — it stays a **floating window**, because watching a
+  camera while navigating elsewhere is the point of it. This is Phase 4, the last of the map rework:
+  `components/map/` (`popups.js` — `NodeCameraPopup`/`MapPopupFrame` — plus the early-scaffolding
+  `asset_browser.js` and `geo_map.js`, all from the earlier in-flight redesign) are deleted;
+  `popups.js`'s two node-media URL builders moved to the new `components/map/media_src.js`. Nothing
+  under `components/map/` is unwired scaffolding any longer. The pane is sized in
+  `styles/twin-tree.css` (`.fleet-map-inspector`), which deliberately does **not** take
+  `styles/map-workspace.css`'s `.mw-inspector` class — imported into `fleet_map.js` purely for its
+  `.mw-insp-*` card styles — since that class's physical `border-left` loads after `twin-tree.css`
+  and would win, putting the border on the wrong edge in Arabic; `border-inline-start` is used
+  instead so the pane still mirrors correctly in RTL (tree on the right, inspector on the left, its
+  border on the true trailing edge).
+- **Back to the floor you were editing**: the plan workspace's tab opens with `noopener` (both from
+  a real `<a target="_blank">` and from `openPlanTab`'s `window.open`), so it starts with a fresh,
+  empty `sessionStorage` and remembers no section of its own — a bare `href="/"` back link used to
+  fall through to the app's remembered/default section (the dashboard), never to the map the
+  operator had just come from. The back link now names the destination in the address
+  (`appHref('map', { siteId, floorId })`, `lib/plan_route.js`'s `TAB_PARAM`/`parseAppTab`): `App.js`
+  reads a one-shot `?tab=map&site=&area=` hint at mount, writes it into the remembered-section
+  storage ahead of the normal restore, hands the site/floor down to `FleetMap` as a `focus` prop
+  that resolves through the same `openBuilding` path a tree click uses, and clears both the query
+  string and the one-shot prop once the map has acted on it — so leaving Map and returning later
+  (with no hint in the address) opens wherever the operator had last left it, not back on the floor
+  they finished editing an hour ago.
 - **Locate on plan**: from a camera's own context (e.g. the node manager's embedded camera pages),
   **Locate on plan** (`GET /api/node-floorplan/{nodeId}`) jumps straight to the floor plan holding
   that camera's placement and selects its marker into the inspector — no need to know which
@@ -370,7 +420,18 @@ created, positioned and authored entirely from it:
   live panel** (a Back button returns to live without ever tearing down the underlying WebRTC
   stream, since the live tile stays mounted underneath). All windows float over the map, can
   be dragged by their title bar, resized from a corner grip, and toggled small ⇄ maximized without
-  restarting the underlying stream.
+  restarting the underlying stream. A camera opened from the **3D** view now gets its PTZ ring the
+  same as one opened from the 2D plan: `node_placement` has no `ptzSupported` column, so
+  `Floor3D`'s `onPlay` handler used to read `placement.ptzSupported` and always get `undefined`
+  — `BuildingFloorView` now resolves PTZ support from `camMeta`, the live per-node camera list the
+  2D markers already read, before handing the click to `onPlay`. The ring itself no longer dims and
+  snaps back on every press: `WindowPTZ` raised a `busy` flag for the duration of the "start
+  panning" request (a call that returns almost immediately because the pan itself is continuous),
+  which visually read as a blink rather than feedback and, via `.ptz-sector-busy`, briefly ignored
+  further input on the ring; the flag is gone from this call (`PTZRing`'s own `holdingRef` already
+  stops a second hold from starting), and the sector actually being held now gets a sustained
+  `.ptz-sector-active` highlight instead — the only press feedback a touch screen (which has no
+  hover) ever got.
 
 The geographic view's building markers and the inline floor stage's per-node camera
 markers/inspector rows share the same status vocabulary: **online** (green), **warning** — amber, cert

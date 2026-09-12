@@ -1,12 +1,12 @@
 ---
-title: The fleet map
+title: The map
 category: map
 categoryLabel: Map & sites
 summary: Where your appliances actually are — and how the map works with no internet.
 order: 210
 ---
 
-# The fleet map
+# The map
 
 **Map** shows your fleet as places rather than rows: every node at the site it stands in, coloured
 by how it is doing.

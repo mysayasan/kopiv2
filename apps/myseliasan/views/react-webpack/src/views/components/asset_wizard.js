@@ -58,93 +58,98 @@ export function AssetWizard({ busy, onCreate, onCancel }) {
       <div className="site-dialog bld-wizard">
         <div className="site-dialog-title"><span className="site-dialog-glyph">{glyph}</span> {t('map.addAsset')}</div>
 
-        <div className="site-dialog-field">
-          <span>{t('bld.kindQuestion')}</span>
-          <div className="bld-choice bld-choice-3" role="radiogroup" aria-label={t('bld.kindQuestion')}>
-            {KIND_ORDER.map((k) => (
-              <button
-                key={k}
-                type="button"
-                className={`bld-choice-opt${kind === k ? ' active' : ''}`}
-                role="radio"
-                aria-checked={kind === k}
-                onClick={() => pickKind(k)}
-              >
-                <Ico n={KIND_ICO[k]} sz={15} />
-                <span className="bld-choice-t">{t(`bld.kind.${k}`)}</span>
-                <span className="bld-choice-s">{t(`bld.kindHint.${k}`)}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <label className="site-dialog-field">
-          <span>{t('map.assetName')}</span>
-          <input
-            type="text"
-            autoFocus
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder={t(`bld.namePlaceholder.${normKind(kind)}`)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !(askAreas && multi)) submit(); }}
-          />
-        </label>
-
-        <div className="site-dialog-field">
-          <span>{t('map.assetIcon')}</span>
-          <div className="site-icon-grid" role="listbox" aria-label={t('map.assetIcon')}>
-            {iconsFor(kind).map((g) => (
-              <button key={g} type="button" className={`site-icon${glyph === g ? ' active' : ''}`} onClick={() => setIcon(g)} aria-selected={glyph === g}>{g}</button>
-            ))}
-          </div>
-        </div>
-
-        {askAreas ? (
+        {/* Everything between the title and the buttons scrolls; the title and the buttons do not.
+            A building with several areas is taller than a laptop screen, and when the whole
+            dialog was the scroller it took "Create & place on map" out of sight with it. */}
+        <div className="site-dialog-body">
           <div className="site-dialog-field">
-            <span>{t('bld.areasQuestion')}</span>
-            <div className="bld-choice" role="radiogroup" aria-label={t('bld.areasQuestion')}>
-              <button type="button" className={`bld-choice-opt${!multi ? ' active' : ''}`} role="radio" aria-checked={!multi} onClick={() => setMulti(false)}>
-                <Ico n="grid2" sz={15} />
-                <span className="bld-choice-t">{t('bld.singleArea')}</span>
-                <span className="bld-choice-s">{t('bld.singleAreaHint')}</span>
-              </button>
-              <button type="button" className={`bld-choice-opt${multi ? ' active' : ''}`} role="radio" aria-checked={multi} onClick={() => setMulti(true)}>
-                <Ico n="building" sz={15} />
-                <span className="bld-choice-t">{t('bld.multiArea')}</span>
-                <span className="bld-choice-s">{t('bld.multiAreaHint')}</span>
-              </button>
+            <span>{t('bld.kindQuestion')}</span>
+            <div className="bld-choice bld-choice-3" role="radiogroup" aria-label={t('bld.kindQuestion')}>
+              {KIND_ORDER.map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  className={`bld-choice-opt${kind === k ? ' active' : ''}`}
+                  role="radio"
+                  aria-checked={kind === k}
+                  onClick={() => pickKind(k)}
+                >
+                  <Ico n={KIND_ICO[k]} sz={15} />
+                  <span className="bld-choice-t">{t(`bld.kind.${k}`)}</span>
+                  <span className="bld-choice-s">{t(`bld.kindHint.${k}`)}</span>
+                </button>
+              ))}
             </div>
           </div>
-        ) : null}
 
-        {askAreas && multi ? (
+          <label className="site-dialog-field">
+            <span>{t('map.assetName')}</span>
+            <input
+              type="text"
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={t(`bld.namePlaceholder.${normKind(kind)}`)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !(askAreas && multi)) submit(); }}
+            />
+          </label>
+
           <div className="site-dialog-field">
-            <span>{t('bld.areas')}</span>
-            <ul className="bld-arealist">
-              {areas.map((a, i) => (
-                // Index keys are safe here: rows are a plain ordered list with no state of their
-                // own, and reordering is not offered in this step.
-                // eslint-disable-next-line react/no-array-index-key
-                <li key={i} className="bld-arearow">
-                  <Ico n="grid2" sz={12} />
-                  <input
-                    type="text"
-                    value={a}
-                    onChange={(e) => setArea(i, e.target.value)}
-                    placeholder={t('bld.areaPlaceholder')}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addArea(); } }}
-                  />
-                  <button type="button" className="bld-arearow-x" onClick={() => removeArea(i)} disabled={areas.length <= 1} aria-label={t('bld.removeArea')}>
-                    <Ico n="x" sz={12} />
-                  </button>
-                </li>
+            <span>{t('map.assetIcon')}</span>
+            <div className="site-icon-grid" role="listbox" aria-label={t('map.assetIcon')}>
+              {iconsFor(kind).map((g) => (
+                <button key={g} type="button" className={`site-icon${glyph === g ? ' active' : ''}`} onClick={() => setIcon(g)} aria-selected={glyph === g}>{g}</button>
               ))}
-            </ul>
-            <button type="button" className="linklike bld-addarea" onClick={addArea}><Ico n="plus" sz={12} /> {t('bld.addArea')}</button>
+            </div>
           </div>
-        ) : null}
 
-        <p className="settings-hint bld-nextnote">{t(`bld.nextHint.${normKind(kind)}`)}</p>
+          {askAreas ? (
+            <div className="site-dialog-field">
+              <span>{t('bld.areasQuestion')}</span>
+              <div className="bld-choice" role="radiogroup" aria-label={t('bld.areasQuestion')}>
+                <button type="button" className={`bld-choice-opt${!multi ? ' active' : ''}`} role="radio" aria-checked={!multi} onClick={() => setMulti(false)}>
+                  <Ico n="grid2" sz={15} />
+                  <span className="bld-choice-t">{t('bld.singleArea')}</span>
+                  <span className="bld-choice-s">{t('bld.singleAreaHint')}</span>
+                </button>
+                <button type="button" className={`bld-choice-opt${multi ? ' active' : ''}`} role="radio" aria-checked={multi} onClick={() => setMulti(true)}>
+                  <Ico n="building" sz={15} />
+                  <span className="bld-choice-t">{t('bld.multiArea')}</span>
+                  <span className="bld-choice-s">{t('bld.multiAreaHint')}</span>
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {askAreas && multi ? (
+            <div className="site-dialog-field">
+              <span>{t('bld.areas')}</span>
+              <ul className="bld-arealist">
+                {areas.map((a, i) => (
+                  // Index keys are safe here: rows are a plain ordered list with no state of their
+                  // own, and reordering is not offered in this step.
+                  // eslint-disable-next-line react/no-array-index-key
+                  <li key={i} className="bld-arearow">
+                    <Ico n="grid2" sz={12} />
+                    <input
+                      type="text"
+                      value={a}
+                      onChange={(e) => setArea(i, e.target.value)}
+                      placeholder={t('bld.areaPlaceholder')}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addArea(); } }}
+                    />
+                    <button type="button" className="bld-arearow-x" onClick={() => removeArea(i)} disabled={areas.length <= 1} aria-label={t('bld.removeArea')}>
+                      <Ico n="x" sz={12} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <button type="button" className="linklike bld-addarea" onClick={addArea}><Ico n="plus" sz={12} /> {t('bld.addArea')}</button>
+            </div>
+          ) : null}
+
+          <p className="settings-hint bld-nextnote">{t(`bld.nextHint.${normKind(kind)}`)}</p>
+        </div>
 
         <div className="site-dialog-actions">
           <button type="button" className="quiet" onClick={onCancel} disabled={busy}>{t('map.cancel')}</button>
@@ -174,16 +179,18 @@ export function SiteDialog({ initialName, initialIcon, kind, busy, onSave, onDel
     <div className="fd-overlay" role="dialog" aria-label={t('map.editAsset')}>
       <div className="site-dialog">
         <div className="site-dialog-title"><span className="site-dialog-glyph">{icon}</span> {t('map.editAsset')}</div>
-        <label className="site-dialog-field">
-          <span>{t('map.assetName')}</span>
-          <input type="text" autoFocus value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && canSave) onSave(name.trim(), icon); }} />
-        </label>
-        <div className="site-dialog-field">
-          <span>{t('map.assetIcon')}</span>
-          <div className="site-icon-grid" role="listbox" aria-label={t('map.assetIcon')}>
-            {iconsFor(k).map((g) => (
-              <button key={g} type="button" className={`site-icon${icon === g ? ' active' : ''}`} onClick={() => setIcon(g)} aria-selected={icon === g}>{g}</button>
-            ))}
+        <div className="site-dialog-body">
+          <label className="site-dialog-field">
+            <span>{t('map.assetName')}</span>
+            <input type="text" autoFocus value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && canSave) onSave(name.trim(), icon); }} />
+          </label>
+          <div className="site-dialog-field">
+            <span>{t('map.assetIcon')}</span>
+            <div className="site-icon-grid" role="listbox" aria-label={t('map.assetIcon')}>
+              {iconsFor(k).map((g) => (
+                <button key={g} type="button" className={`site-icon${icon === g ? ' active' : ''}`} onClick={() => setIcon(g)} aria-selected={icon === g}>{g}</button>
+              ))}
+            </div>
           </div>
         </div>
         <div className="site-dialog-actions">

@@ -3,7 +3,7 @@ import PropTypes from 'prop-types';
 import { useT, Ico } from '@shared';
 import { api, apiBase, csrfToken } from '../lib/helpers';
 import { nodeTone } from '../lib/fleet_status';
-import { publishPlanEdit, setPlanArea } from '../lib/plan_route';
+import { publishPlanEdit, setPlanArea, appHref } from '../lib/plan_route';
 // The editor's layout (.bld-*, .palette-*, .grid-*, .fe-*, .floor-editor-*) and this shell's own
 // .pw-* rules all live in fleet-map.css, which until now was pulled in ONLY by the lazily-loaded
 // MAP chunk. The workspace is reached by URL and can be the first thing a tab ever renders, so
@@ -369,10 +369,23 @@ export function PlanWorkspace({ site, nodes = [], initialPick, initialFloorId, o
     <div className="pw-shell">
       <div className="pw-frame">
         <header className="bld-head pw-head">
-          {/* Back to the fleet map, as a real link: this tab has no parent to close to, and the
-              operator may well have arrived from a bookmark or a pasted address rather than from
-              the map at all. */}
-          <a className="pw-back" href="/" title={t('pw.backToApp')} aria-label={t('pw.backToApp')}><Ico n="chev-left" sz={15} /></a>
+          {/* Back to the floor that was just being edited — the place AND the area, so the map
+              opens on that plan rather than on the world with nothing selected. Coming out of an
+              editor onto an unselected map makes the operator go and re-find their own work.
+              It has to NAME all of that rather than point at the app root. Both ways into this
+              workspace open it with `noopener`, so this tab starts with an empty sessionStorage
+              and remembers no section — a bare href="/" fell through to the app's default and
+              dropped the operator on the dashboard every time.
+              A real link, not a handler: this tab has no parent to close to, and the operator may
+              have arrived from a bookmark or a pasted address rather than from the map at all. */}
+          <a
+            className="pw-back"
+            href={appHref('map', { siteId: building.id, floorId: activeFloor && activeFloor.id })}
+            title={t('pw.backToApp')}
+            aria-label={t('pw.backToApp')}
+          >
+            <Ico n="chev-left" sz={15} />
+          </a>
           <span className="bld-head-glyph" aria-hidden="true">{siteGlyph(building)}</span>
           <h2 className="bld-head-name">{building.name}</h2>
           <button type="button" className="quiet bld-head-edit" onClick={() => setEditSite(true)} disabled={busy}>
@@ -599,7 +612,10 @@ export function PlanWorkspacePage({ route, nodes = [], onToast }) {
           <Ico n="map-pin" sz={30} />
           <div className="pw-blank-t">{state === 'missing' ? t('pw.noSite') : t('pw.loadFailed')}</div>
           <div className="pw-blank-s">{state === 'missing' ? t('pw.noSiteHint') : t('pw.loadFailedHint')}</div>
-          <a className="pw-blank-link" href="/">{t('pw.backToApp')}</a>
+          {/* Names the fleet map for the same reason the header's back arrow does: this tab
+              remembers no section, so "/" alone would land on the dashboard. Somebody holding a
+              dead plan link wants the map, which is where they can see what DOES exist. */}
+          <a className="pw-blank-link" href={appHref('map')}>{t('pw.backToApp')}</a>
         </div>
       </main>
     );

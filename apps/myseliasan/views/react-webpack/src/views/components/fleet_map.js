@@ -27,7 +27,7 @@ import Feature from 'ol/Feature.js';
 import Point from 'ol/geom/Point.js';
 import Translate from 'ol/interaction/Translate.js';
 import { fromLonLat, toLonLat } from 'ol/proj.js';
-import { getCenter } from 'ol/extent.js';
+import { boundingExtent, getCenter } from 'ol/extent.js';
 import { Fill, Stroke, Style, Circle as CircleStyle } from 'ol/style.js';
 import { getVectorContext } from 'ol/render.js';
 import { PMTilesVectorSource } from 'ol-pmtiles';
@@ -49,7 +49,7 @@ const DEFAULT_ZOOM = 6;
 // PLACING a node is click-first (the discoverable path): pick a node in the side list, then
 // click its spot on the map. Dragging a node from the list, and dragging an existing pin to
 // move it, both still work for power users. Clicking a placed pin opens its cameras.
-export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
+export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode, focus, onFocusConsumed }) {
   const t = useT();
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -172,6 +172,9 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   // independent of which node records them. sites holds the overview rows { site, nodeIds, cameras,
   // floors }; showLayers toggles the two marker layers so an operator can focus on either.
   const [sites, setSites] = useState([]);
+  // Whether /sites/overview has answered at least once. An empty `sites` cannot tell "no places
+  // yet" from "not asked yet", and the focus effect below has to know the difference.
+  const [sitesLoaded, setSitesLoaded] = useState(false);
   // Buildings-centric map: buildings are the only markers; node pins stay off.
   const [showLayers] = useState({ buildings: true, nodes: false });
   // Which building rows in the rail are expanded, and the lazily-loaded floors/areas inside each
@@ -188,6 +191,30 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   // "where are this recorder's cameras?", which is the one question the old model could not.
   const [placements, setPlacements] = useState([]);
   const placedKeys = useMemo(() => new Set(placements.map((p) => `${p.nodeId}::${p.cameraId || ''}`)), [placements]);
+
+  // --- console chrome ---------------------------------------------------------------------------
+  // Both side panes fold away from the command bar. The stage used to get 586px of a 1218px body -
+  // less than half the page for the one thing the page is named after - and the only way to give
+  // the map more room was to shrink the browser window.
+  const [railOpen, setRailOpen] = useState(true);
+  const [inspOpen, setInspOpen] = useState(true);
+
+  // The command bar's counters. Derived from the same two facts the tree counts from - the
+  // placement index and each node's live camera list - so the bar and the tree can never disagree.
+  const placedCams = useMemo(() => placements.reduce((a, p) => a + (p.cameraId ? 1 : 0), 0), [placements]);
+  // Only counts nodes we could actually reach. An unreachable recorder's cameras are unknown, not
+  // zero, and rolling them in as zero would report the job finished while cameras sit unplaced.
+  const toPlace = useMemo(() => nodes.reduce((a, n) => {
+    const entry = camsByNode[n.nodeId];
+    if (!entry || entry.loading || entry.error) return a;
+    return a + (entry.cams || []).filter((c) => !placedKeys.has(`${n.nodeId}::${c.id}`)).length;
+  }, 0), [nodes, camsByNode, placedKeys]);
+
+  // Clicking the "N to place" counter takes you to the work, rather than telling you it exists.
+  const revealTray = useCallback(() => {
+    setRailOpen(true);
+    setExpanded((cur) => (cur.has('tray') ? cur : new Set(cur).add('tray')));
+  }, []);
   const [treeQuery, setTreeQuery] = useState('');
   // Which tree row a dragged camera is currently over, so exactly one row lights up.
   const [dropTarget, setDropTarget] = useState(null);
@@ -253,7 +280,7 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   useEffect(() => {
     let live = true;
     const load = () => api('/api/sites/overview', { noRedirect: true })
-      .then((r) => { if (live && r.ok && Array.isArray(r.body)) setSites(r.body); })
+      .then((r) => { if (live && r.ok && Array.isArray(r.body)) { setSites(r.body); setSitesLoaded(true); } })
       .catch(() => {});
     siteReloadRef.current = load;
     load();
@@ -325,9 +352,17 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
 
   // Selecting anything inside a place needs that place's plans, however the selection was made -
   // the tree's branch may never have been expanded (a camera located from a notification, say).
+  //
+  // A selection of the PLACE ITSELF needs them too, and used not to ask: the inspector's place
+  // card reads its area list straight out of this cache, so clicking a building whose branch had
+  // never been expanded showed "0 areas" and "No areas yet - add them in the editor" for a
+  // building with three floors. That is not a cosmetic wrong number - it invites the operator to
+  // go and create areas that already exist.
   useEffect(() => {
-    if (!sel || (sel.type !== 'area' && sel.type !== 'camera')) return;
-    if (!plansBySite[sel.siteId]) loadSitePlansRef.current(sel.siteId);
+    if (!sel) return;
+    const siteId = sel.type === 'site' ? sel.id : sel.siteId;
+    if (!siteId) return;
+    if (!plansBySite[siteId]) loadSitePlansRef.current(siteId);
   }, [sel, plansBySite]);
 
   // A site's cameras are the ones PLACED there — for every kind, including a point asset, which
@@ -451,6 +486,43 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
   }, []);
   const openBuildingRef = useRef(openBuilding);
   openBuildingRef.current = openBuilding;
+
+  // --- arriving with a floor already in mind --------------------------------------------------
+  //
+  // The plan editor's back link names the place and area it was editing (see lib/plan_route), so
+  // coming out of the editor lands on THAT floor view instead of an unselected world map. It runs
+  // through openBuilding rather than setting `sel` directly, so the plans get loaded and the
+  // stage/inspector stay driven by the one selection like every other way in.
+  useEffect(() => {
+    if (!focus || !focus.siteId || !sitesLoaded) return;
+    const row = sites.find((r) => r.site && r.site.id === focus.siteId);
+    if (row) openBuildingRef.current(row.site, null, focus.floorId || null);
+    // Consumed either way. A place that is not in the overview is not going to turn up in a later
+    // poll — it was deleted, or the link was stale — and a request that never cleared would fire
+    // again the next time the operator opened the map.
+    if (onFocusConsumed) onFocusConsumed();
+  }, [focus, sites, sitesLoaded, onFocusConsumed]);
+
+  // --- open on the FLEET, not on the world -----------------------------------------------------
+  //
+  // The view opened at a fixed centre and zoom 6, which is a few hundred kilometres across. A
+  // fleet that lives on one campus therefore opened as a thumbnail-sized clump of overlapping
+  // labels adrift in an empty ocean - the single thing that made this page look most like a
+  // placeholder. Fit to what is actually placed instead.
+  //
+  // Once only: `fitted` latches, because re-fitting whenever `sites` reloads (it polls) would
+  // yank the view back from wherever the operator had panned to, every refresh.
+  const fittedRef = useRef(false);
+  useEffect(() => {
+    if (!mapReady || fittedRef.current || !mapRef.current) return;
+    const placed = sites.filter((r) => r.site && r.site.mapPlaced);
+    if (placed.length === 0) return;
+    fittedRef.current = true;
+    // A single place gives a zero-area extent, which `fit` resolves to maxZoom - the right answer
+    // (as close as is useful), not a division by zero.
+    const ext = boundingExtent(placed.map((r) => fromLonLat([r.site.lon, r.site.lat])));
+    mapRef.current.getView().fit(ext, { padding: [70, 70, 70, 70], maxZoom: 17, duration: 0 });
+  }, [mapReady, sites]);
 
   // Delete stale (ghost) camera placements whose camera no longer exists on its node, then refresh
   // the open building's plans (markers vanish) and the building overview (camera counts drop).
@@ -1011,24 +1083,51 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
 
   return (
     <section className="settings-panel span-two fleet-map-panel">
-      <header>
-        <h2><span className="btn-icon"><Ico n="map" /> {t('map.title')}</span></h2>
-        <div className="fleet-map-header-right">
-          <div className="fleet-map-legend" aria-hidden="true">
-            {['online', 'warning', 'critical', 'idle'].map((k) => (
-              <span key={k} className="legend-item">
-                <span className="legend-dot" style={{ background: TONES[k].color }} />
-                {t(`map.legend.${k}`)}
-              </span>
-            ))}
-          </div>
+      {/* ONE command bar, in place of a title row, a floating legend and two full-width paragraphs
+          of instructions. Those paragraphs cost 117px of permanent height above a map that already
+          could not fit the screen, to explain something an operator reads once and never again -
+          so the explanation moved to the stage's empty state, where it is the answer to "why is
+          this blank?" rather than a caption on a map they are already using. What stays here is
+          what stays TRUE: where you are, what the fleet's counts are, what the colours mean, and
+          whether a basemap is installed. */}
+      <div className="fm-bar">
+        <h2 className="fm-bar-title"><Ico n="map" sz={15} /> {t('map.title')}</h2>
+
+        <span className="fm-bar-sep" />
+        <div className="fm-stats">
+          <span className="fm-stat" title={t('bar.placesHint')}><b>{sites.length}</b> {t('bar.places')}</span>
+          <span className="fm-stat" title={t('bar.camerasHint')}><b>{placedCams}</b> {t('bar.cameras')}</span>
+          {/* A count of work left is a call to action, not a statistic: it is absent at zero
+              rather than sitting there reading "0 to place", and clicking it opens the tray that
+              holds the work. */}
+          {toPlace > 0 ? (
+            <button type="button" className="fm-stat todo" onClick={revealTray} title={t('bar.toPlaceHint')}>
+              <b>{toPlace}</b> {t('bar.toPlace')}
+            </button>
+          ) : null}
         </div>
-      </header>
-      <p className="settings-hint">{t('map.geoHint')}</p>
-      {state === 'nobasemap' ? <p className="settings-hint">{t('map.noBasemap')}</p> : null}
+
+        <span className="fm-bar-gap" />
+
+        <div className="fleet-map-legend" aria-hidden="true">
+          {['online', 'warning', 'critical', 'idle'].map((k) => (
+            <span key={k} className="legend-item">
+              <span className="legend-dot" style={{ background: TONES[k].color }} />
+              {t(`map.legend.${k}`)}
+            </span>
+          ))}
+        </div>
+
+        {/* Neither pane's fold control lives out here any more: a toggle belongs to the thing it
+            toggles, and a button in the bar named a pane that, once folded, was no longer on
+            screen to connect it to. Each pane carries its own - see TwinTree and the inspector
+            aside below. */}
+      </div>
 
       <div className="fleet-map-body">
         <TwinTree
+          collapsed={!railOpen}
+          onToggleCollapsed={() => setRailOpen((v) => !v)}
           sites={sites}
           nodes={nodes}
           nodesById={nodesById}
@@ -1062,13 +1161,26 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
             </div>
           ) : null}
           <div
-            className={`fleet-map-canvas${placing ? ' placing' : ''}`}
+            className={`fleet-map-canvas${placing ? ' placing' : ''}${state === 'nobasemap' ? ' no-basemap' : ''}`}
             ref={containerRef}
             role="application"
             aria-label={t('map.title')}
             onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
             onDrop={onDrop}
           />
+          {/* The guidance that used to be a permanent paragraph over the map. Here it is an
+              answer to "why is this blank?", shown at the one moment it helps and gone forever
+              after the first place is added. */}
+          {sitesLoaded && sites.length === 0 && !stagePlan ? (
+            <div className="fm-stage-empty">
+              <Ico n="map-pin" sz={28} />
+              <strong>{t('map.emptyTitle')}</strong>
+              <p>{t('map.geoHint')}</p>
+              <button type="button" className="mw-btn primary" onClick={() => setWizardOpen(true)}>
+                <Ico n="plus" sz={13} /> {t('map.addAsset')}
+              </button>
+            </div>
+          ) : null}
           {outside || downloading ? (
             <BasemapDownloadBanner
               canDownload={canDownload}
@@ -1124,8 +1236,44 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
         {/* NOT .mw-inspector: that rule sets a physical border-left for its own grid layout, loads
             after this file's stylesheet, and would win - putting the border on the wrong edge in
             Arabic. This pane supplies its own logical border instead. */}
-        <aside className="fleet-map-inspector">
-          <Inspector
+        <aside className={`fleet-map-inspector${inspOpen ? '' : ' collapsed'}`}>
+          {/* Collapsed, the pane keeps a narrow spine instead of folding to nothing, because the
+              control that reopens it lives on it. Same shape as the tree's, mirrored: this pane's
+              moving edge is the one facing the stage, so its chevron sits on that side. */}
+          {!inspOpen ? (
+            <button
+              type="button"
+              className="tt-collapse tt-collapse-spine"
+              onClick={() => setInspOpen(true)}
+              title={t('insp.showPane')}
+              aria-label={t('insp.showPane')}
+              aria-expanded={false}
+            >
+              <Ico n="chev-left" sz={14} />
+              <span className="tt-spine-label">{t('insp.paneTitle')}</span>
+            </button>
+          ) : null}
+          {inspOpen ? (
+            <>
+              {/* The inspector's cards each bring their own heading (the place's name, the
+                  camera's), but none of them is a heading for the PANE - so unlike the tree,
+                  which could hang its toggle off the search row it already had, this pane had no
+                  header to put one in. It has one now, which also gives the column a label it
+                  was missing. */}
+              <div className="fm-insp-head">
+                <button
+                  type="button"
+                  className="tt-collapse"
+                  onClick={() => setInspOpen(false)}
+                  title={t('insp.hidePane')}
+                  aria-label={t('insp.hidePane')}
+                  aria-expanded
+                >
+                  <Ico n="chev-right" sz={14} />
+                </button>
+                <span className="fm-insp-title">{t('insp.paneTitle')}</span>
+              </div>
+              <Inspector
             sel={sel}
             sites={sites}
             nodesById={nodesById}
@@ -1139,7 +1287,9 @@ export function FleetMap({ nodes = [], reloadNodes, onToast, onOpenNode }) {
             onOpenArea={(site, floorId) => openBuilding(site, null, floorId)}
             onOpenNode={onOpenNode}
             onWaive={waiveLocation}
-          />
+              />
+            </>
+          ) : null}
         </aside>
       </div>
       {attribution ? <div className="fleet-map-attribution">{attribution}</div> : null}
@@ -1188,4 +1338,7 @@ FleetMap.propTypes = {
   reloadNodes: PropTypes.func,
   onToast: PropTypes.func,
   onOpenNode: PropTypes.func,
+  // { siteId, floorId } to open on, from the address. One-shot — see the focus effect above.
+  focus: PropTypes.shape({ siteId: PropTypes.number, floorId: PropTypes.number }),
+  onFocusConsumed: PropTypes.func,
 };

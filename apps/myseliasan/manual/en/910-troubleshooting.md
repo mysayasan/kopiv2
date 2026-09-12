@@ -67,7 +67,7 @@ control-plane access, or the account is disabled. See
 ## The map has no streets {#map-blank}
 
 No **offline basemap** is installed. Markers, buildings and floor plans still work — only the
-background is missing. See [The fleet map](the-map#basemap).
+background is missing. See [The map](the-map#basemap).
 
 Region download needs the `pmtiles` tool on the server and **reaches the internet**, which is the
 wrong move on a site meant to have no egress.

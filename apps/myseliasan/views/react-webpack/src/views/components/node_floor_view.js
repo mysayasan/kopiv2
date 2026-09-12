@@ -245,20 +245,22 @@ function useFloatingWindow(x, y, maximized, initW = MINI_W, initH = MINI_H) {
 // node's control tunnel (the same proxy path the camera page and video wall use), so PTZ works
 // cross-network. Rendered only for cameras that advertise PTZ.
 function WindowPTZ({ nodeId, cameraId }) {
-  const [busy, setBusy] = useState(false);
   const px = useCallback(
     (path, opts = {}) => api(`/api/nodes/${encodeURIComponent(nodeId)}/proxy${path}`, { noRedirect: true, ...opts }).catch(() => ({ ok: false })),
     [nodeId],
   );
-  const move = async (dir) => {
-    setBusy(true);
-    await px(`/api/cameras/${cameraId}/ptz/move`, { method: 'POST', body: JSON.stringify({ direction: dir, speed: 0.35, durationMs: 0 }) });
-    setBusy(false);
-  };
+  // No `busy` flag here, deliberately. This `move` is the request that STARTS a continuous pan
+  // (durationMs: 0 — the camera keeps moving until `stop`), so it resolves in well under a second
+  // while the movement carries on. Flagging that round trip as "busy" dimmed the WHOLE ring to
+  // 45% and snapped it back on every single press, which reads as a blink rather than as feedback,
+  // and `.ptz-sector-busy` made the ring ignore input for the same window so quick nudges were
+  // silently swallowed. PTZRing's own `holdingRef` already prevents a second hold starting while
+  // one is active, which is the only guard this actually needed.
+  const move = (dir) => px(`/api/cameras/${cameraId}/ptz/move`, { method: 'POST', body: JSON.stringify({ direction: dir, speed: 0.35, durationMs: 0 }) });
   const stop = () => px(`/api/cameras/${cameraId}/ptz/stop`, { method: 'POST' });
   return (
     <div className="ptz-ring-overlay floor-live-ptz">
-      <PTZRing busy={busy} size={92} onMove={move} onStop={stop} />
+      <PTZRing size={92} onMove={move} onStop={stop} />
     </div>
   );
 }
@@ -696,6 +698,18 @@ export function BuildingFloorView({ site, floorplans, nodesById = {}, notifByCam
     return () => { live = false; };
   }, [placements]);
 
+  // The 3D canvas hands back the PLACEMENT it hit, and a placement row carries no camera
+  // capabilities: there is no ptzSupported column on node_placement, and nothing in the entity,
+  // the service or the API ever sets one — so `placement.ptzSupported` was always undefined and a
+  // PTZ camera opened from the 3D view never got its ring, while the same camera opened from the
+  // 2D plan did. Resolve it from camMeta, the live per-node camera list the 2D markers already
+  // read, so both views answer "does this camera have PTZ" from one place.
+  const play3d = useCallback((payload, x, y) => {
+    if (!onPlay) return;
+    const m = camMeta[`${payload.nodeId}::${payload.cameraId}`];
+    onPlay({ ...payload, ptzSupported: m ? m.ptz : !!payload.ptzSupported }, x, y);
+  }, [onPlay, camMeta]);
+
   // Placements whose camera no longer exists on an online node — stale markers to clean up.
   const ghostIds = useMemo(() => placements.filter((p) => p.cameraId && reachable[p.nodeId] && !camMeta[`${p.nodeId}::${p.cameraId}`]).map((p) => p.id), [placements, reachable, camMeta]);
 
@@ -806,7 +820,7 @@ export function BuildingFloorView({ site, floorplans, nodesById = {}, notifByCam
                 <Ico n="layers" sz={13} /> {t('map.stackFloors')}
               </button>
             ) : null}
-            <Floor3D floors={floorplans} activeIndex={floorIdx} stacked={stack3d} nodesById={nodesById} notifByCam={notifByCam} focusCameraId={focusCameraId} nowSec={nowSec} onPlay={onPlay} />
+            <Floor3D floors={floorplans} activeIndex={floorIdx} stacked={stack3d} nodesById={nodesById} notifByCam={notifByCam} focusCameraId={focusCameraId} nowSec={nowSec} onPlay={play3d} />
           </Suspense>
         ) : (
         <>

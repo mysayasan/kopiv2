@@ -6,10 +6,10 @@ import '../styles/fleet-map.css';
 // positioned and authored from it — the wizard collects name/areas, the map takes the drop point,
 // and the building editor opens over it to draw the plan and pin cameras. There is no separate
 // floor-plan tab: a floor plan is something a building HAS, not a parallel place to navigate to.
-export function MapPage({ nodes, reloadNodes, onToast, onOpenNode }) {
+export function MapPage({ nodes, reloadNodes, onToast, onOpenNode, focus, onFocusConsumed }) {
   return (
     <section className="workspace map-page">
-      <FleetMap nodes={nodes} reloadNodes={reloadNodes} onToast={onToast} onOpenNode={onOpenNode} />
+      <FleetMap nodes={nodes} reloadNodes={reloadNodes} onToast={onToast} onOpenNode={onOpenNode} focus={focus} onFocusConsumed={onFocusConsumed} />
     </section>
   );
 }
@@ -19,4 +19,8 @@ MapPage.propTypes = {
   reloadNodes: PropTypes.func,
   onToast: PropTypes.func,
   onOpenNode: PropTypes.func,
+  // A place + area to open on, handed down from the address (see lib/plan_route). One-shot:
+  // the map calls onFocusConsumed once it has acted, and App drops it.
+  focus: PropTypes.object,
+  onFocusConsumed: PropTypes.func,
 };

@@ -3,25 +3,105 @@
    one source of truth in lib/fleet_status.js (deliberately theme-independent, like the brand
    mark, so a status reads the same everywhere). */
 
-.map-page { min-height: 0; }
 .map-loading { padding: 40px; text-align: center; color: var(--text-muted); }
 
-/* --- The map panel shell (the standard .settings-panel) --- */
+/* ============================================================================================
+   THE CONSOLE SHELL
+   --------------------------------------------------------------------------------------------
+   The map is a console, not a document. Every other page in this app is a column of panels that
+   grows downwards and scrolls; this one has a single primary object - the map - and everything
+   else exists to steer it. Two consequences the old layout got wrong:
+
+   1. IT MUST FIT. The page used to size itself to its TALLEST pane, which is the tree: eight
+      appliances in the tray made the panel 1208px in an 843px viewport, so the operator scrolled
+      a MAP up and down the screen and the stage was never fully visible at once. The page is
+      pinned to the viewport now and each pane scrolls inside itself.
+   2. THE MAP GETS THE ROOM. The stage was 586px of a 1218px body - less than half - with a tree
+      and a mostly-empty inspector taking the rest. The side panes are narrower, denser and both
+      collapsible, so the stage starts wider and can take the whole width.
+   ============================================================================================ */
+
+/* :has() rather than a class on <main>: the page component owns its own layout and should not
+   have to reach up and mutate the shell it happens to be mounted in. Where :has() is unsupported
+   the page simply keeps the old scrolling behaviour - it degrades, it does not break. */
+.main-workspace:has(> .map-page) {
+  height: 100vh;
+  overflow: hidden;
+  padding: 14px 18px 16px;
+}
+/* A footer under a viewport-height console would only push the map off-screen. */
+.main-workspace:has(> .map-page) .shared-footer { display: none; }
+
+.map-page {
+  min-height: 0;
+  /* .workspace is a grid with align-content:start, which would pin the panel to its content
+     height again. One full-height row instead. */
+  display: flex;
+  padding-top: 12px;
+}
+.main-workspace > .map-page { flex: 1 1 auto; }
+
+/* The panel drops .settings-panel's grid + 18px padding: its children are panes that own their
+   own insets, and a gap between them would break the flush seams below. */
 .fleet-map-panel {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
 }
 
-.fleet-map-header-right { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-.fleet-map-legend {
+/* --- Command bar -----------------------------------------------------------------------------
+   ONE strip replaces the old h2 + floating legend + two full-width paragraphs of prose (117px of
+   permanent chrome above the map, teaching something an operator learns once). What survives is
+   what stays true all day: where you are, what the fleet's counts are, what the colours mean, and
+   whether the basemap is installed. The prose moved to the stage's empty state, which is the only
+   moment it is actually useful. */
+.fm-bar {
+  flex: 0 0 auto;
   display: flex;
-  gap: 14px;
-  font-size: 0.78rem;
-  color: var(--text-muted);
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px 0 12px;
+  min-height: 44px;
+  border-bottom: 1px solid var(--border-panel);
+  background: var(--bg-subtle);
 }
-.legend-item { display: inline-flex; align-items: center; gap: 5px; }
-.legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.fm-bar-title {
+  display: inline-flex; align-items: center; gap: 7px;
+  margin: 0;
+  font-size: 0.86rem; font-weight: 650; color: var(--text-primary);
+  white-space: nowrap;
+}
+.fm-bar-title svg { color: var(--accent); }
+/* Pushes everything after it to the far end. */
+.fm-bar-gap { flex: 1 1 auto; min-width: 8px; }
+.fm-bar-sep { flex: 0 0 auto; width: 1px; height: 20px; background: var(--border-subtle); }
+
+/* Fleet counters. The numbers an operator would otherwise have to count by hand in the tree:
+   how many places, how many cameras are pinned, and how much work is left in the tray. */
+.fm-stats { display: inline-flex; align-items: center; gap: 3px; min-width: 0; }
+.fm-stat {
+  display: inline-flex; align-items: baseline; gap: 5px;
+  padding: 3px 9px; border-radius: 6px;
+  font-size: 0.74rem; color: var(--text-muted); white-space: nowrap;
+}
+.fm-stat b { font-size: 0.86rem; font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+/* A count of things still to do is a call to action, not a statistic - it gets the warm colour
+   and it disappears entirely at zero rather than sitting there reading "0 to place". */
+.fm-stat.todo { background: var(--danger-bg); color: var(--danger-text); }
+.fm-stat.todo b { color: var(--danger-text); }
+button.fm-stat { border: 0; background: transparent; font: inherit; font-size: 0.74rem; cursor: pointer; }
+button.fm-stat:hover { background: var(--bg-subtle2); }
+button.fm-stat.todo:hover { filter: brightness(0.97); }
+
+/* The legend, inline and quiet. It is a key, not a feature. */
+.fleet-map-legend { display: inline-flex; gap: 11px; font-size: 0.71rem; color: var(--text-faint); }
+.legend-item { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.legend-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
 
 /* Layer toggle: show/hide the building vs node marker layers independently. */
 .fleet-map-layer-toggle { display: inline-flex; gap: 6px; }
@@ -44,11 +124,15 @@
   border-radius: 3px; background: var(--accent-bg); color: var(--accent);
 }
 
+/* Three panes, FLUSH. They used to be three rounded cards floating on the page background with
+   12px moats between them, which is what made the page read as assembled rather than designed -
+   and the moats cost 24px of map for nothing. One frame, hairline seams, map bleeds to the edge. */
 .fleet-map-body {
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
-  gap: 12px;
+  min-width: 0;
+  gap: 0;
 }
 
 /* --- Side rail: nodes waiting to be placed --- */
@@ -56,11 +140,16 @@
   flex: 0 0 230px;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--border-panel);
-  border-radius: 8px;
+  min-height: 0;
+  /* Logical, not physical: the rail is the leading pane and mirrors in Arabic. */
+  border-inline-end: 1px solid var(--border-panel);
   background: var(--bg-subtle);
   overflow: hidden;
 }
+/* The rule that folds a pane away lives in twin-tree.css, beside the two `flex-basis` rules it
+   has to beat - see the note there. Putting it here made it a specificity TIE with
+   `.fleet-map-rail.tt`, which twin-tree.css then won on source order, so the tree pane silently
+   ignored its own toggle while the inspector's worked. */
 .fleet-map-rail-head {
   display: flex;
   align-items: center;
@@ -151,16 +240,42 @@
 .fleet-map-rail-group.muted { color: var(--text-faint); }
 
 /* --- Map stage (canvas + overlays) --- */
-.fleet-map-stage { position: relative; flex: 1 1 auto; min-height: 0; display: flex; }
+/* overflow:hidden matters now that the panes are flush and the stage can be narrow: the stage's
+   floating overlays (the basemap banner, the placing pill) are centred on it with a nowrap label,
+   and with nothing to clip them they spilled straight over the inspector - the "Set up" button
+   sat on top of the details pane at 1366px, in both directions, because the pill is centred and
+   overflows symmetrically. The floor view inside is inset:0, so it is unaffected. */
+.fleet-map-stage { position: relative; flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; overflow: hidden; }
 .fleet-map-canvas {
   position: relative;
   flex: 1 1 auto;
-  min-height: 440px;
-  border-radius: 8px;
+  min-width: 0;
+  /* No min-height. A 440px floor on the canvas is the kind of rule that quietly forces a page
+     taller than the screen; the stage is bounded by the viewport now and the canvas fills it. */
+  min-height: 0;
   overflow: hidden;
   background: var(--bg-body);
-  border: 1px solid var(--border-panel);
 }
+/* With no basemap downloaded the canvas painted a plain white sheet with a clump of markers on
+   it - the single biggest reason this page looked unfinished. A graticule costs nothing, needs no
+   tiles (so it holds on an air-gapped install), and makes the surface read as a map that has no
+   detail here rather than as a div that failed to load. It sits UNDER the OpenLayers canvas. */
+.fleet-map-canvas.no-basemap::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-image:
+    linear-gradient(to right, var(--border-subtle) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--border-subtle) 1px, transparent 1px);
+  background-size: 56px 56px;
+  opacity: 0.55;
+  pointer-events: none;
+}
+/* Lift OpenLayers' own layers above the graticule. Scoped to .no-basemap: this reaches straight
+   into OL's internal DOM, so it must apply only in the one state that needs it rather than
+   restacking the map's children on every install that HAS a basemap. */
+.fleet-map-canvas.no-basemap > * { position: relative; z-index: 1; }
 .fleet-map-canvas.placing { cursor: crosshair; box-shadow: 0 0 0 2px var(--accent) inset; }
 .fleet-map-canvas .ol-attribution { display: none; }
 
@@ -199,17 +314,43 @@
   padding: 7px 8px 7px 16px; box-shadow: 0 6px 20px var(--shadow-panel);
   font-size: 0.82rem; color: var(--text-secondary); max-width: calc(100% - 28px);
 }
-.fleet-map-download > span { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.fleet-map-download > span { display: inline-flex; align-items: center; gap: 7px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fleet-map-download button {
   display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
   border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 999px;
   padding: 6px 14px; font: inherit; font-size: 0.8rem; font-weight: 600; cursor: pointer;
 }
 .fleet-map-download button:disabled { opacity: 0.7; cursor: default; }
-.fleet-map-download-note { color: var(--text-faint); font-style: italic; white-space: nowrap; }
+/* The explanatory note gives way before the headline and long before the button - losing "Region
+   download isn't set up on the server" still leaves a banner that says what is wrong and offers
+   the fix, which is the part that has to survive a narrow stage. */
+.fleet-map-download-note { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-faint); font-style: italic; white-space: nowrap; }
 .bm-tool-status { display: inline-flex; align-items: center; gap: 6px; font-size: 0.78rem; padding: 7px 10px; border-radius: 8px; }
 .bm-tool-status.ok { color: var(--ok-text); background: rgba(34, 197, 94, 0.1); }
 .bm-tool-status.bad { color: #b45309; background: rgba(245, 158, 11, 0.14); }
+
+/* The stage's empty state - where the page's instructions live now. Shown only while there is
+   not a single place to draw, which is the one moment "add a building, then click its spot on the
+   map" is the answer to a question rather than a caption nobody reads. */
+.fm-stage-empty {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+.fm-stage-empty strong { font-size: 0.95rem; color: var(--text-secondary); }
+.fm-stage-empty p { margin: 0; max-width: 340px; font-size: 0.78rem; line-height: 1.5; }
+/* The panel is click-through so the operator can still pan the map underneath; only the button
+   takes the pointer back. */
+.fm-stage-empty .mw-btn { pointer-events: auto; margin-top: 2px; }
 
 .fleet-map-attribution {
   margin-top: 6px;
@@ -473,8 +614,10 @@ button.mp-event-main:hover .mp-event-title { text-decoration: underline; }
 .fed-inspector .grid-field > span { flex: 0 0 74px; }
 .fed-inspector .grid-field input[type="range"] { flex: 1 1 auto; min-width: 0; }
 .fed-inspector .grid-field em { font-style: normal; min-width: 42px; text-align: right; color: var(--text-primary); font-variant-numeric: tabular-nums; }
-.fed-remove { align-self: flex-start; margin-top: 4px; }
-
+.fed-remove { align-self: flex-start; margin-top: 4px; }
+
+
+
 /* The numeric inspector (the N-panel).
  *
  * Every property is a TYPED INPUT first, with a slider beside it only where dragging is the nicer
@@ -509,8 +652,10 @@ button.mp-event-main:hover .mp-event-title { text-decoration: underline; }
 /* The slider spans the row under its own field, so it never squeezes the number it belongs to. */
 .pi-slider { grid-column: 1 / -1; width: 100%; margin: 0; }
 .pi-check { grid-template-columns: 1fr auto; }
-.pi-check input[type="checkbox"] { width: auto; min-height: 0; margin: 0; }
-
+.pi-check input[type="checkbox"] { width: auto; min-height: 0; margin: 0; }
+
+
+
 /* The outliner: everything on the plan, as a list.
  *
  * What it replaces was a TALLY - "Walls 42, Doors 3" - a count rather than a list, so nothing on a
@@ -780,19 +925,42 @@ button.mp-event-main:hover .mp-event-title { text-decoration: underline; }
 .indoor-drag-ghost-label { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
 
 /* --- Floor-plan drawing designer (Create plan) --- */
-.fd-overlay { position: fixed; inset: 0; z-index: 1200; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(15, 23, 33, 0.55); }
+.fd-overlay { position: fixed; inset: 0; z-index: 1200; display: flex; align-items: center; justify-content: center;
+  /* The gutter shrinks on a short screen: a fixed 24px top+bottom is 48px the dialog
+     cannot use, and these dialogs run out of height before they run out of width. */
+  padding: clamp(12px, 3vh, 26px); background: rgba(15, 23, 33, 0.55); }
 
-/* Building create/edit dialog: name + a grid of glyphs to pick from. Uses the .fd-overlay backdrop. */
-.site-dialog { width: min(420px, 92vw); background: var(--bg-surface); border: 1px solid var(--border-panel); border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 14px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4); }
-.site-dialog-title { display: flex; align-items: center; gap: 8px; font-size: 1rem; font-weight: 650; color: var(--text-primary); }
+/* Building create/edit dialog: name + a grid of glyphs to pick from. Uses the .fd-overlay backdrop.
+ *
+ * The shell is header / scrolling body / footer, NOT one box that scrolls as a whole. When the box
+ * itself scrolled, a tall dialog — a building with several areas on a 700px-high screen — carried
+ * the title AND both buttons out of view, so the operator could not see the action they had come
+ * to press; the two scrollbars also sat inside the box's own padding, which is what made the
+ * content look like it was touching the edges. Only the middle scrolls now, so the padding on
+ * every side stays put at every height.
+ */
+.site-dialog {
+  width: min(420px, calc(100vw - 32px));
+  /* The overlay's padding is the gutter; the dialog takes what is left and no more. */
+  max-height: 100%;
+  display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+  background: var(--bg-surface); border: 1px solid var(--border-panel); border-radius: 14px;
+  /* A hairline ring carries the edge in the dark themes, where a black drop shadow is invisible
+     against the scrim; the two soft layers give the lift in the light ones. */
+  box-shadow: 0 0 0 1px var(--border-panel), 0 24px 64px rgba(0, 0, 0, 0.32), 0 4px 12px rgba(0, 0, 0, 0.16);
+}
+.site-dialog-title { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; padding: 15px 20px; border-bottom: 1px solid var(--border-subtle); font-size: 1rem; font-weight: 650; color: var(--text-primary); }
 .site-dialog-glyph { font-size: 1.3rem; line-height: 1; }
-.site-dialog-field { display: flex; flex-direction: column; gap: 6px; font-size: 0.8rem; color: var(--text-secondary); }
+.site-dialog-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 14px; padding: 16px 20px; }
+/* min-width: 0 on every field: a flex column child refuses to shrink below its content by default,
+   so one wide row (the three-up kind picker) used to push the whole dialog into sideways scroll. */
+.site-dialog-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; font-size: 0.8rem; color: var(--text-secondary); }
 .site-dialog-field input[type="text"] { padding: 8px 10px; border: 1px solid var(--border-soft); border-radius: 7px; background: var(--bg-body); color: var(--text-primary); font: inherit; }
-.site-icon-grid { display: grid; grid-template-columns: repeat(9, 1fr); gap: 6px; }
+.site-icon-grid { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 6px; }
 .site-icon { display: inline-flex; align-items: center; justify-content: center; padding: 6px 0; font-size: 1.15rem; line-height: 1; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--bg-body); cursor: pointer; }
 .site-icon:hover { border-color: var(--accent); }
 .site-icon.active { border-color: var(--accent); background: var(--accent-bg); box-shadow: 0 0 0 1px var(--accent) inset; }
-.site-dialog-actions { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.site-dialog-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; padding: 12px 20px; border-top: 1px solid var(--border-subtle); background: var(--bg-subtle); }
 /* A spacer pushes Cancel/Save to the right, leaving Delete alone on the left. */
 .site-dialog-spacer { flex: 1 1 auto; }
 .site-dialog-delete { background: transparent; border: 1px solid var(--border-soft); border-radius: 6px; padding: 6px 12px; cursor: pointer; font: inherit; }
@@ -819,8 +987,9 @@ button.mp-event-main:hover .mp-event-title { text-decoration: underline; }
 .fd-canvas.fd-tool-wall, .fd-canvas.fd-tool-room, .fd-canvas.fd-tool-pen, .fd-canvas.fd-tool-text { cursor: crosshair; }
 .fd-hint { padding: 8px 14px; border-top: 1px solid var(--border-subtle); font-size: 0.76rem; color: var(--text-faint); }
 /* --- Add-building wizard (step 1: name, glyph, one area or several) --- */
-/* Wider than the plain site dialog because the area list needs room to breathe. */
-.bld-wizard { width: min(480px, 94vw); max-height: 92vh; overflow-y: auto; }
+/* Wider than the plain site dialog because the three-up kind picker and the area list both
+   need room to breathe. Height is the shell's business (see .site-dialog), not this rule's. */
+.bld-wizard { width: min(520px, calc(100vw - 32px)); }
 /* The .bld-choice* kind picker moved to asset-kind.css: the setup wizard renders it too and
    does not load this stylesheet. Both screens import it from there. */
 .bld-arealist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
@@ -867,10 +1036,14 @@ button.mp-event-main:hover .mp-event-title { text-decoration: underline; }
  * which is theme-aware - never sees it. */
 .pw-shell { background: #12161c; }
 .pw-frame { background: #1b2027; color: #cbd5e1; }
-/* .pw-status shares its element with .bld-foot, which sets a LIGHT background at the SAME
- * specificity and appears later in this file - so it won, and the status bar sat light-grey on
- * near-white until a contrast probe caught it. Scoping under .pw-frame settles the cascade
- * rather than relying on which rule happens to come last. */
+/* .pw-status shares its element with .bld-foot, which sets a LIGHT background at the SAME
+
+ * specificity and appears later in this file - so it won, and the status bar sat light-grey on
+
+ * near-white until a contrast probe caught it. Scoping under .pw-frame settles the cascade
+
+ * rather than relying on which rule happens to come last. */
+
 .pw-frame .pw-head, .pw-frame .bld-areabar, .pw-frame .bld-foot.pw-status { background: #20262e; border-color: #12161c; }
 .pw-head .bld-head-name { color: #e8edf4; }
 /* EVERY rule in this dark block is scoped under .pw-frame, and that is load-bearing rather than

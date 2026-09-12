@@ -71,7 +71,7 @@ bagi laluan itu (tiada peraturan bermakna ditolak), **suis menu** dimatikan, mer
 ## Peta tiada jalan {#map-blank}
 
 Tiada **peta asas luar talian** dipasang. Penanda, bangunan dan pelan lantai tetap berfungsi — hanya
-latar belakang yang tiada. Lihat [Peta armada](the-map#basemap).
+latar belakang yang tiada. Lihat [Peta](the-map#basemap).
 
 Muat turun wilayah memerlukan alat `pmtiles` pada pelayan dan **menghubungi internet**, iaitu
 langkah yang salah di tapak yang sepatutnya tiada trafik keluar.
