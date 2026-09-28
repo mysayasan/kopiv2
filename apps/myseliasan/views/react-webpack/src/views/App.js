@@ -18,7 +18,7 @@ import './styles/fleet-wall.css';
 // chunk — when it lived there the wizard's three tiles rendered with no CSS at all.
 import './styles/asset-kind.css';
 import { SideNav, WorkspaceHeader } from './components/layout';
-import { ToastStack, LangProvider, normalizeLang, useT, AppFooter, useStickyTab, clearStickyTab } from '@shared';
+import { ToastStack, LangProvider, normalizeLang, useT, AppFooter, useStickyTab, writeStickyTab, clearStickyTab } from '@shared';
 import { ManualProvider, ManualLibrary } from '@shared/Manual';
 import { FormBusyOverlay } from './components/ui';
 import { DashboardTab } from './components/dashboard';
@@ -46,12 +46,24 @@ import { SetupWizard } from './components/setup';
 // and an operator who never opens a plan should never pay for that weight.
 const PlanWorkspacePage = lazy(() => import('./components/plan_workspace').then((m) => ({ default: m.PlanWorkspacePage })));
 import { api, sessionCanGet, apiBase } from './lib/helpers';
-import { parsePlanRoute } from './lib/plan_route';
+import { parsePlanRoute, parseAppTab } from './lib/plan_route';
 import { enBundle, loadLocaleDict } from './i18n';
 
 // Names this app's remembered section (see @shared/stickyTab). The prefix keeps the five
 // apps from reading each other's value when they are served from the same host.
 const TAB_KEY = 'myseliasan_active_tab';
+
+// Every section name the render below understands. It exists to vet a section asked for in the
+// ADDRESS (?tab=, see lib/plan_route) — a name nothing renders would leave the operator staring at
+// an empty main pane with a working side-nav, which reads as a broken app rather than a bad link.
+// The remembered section is NOT checked against this: it was written by this same build, and the
+// permission demotions further down are what decide whether it is still one this operator may
+// have. Keep in step with the `activeTab === '...'` list in the render.
+const SECTIONS = [
+  'dashboard', 'insight', 'map', 'liveviews', 'fleetwall', 'objects', 'teach', 'fleetrules',
+  'fleetpolicy', 'failover', 'notifications', 'nodes', 'users', 'roles', 'audit', 'reports',
+  'settings', 'manual',
+];
 
 const THEME_KEY = 'myseliasan_theme';
 const NAV_PIN_KEY = 'myseliasan_nav_pinned';
@@ -87,15 +99,39 @@ function AppInner({ lang, onLangChange }) {
   // authState: 'loading' | 'anon' | 'mustchange' | 'ready'
   const [authState, setAuthState] = useState('loading');
   const [session, setSession] = useState(null);
+  // What the address is asking the app to open — how the plan workspace's back link says "the
+  // fleet map, on the floor I was just editing" (see lib/plan_route). An explicit request beats
+  // the remembered section, so it is written to storage HERE, before useStickyTab reads it:
+  // setting it from an effect instead would paint the dashboard for a frame first.
+  const [requestedTab] = useState(() => {
+    const want = parseAppTab();
+    if (!want.tab || !SECTIONS.includes(want.tab)) return '';
+    writeStickyTab(TAB_KEY, want.tab);
+    return want.tab;
+  });
+  // The place + area half of that request, handed to the map as a ONE-SHOT: it is cleared the
+  // moment the map has acted on it, so leaving Map and coming back later opens where the operator
+  // left off rather than jumping to a floor they finished with half an hour ago.
+  const [mapFocus, setMapFocus] = useState(() => {
+    const want = parseAppTab();
+    return want.tab === 'map' && want.siteId ? { siteId: want.siteId, floorId: want.floorId } : null;
+  });
   // The section survives a refresh (see @shared/stickyTab). No `allowed` list is passed: the
   // permission demotions further down are per-API-grant rather than a flat set, and they are
   // reached only once the session has loaded — so they, not a list up here, decide whether a
   // restored section is one this operator may have.
   const [activeTab, setActiveTab] = useStickyTab(TAB_KEY, 'dashboard');
+  // Drop the hint from the address once it has been acted on. It is a one-shot instruction, not
+  // a route: leaving it there would make a section look bookmarkable when a later refresh would
+  // in fact be answered by the remembered value, and would re-force the section on every reload
+  // even after the operator had navigated somewhere else.
+  useEffect(() => {
+    if (!requestedTab) return;
+    try { window.history.replaceState(null, '', '/'); } catch (_) { /* history unavailable */ }
+  }, [requestedTab]);
   // The app's one URL route (see lib/plan_route). Read ONCE at mount, and it wins over the
-  // remembered tab below: opening the workspace with target=_blank hands the new tab a COPY of
-  // this tab's sessionStorage, so without this the plan tab would restore whatever screen the
-  // operator happened to be on and the address bar would be lying.
+  // remembered tab below — the workspace has to own its tab whether it was opened from the map,
+  // a bookmark or a pasted address, and a tab opened with `noopener` remembers nothing anyway.
   const [planRoute] = useState(() => parsePlanRoute());
   const [toasts, setToasts] = useState([]);
   // Fleet state is lifted here so the side-nav tree and the Nodes page stay in sync:
@@ -350,7 +386,14 @@ function AppInner({ lang, onLangChange }) {
         {activeTab === 'insight' && canAgent ? <AIInsightPage session={session} onToast={pushToast} onSuggestRule={session?.isSuperadmin ? suggestRule : null} /> : null}
         {activeTab === 'map' ? (
           <Suspense fallback={<div className="map-loading">{t('common.loading')}</div>}>
-            <MapPage nodes={nodes} reloadNodes={loadNodes} onToast={pushToast} onOpenNode={selectNode} />
+            <MapPage
+              nodes={nodes}
+              reloadNodes={loadNodes}
+              onToast={pushToast}
+              onOpenNode={selectNode}
+              focus={mapFocus}
+              onFocusConsumed={() => setMapFocus(null)}
+            />
           </Suspense>
         ) : null}
         {activeTab === 'liveviews' && canNodes ? <LiveViewsPage nodes={nodes} /> : null}

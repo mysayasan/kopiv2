@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useT } from '@shared/i18n';
 
 // PTZRing — mymatasan's pan/tilt controller (copied verbatim so it looks and behaves the
@@ -27,10 +27,16 @@ export function PTZRing({ busy, size, onMove, onStop }) {
   const cls = `ptz-sector${busy ? ' ptz-sector-busy' : ''}`;
   const holdingRef = useRef(false);
   const safetyRef = useRef(null);
+  // Which sector is being held, so the control can show what it is DOING for as long as it does
+  // it. The only press feedback before this was `.ptz-sector:hover`, which says "the pointer is
+  // here", not "this camera is panning" — and on a touch screen there is no hover at all, so a
+  // press produced no visible response whatsoever.
+  const [held, setHeld] = useState(null);
 
   function startHold(dir) {
     if (busy || holdingRef.current) return;
     holdingRef.current = true;
+    setHeld(dir);
     onMove(dir);
     if (safetyRef.current) clearTimeout(safetyRef.current);
     safetyRef.current = setTimeout(endHold, 20000);
@@ -40,6 +46,7 @@ export function PTZRing({ busy, size, onMove, onStop }) {
     if (safetyRef.current) { clearTimeout(safetyRef.current); safetyRef.current = null; }
     if (!holdingRef.current) return;
     holdingRef.current = false;
+    setHeld(null);
     onStop();
   }
 
@@ -55,7 +62,7 @@ export function PTZRing({ busy, size, onMove, onStop }) {
       <path
         key={dir}
         d={dPath}
-        className={cls}
+        className={`${cls}${held === dir ? ' ptz-sector-active' : ''}`}
         role="button"
         aria-label={label}
         tabIndex={busy ? -1 : 0}

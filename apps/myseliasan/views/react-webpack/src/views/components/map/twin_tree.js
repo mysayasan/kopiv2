@@ -51,7 +51,7 @@ Dot.propTypes = { tone: PropTypes.string };
 export function TwinTree({
   sites = [], nodes = [], nodesById = {}, nowSec,
   plansBySite = {}, camsByNode = {}, placedKeys,
-  expanded, onToggle, query, onQuery, placing,
+  expanded, onToggle, query, onQuery, placing, collapsed, onToggleCollapsed,
   onAddSite, onOpenSite, onOpenArea, onOpenCamera, onEditSite, onSelectNode, onPlayCamera,
   onPlaceCamera, onWaiveLocation, dropTarget, onDropTarget,
 }) {
@@ -290,8 +290,12 @@ export function TwinTree({
     const boxPayload = { nodeId: r.node.nodeId, cameraId: '', name: nodeLabel(r.node) };
     return (
       <div key={r.node.nodeId} className="tt-branch">
-        {/* tt-trayrow: a tray row's TAGS are its content - what is unknown, what is unpinned, what
-            has been waived - so they wrap onto a second line rather than truncating to stubs. */}
+        {/* tt-trayrow: a tray row's STATE is its content - what is unknown, what is unpinned, what
+            has been waived. Spelled out in words those three took two or three lines per row (and
+            eight appliances then made the page taller than the screen); squeezed onto one line
+            they truncated to "camera... locatio..." and said nothing at all. They are icon chips
+            now, each carrying its full sentence as a tooltip: one line, nothing lost, and the
+            three states stay distinguishable because they are colour-coded as well as shaped. */}
         {/* An appliance whose own box has no pin is draggable too, onto the place it sits in.
             That pin is what records WHERE THE BOX IS - it is the only writer of the node's site -
             so without this the tray could tell you the location was missing but gave you no way
@@ -306,12 +310,14 @@ export function TwinTree({
           <Dot tone={tone} />
           <Ico n={APPLIANCE_ICON} sz={11} />
           <button type="button" className="tt-name" onClick={(e) => onSelectNode(r.node, e.clientX, e.clientY)}>{nodeLabel(r.node)}</button>
-          {r.loading ? <span className="tt-tag" title={t('common.loading')}>{t('common.loading')}</span> : null}
+          {r.loading ? <span className="tt-state" title={t('common.loading')}><Ico n="refresh" sz={10} /></span> : null}
           {/* NEVER "0 unplaced" for a node we could not reach: that reads as done. */}
-          {r.unknown ? <span className="tt-tag warn" title={t('tree.camerasUnknown')}>{t('tree.camerasUnknown')}</span> : null}
+          {r.unknown ? <span className="tt-state warn" title={t('tree.camerasUnknown')}><Ico n="help" sz={10} /></span> : null}
+          {/* The count of cameras still to place stays a NUMBER - it is the size of the job, and a
+              number is the one thing an icon cannot stand in for. */}
           {r.unplaced.length > 0 ? <span className="tt-chip todo">{t('tree.nUnplaced', { n: r.unplaced.length })}</span> : null}
-          {r.boxUnplaced && !r.node.noFixedLocation ? <span className="tt-tag" title={t('tree.boxNotPlaced')}>{t('tree.boxNotPlaced')}</span> : null}
-          {r.node.noFixedLocation ? <span className="tt-tag" title={t('tree.noFixedLocationHint')}>{t('tree.noFixedLocation')}</span> : null}
+          {r.boxUnplaced && !r.node.noFixedLocation ? <span className="tt-state warn" title={t('tree.boxNotPlaced')}><Ico n="pin-off" sz={10} /></span> : null}
+          {r.node.noFixedLocation ? <span className="tt-state" title={t('tree.noFixedLocationHint')}><Ico n="check-ok" sz={10} /></span> : null}
           {/* The exit from the tray for an appliance that genuinely has no place on any plan - a
               colo recorder, a hosted hub. Without it the tray can never be emptied, and a tray
               that can never be emptied is one operators stop reading. */}
@@ -384,6 +390,29 @@ export function TwinTree({
     );
   }
 
+  // Collapsed, the rail is a narrow spine rather than nothing at all - because the control that
+  // reopens it lives ON it. A pane that folds to zero width has to be reopened from somewhere
+  // else, which is how the toggle ended up marooned in the command bar: a button that named a
+  // pane you could no longer see. The whole spine is the hit target; the chevron just says which
+  // way it goes.
+  if (collapsed) {
+    return (
+      <aside className="fleet-map-rail tt collapsed">
+        <button
+          type="button"
+          className="tt-collapse tt-collapse-spine"
+          onClick={onToggleCollapsed}
+          title={t('tree.showPane')}
+          aria-label={t('tree.showPane')}
+          aria-expanded={false}
+        >
+          <Ico n="chev-right" sz={14} />
+          <span className="tt-spine-label">{t('tree.paneTitle')}</span>
+        </button>
+      </aside>
+    );
+  }
+
   return (
     <aside className="fleet-map-rail tt">
       <div className="tt-search">
@@ -399,6 +428,16 @@ export function TwinTree({
             <Ico n="x" sz={11} />
           </button>
         ) : null}
+        <button
+          type="button"
+          className="tt-collapse"
+          onClick={onToggleCollapsed}
+          title={t('tree.hidePane')}
+          aria-label={t('tree.hidePane')}
+          aria-expanded
+        >
+          <Ico n="chev-left" sz={14} />
+        </button>
       </div>
 
       <div className="tt-scroll">
@@ -435,7 +474,9 @@ export function TwinTree({
           {/* Two loose ends, counted separately, because they are different jobs: cameras that are
               not on any plan, and appliances whose own box has no pin. */}
           {boxesToPin > 0 ? <span className="tt-chip todo" title={t('tree.boxesToPin')}>{boxesToPin} <Ico n="cpu" sz={9} /></span> : null}
-          {anyUnknown ? <span className="tt-tag warn" title={t('tree.someUnreachable')}>{t('tree.someUnreachable')}</span> : null}
+          {/* Same reason as the rows below: spelled out, this sentence ellipsised to "some
+              appliances u..." in the rail's width, which is worse than no label at all. */}
+          {anyUnknown ? <span className="tt-state warn" title={t('tree.someUnreachable')}><Ico n="help" sz={10} /></span> : null}
         </div>
         {isOpen('tray') ? (
           <div className="tt-children">
@@ -459,5 +500,7 @@ TwinTree.propTypes = {
   onAddSite: PropTypes.func, onOpenSite: PropTypes.func, onOpenArea: PropTypes.func, onOpenCamera: PropTypes.func,
   onEditSite: PropTypes.func, onSelectNode: PropTypes.func, onPlayCamera: PropTypes.func,
   onPlaceCamera: PropTypes.func, onWaiveLocation: PropTypes.func,
+  collapsed: PropTypes.bool,
+  onToggleCollapsed: PropTypes.func,
   dropTarget: PropTypes.string, onDropTarget: PropTypes.func,
 };

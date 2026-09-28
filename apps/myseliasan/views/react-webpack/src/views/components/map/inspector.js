@@ -57,6 +57,11 @@ function PlaceCard({ row, plans, nodesById, nowSec, onOpenArea }) {
     const k = nodeToneKey(nodesById[nid], nowSec);
     if (TONE_ORDER.indexOf(k) < TONE_ORDER.indexOf(worst)) worst = k;
   });
+  // "Not asked yet" is not "none". This card reads its areas out of a lazily-filled cache, and
+  // treating a missing entry as an empty list told the operator a three-floor building had no
+  // areas - and offered to create the ones that already existed. Until the fetch answers, the
+  // card says nothing about areas rather than something false.
+  const loaded = !!(plans && !plans.loading);
   const areas = (plans && plans.list) || [];
   const drawable = hasDrawablePlan(s.kind);
   return (
@@ -64,21 +69,28 @@ function PlaceCard({ row, plans, nodesById, nowSec, onOpenArea }) {
       <Head
         emoji={siteGlyph(s)}
         title={s.name}
-        sub={drawable ? t('insp.nAreas', { n: areas.length }) : t(`bld.kind.${s.kind || 'building'}`)}
+        sub={drawable ? (loaded ? t('insp.nAreas', { n: areas.length }) : t('common.loading')) : t(`bld.kind.${s.kind || 'building'}`)}
         status={worst}
         statusLabel={t(`map.legend.${worst}`)}
       />
       <div className="mw-inspscroll">
-        <div className="mw-kpis">
-          <div className="mw-kpi"><div className="v">{(row.cameraKeys || []).length}</div><div className="l">{t('map.cameras')}</div></div>
-          <div className="mw-kpi"><div className="v">{s.mapPlaced ? t('insp.yes') : t('insp.no')}</div><div className="l">{t('insp.onTheMap')}</div></div>
+        {/* One line of facts, not two 60px tiles. The tiles gave "7" and the word "Yes" the visual
+            weight of a headline each and pushed everything that is actually actionable - the areas,
+            the way into the editor - below the fold of a 300px pane. */}
+        <div className="mw-facts">
+          <span className="mw-fact"><b>{(row.cameraKeys || []).length}</b> {t('map.cameras')}</span>
+          {drawable && loaded ? <span className="mw-fact"><b>{areas.length}</b> {t('bld.areas')}</span> : null}
+          <span className={`mw-fact${s.mapPlaced ? '' : ' warn'}`}>
+            <Ico n="map-pin" sz={11} /> {s.mapPlaced ? t('insp.onTheMap') : t('insp.notOnTheMap')}
+          </span>
         </div>
         {/* A point asset's single area is implicit and unnamed, so listing it would put a row
             reading "At this point" between the junction and its cameras. */}
         {drawable ? (
           <>
             <div className="mw-seclbl">{t('bld.areas')}</div>
-            {areas.length === 0 ? <div className="mw-insp-note">{t('map.noAreasYet')}</div> : areas.map((fp) => (
+            {!loaded ? <div className="mw-insp-note">{t('common.loading')}</div>
+              : areas.length === 0 ? <div className="mw-insp-note">{t('map.noAreasYet')}</div> : areas.map((fp) => (
               <button key={fp.floor.id} type="button" className="mw-lrow" onClick={() => onOpenArea(s, fp.floor.id)}>
                 <Ico n="grid2" sz={13} />
                 <span className="nm">{fp.floor.name}</span>
@@ -211,10 +223,12 @@ function ApplianceCard({ node, placements, camsByNode, nowSec, onOpenNode, onOpe
         statusLabel={t(`map.legend.${tone}`)}
       />
       <div className="mw-inspscroll">
-        <div className="mw-kpis">
-          <div className="mw-kpi"><div className="v">{camPins.length}</div><div className="l">{t('insp.camerasPlaced')}</div></div>
+        <div className="mw-facts">
+          <span className="mw-fact"><b>{camPins.length}</b> {t('insp.camerasPlaced')}</span>
           {/* Never render "0 unplaced" for a node we could not reach - that reads as finished. */}
-          <div className="mw-kpi"><div className="v">{unplaced === null ? '?' : unplaced}</div><div className="l">{t('insp.camerasUnplaced')}</div></div>
+          <span className={`mw-fact${unplaced ? ' warn' : ''}`}>
+            <b>{unplaced === null ? '?' : unplaced}</b> {t('insp.camerasUnplaced')}
+          </span>
         </div>
 
         <div className="mw-seclbl">{t('insp.whereItsCamerasAre')}</div>
@@ -261,6 +275,44 @@ ApplianceCard.propTypes = {
 };
 
 // ---------------------------------------------------------------------------------------------
+// Nothing selected: a roll-up of the whole fleet rather than an empty pane.
+function FleetSummary({ sites, nodesById, placements, nowSec }) {
+  const t = useT();
+  const nodes = Object.values(nodesById || {});
+  const byTone = { online: 0, warning: 0, critical: 0, idle: 0 };
+  nodes.forEach((n) => { byTone[nodeToneKey(n, nowSec)] += 1; });
+  const placedCams = placements.filter((p) => p.cameraId).length;
+  const onMap = sites.filter((r) => r.site && r.site.mapPlaced).length;
+
+  return (
+    <>
+      <div className="mw-insp-prompt">
+        <Ico n="map" sz={15} />
+        <span>{t('insp.nothingSelectedHint')}</span>
+      </div>
+      <div className="mw-inspscroll">
+        <div className="mw-seclbl">{t('insp.fleetAtAGlance')}</div>
+        <div className="mw-lrow static"><Ico n="building" sz={13} /><span className="nm">{t('bar.places')}</span><span className="rt">{sites.length}</span></div>
+        <div className="mw-lrow static"><Ico n="map-pin" sz={13} /><span className="nm">{t('insp.onTheMap')}</span><span className="rt">{onMap}</span></div>
+        <div className="mw-lrow static"><Ico n="video" sz={13} /><span className="nm">{t('insp.camerasPlaced')}</span><span className="rt">{placedCams}</span></div>
+
+        <div className="mw-seclbl">{t('insp.appliances')}</div>
+        {/* A status with nothing in it is not news - only the tones actually present get a row,
+            so "3 lost" is never buried under three zeroes. */}
+        {['critical', 'warning', 'online', 'idle'].filter((k) => byTone[k] > 0).map((k) => (
+          <div key={k} className="mw-lrow static">
+            <span className={`mw-dot ${k}`} />
+            <span className="nm">{t(`map.legend.${k}`)}</span>
+            <span className="rt">{byTone[k]}</span>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+FleetSummary.propTypes = { sites: PropTypes.array, nodesById: PropTypes.object, placements: PropTypes.array, nowSec: PropTypes.number };
+
+// ---------------------------------------------------------------------------------------------
 export function Inspector({
   sel, sites = [], nodesById = {}, plansBySite = {}, placements = [], camsByNode = {}, nowSec,
   onPlay, onOpenMedia, onLocate, onOpenArea, onOpenNode, onWaive,
@@ -297,15 +349,11 @@ export function Inspector({
   if (row) {
     return <PlaceCard key={row.site.id} row={row} plans={plansBySite[row.site.id]} nodesById={nodesById} nowSec={nowSec} onOpenArea={onOpenArea} />;
   }
-  return (
-    <div className="mw-insp-empty">
-      <Ico n="map" sz={30} />
-      <div>
-        <strong>{t('insp.nothingSelected')}</strong>
-        <div className="mw-insp-empty-sub">{t('insp.nothingSelectedHint')}</div>
-      </div>
-    </div>
-  );
+  // Nothing selected. This used to be an icon and two lines of grey text floating in the middle
+  // of a 660px-tall empty pane - a third of the page's width spent saying "you have not clicked
+  // anything yet". The prompt is still here, but it sits at the top and the rest of the pane
+  // answers the question an operator actually has on arrival: what does the fleet look like?
+  return <FleetSummary sites={sites} nodesById={nodesById} placements={placements} nowSec={nowSec} />;
 }
 
 Inspector.propTypes = {
