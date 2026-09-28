@@ -181,6 +181,8 @@ func (s *evidenceExportService) CreateCase(ctx context.Context, req CaseExportRe
 		Reason: man.Reason, CreatedAt: time.Now().UTC().Unix(),
 	}
 	s.jobs[id] = job
+	// Snapshot under the lock: once the builder goroutine starts it mutates *job via setStatus.
+	cp := *job
 	s.mu.Unlock()
 
 	items := append([]CaseItemView(nil), req.Items...)
@@ -189,7 +191,6 @@ func (s *evidenceExportService) CreateCase(ctx context.Context, req CaseExportRe
 		defer cancel()
 		s.buildCase(buildCtx, id, man, items)
 	})
-	cp := *job
 	return &cp, nil
 }
 
