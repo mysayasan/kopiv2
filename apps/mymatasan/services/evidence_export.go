@@ -554,6 +554,8 @@ func (s *evidenceExportService) Create(ctx context.Context, req ExportRequest) (
 		GapWarning: len(man.Gaps) > 0,
 	}
 	s.jobs[id] = job
+	// Snapshot under the lock: once the builder goroutine starts it mutates *job via setStatus.
+	cp := *job
 	s.mu.Unlock()
 
 	// Detached from the request context: a bundle must not be abandoned half-built
@@ -563,7 +565,6 @@ func (s *evidenceExportService) Create(ctx context.Context, req ExportRequest) (
 		defer cancel()
 		s.build(buildCtx, id, man, segs, req.Redact, req.BlurFaces)
 	})
-	cp := *job
 	return &cp, nil
 }
 
