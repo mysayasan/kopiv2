@@ -138,6 +138,12 @@ All notable changes to this project, generated from `changes/` entries on each v
 
 
 
+
+## 2026-09-28 — mymatasan 1.151.1 (256475c)
+
+### Fixed
+
+- **mymatasan**: Fixed a data race in the evidence/case export job trackers (evidenceExportService.Create in evidence_export.go and .CreateCase in case_export.go): the initial job snapshot returned to the caller (`cp := *job`) was copied after s.mu was unlocked and after the background build goroutine had already been queued, so a fast-running builder could call setStatus and mutate *job concurrently with the snapshot copy - caught intermittently by the nightly `go test -race` run (TestACaseBundleShipsWhatItHasAndSaysWhatIsMissing, Go check #216/#223/#229/#230). Both call sites now take the `cp := *job` snapshot while still holding s.mu, before s.mu.Unlock() and before the builder goroutine is spawned, so the copy can no longer race with the goroutine's first status write.
 ## 2026-09-28 — myseliasan 1.95.0 (a01124f)
 
 ### Changed
